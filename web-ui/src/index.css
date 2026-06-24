@@ -1,0 +1,207 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a1a;
+  font-size: 14px;
+}
+a { color: #0068ff; }
+
+/* ── Buttons ── */
+.btn-primary {
+  width: 100%;
+  background: #0068ff; color: #fff; border: 0; border-radius: 10px;
+  padding: 12px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px;
+}
+.btn-primary.sm { width: auto; padding: 9px 18px; font-size: 14px; margin: 0; }
+.btn-primary:hover { opacity: .9; }
+.btn-ghost {
+  background: transparent; border: 1px solid #d0d7de; color: #444;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+}
+.btn-ghost:hover { background: #f3f4f6; }
+
+/* ── Auth screens ── */
+.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.auth-card {
+  width: 100%; max-width: 380px; background: #fff; border-radius: 16px;
+  padding: 28px; box-shadow: 0 4px 24px rgba(0,0,0,.08);
+}
+.auth-card h1 { font-size: 22px; text-align: center; color: #0068ff; }
+.auth-card .sub { text-align: center; color: #666; font-size: 13px; margin: 4px 0 20px; }
+.auth-card label { display: block; font-size: 12px; font-weight: 600; color: #555; margin: 12px 0 5px; }
+.auth-card input {
+  width: 100%; padding: 11px 13px; border: 1px solid #d0d7de;
+  border-radius: 9px; font-size: 14px;
+}
+.auth-card input:focus { outline: none; border-color: #0068ff; }
+.err {
+  background: #fff0f0; color: #c0392b; font-size: 13px;
+  padding: 9px 12px; border-radius: 8px; margin-top: 12px;
+}
+.switch { text-align: center; font-size: 13px; color: #666; margin-top: 16px; }
+
+/* ── Dashboard ── */
+.topbar {
+  background: #fff; padding: 12px 20px; display: flex; align-items: center;
+  justify-content: space-between; box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.topbar .brand { font-weight: 700; font-size: 16px; color: #0068ff; }
+.topbar .user { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #444; }
+.content { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+.content-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.content-head h2 { font-size: 18px; }
+
+.empty { text-align: center; color: #888; padding: 60px 16px; }
+.empty p { margin-bottom: 16px; }
+.empty .btn-primary { width: auto; display: inline-block; padding: 11px 22px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.app-card {
+  background: #fff; border-radius: 14px; padding: 16px; display: flex; flex-direction: column;
+  gap: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.07);
+}
+.app-card:hover { box-shadow: 0 3px 12px rgba(0,0,0,.12); }
+.app-icon {
+  width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center;
+  justify-content: center; font-size: 24px;
+}
+.app-body { flex: 1; }
+.app-name { font-weight: 600; font-size: 15px; }
+.app-ch { font-size: 12px; color: #888; margin-top: 2px; }
+.app-actions { display: flex; gap: 8px; }
+.btn-mini {
+  flex: 1; text-align: center; padding: 7px 10px; border-radius: 8px; font-size: 13px;
+  font-weight: 500; cursor: pointer; border: 1px solid #d0d7de; background: #fff;
+  color: #0068ff; text-decoration: none;
+}
+.btn-mini:hover { background: #f3f6ff; }
+.btn-mini.disabled { color: #aaa; cursor: default; border-color: #eee; }
+.btn-mini.danger { color: #c0392b; border-color: #f3d0d0; flex: 0 0 auto; }
+.btn-mini.danger:hover { background: #fff0f0; }
+
+.app-card.clickable { cursor: pointer; }
+
+.bot-toggle {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 7px 10px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; border: 1px solid #d0d7de; background: #fff;
+}
+.bot-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.bot-toggle.on { color: #15a85f; border-color: #b7e2c7; background: #f1fbf5; }
+.bot-toggle.on:hover { background: #e3f6ec; }
+.bot-toggle.off { color: #c0392b; border-color: #f3d0d0; background: #fff5f5; }
+.bot-toggle.off:hover { background: #ffeaea; }
+.bot-toggle:disabled { opacity: .55; cursor: default; }
+.bot-toggle.loading, .bot-toggle.offline { color: #8b95a1; cursor: default; font-weight: 500; }
+
+/* ── Kết nối Facebook (MetaConnect) ── */
+.btn-fb {
+  display: inline-flex; align-items: center; gap: 10px; margin-top: 6px;
+  background: #1877f2; color: #fff; border: 0; border-radius: 10px;
+  padding: 11px 18px; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.btn-fb:hover { background: #166fe0; }
+.btn-fb:disabled { opacity: .6; cursor: default; }
+.btn-fb .fb-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; background: #fff; color: #1877f2;
+  font-weight: 800; font-family: Georgia, serif;
+}
+.pages { margin-top: 20px; border-top: 1px solid #eee; padding-top: 14px; }
+.pages h4 { margin: 0 0 10px; font-size: 14px; }
+.page-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.page-row {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #f7f9fc; border: 1px solid #eef1f5; border-radius: 10px; padding: 10px 12px;
+}
+.page-name { font-weight: 600; font-size: 14px; }
+.page-sub { font-size: 12px; color: #888; margin-top: 2px; }
+
+/* ── Modal ── */
+.modal-bg {
+  position: fixed; inset: 0; background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.modal { background: #fff; border-radius: 16px; padding: 24px; width: 100%; max-width: 380px; }
+.modal h3 { font-size: 17px; margin-bottom: 16px; }
+.modal label { display: block; font-size: 12px; font-weight: 600; color: #555; margin: 12px 0 6px; }
+.modal input {
+  width: 100%; padding: 11px 13px; border: 1px solid #d0d7de; border-radius: 9px; font-size: 14px;
+}
+.modal input:focus { outline: none; border-color: #0068ff; }
+.ch-pick { display: flex; gap: 8px; flex-wrap: wrap; }
+.ch-opt {
+  flex: 1; min-width: 90px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px; border: 1px solid #d0d7de; border-radius: 10px; background: #fff;
+  font-size: 13px; cursor: pointer;
+}
+.ch-opt.active { border-color: #0068ff; background: #f3f6ff; color: #0068ff; font-weight: 600; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+/* ── App detail / Connect ── */
+.content.narrow { max-width: 520px; }
+.detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.detail-head h2 { font-size: 20px; }
+.chip { background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+.card-box { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+
+.connect { text-align: center; }
+.connect .hint { color: #666; font-size: 13px; margin: 6px 0 14px; }
+.connect .hint.warn { color: #c0392b; }
+.connect .status { font-size: 14px; font-weight: 600; margin: 12px 0; }
+.connect .status.muted { color: #8b95a1; }
+.connect .status.ok { color: #1a7f37; }
+.connect .status.warn { color: #c0392b; }
+.qrbox {
+  width: 240px; height: 240px; margin: 4px auto; display: flex; align-items: center;
+  justify-content: center; border: 2px dashed #d0d7de; border-radius: 12px; background: #fafbfc;
+}
+.qrbox img { width: 100%; height: 100%; border-radius: 8px; }
+.code {
+  background: #0d1117; color: #e6edf3; text-align: left; padding: 12px 14px;
+  border-radius: 10px; font-size: 13px; margin: 10px 0 16px; white-space: pre;
+}
+.field { text-align: left; margin-top: 8px; }
+.field > label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.connect select {
+  width: 100%; padding: 11px 13px; border: 1px solid #d0d7de; border-radius: 9px;
+  font-size: 14px; background: #fff; margin-top: 4px;
+}
+.connect .row { display: flex; gap: 10px; margin-top: 12px; }
+.connect .row .btn-primary { width: auto; }
+.savemsg { font-size: 13px; margin-top: 10px; color: #1a7f37; }
+.logout-row { margin-top: 22px; border-top: 1px solid #eee; padding-top: 16px; text-align: left; }
+.link-danger { background: none; border: 0; color: #c0392b; font-size: 13px; cursor: pointer; padding: 0; }
+.link-danger:hover { text-decoration: underline; }
+
+/* ── Tabs ── */
+.tabs { display: flex; gap: 4px; margin-bottom: -1px; }
+.tab {
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  padding: 10px 16px; font-size: 14px; font-weight: 600; color: #888; cursor: pointer;
+}
+.tab.active { color: #0068ff; border-bottom-color: #0068ff; }
+
+/* ── Badges ── */
+.badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+.badge.bot { background: #e6f4ea; color: #1a7f37; }
+.badge.owner { background: #fff0f0; color: #c0392b; }
+.badge.stage { background: #eef2ff; color: #3730a3; }
+
+/* ── Conversation list ── */
+.convlist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.convrow { padding: 12px; border-radius: 10px; cursor: pointer; border: 1px solid #f0f0f0; margin-bottom: 8px; }
+.convrow:hover { background: #f7f9ff; border-color: #dce6ff; }
+.conv-line1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.conv-time { margin-left: auto; font-size: 12px; color: #999; }
+.conv-meta { font-size: 12px; color: #666; margin-top: 4px; }
+.conv-preview { font-size: 13px; color: #444; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Chat view ── */
+.chat-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.chat-actions { margin-left: auto; display: flex; gap: 8px; }
+.bubbles { display: flex; flex-direction: column; gap: 6px; max-height: 460px; overflow-y: auto; }
+.bubble { max-width: 80%; padding: 8px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; word-break: break-word; }
+.b-user { background: #e9ecef; align-self: flex-start; border-bottom-left-radius: 2px; }
+.b-bot { background: #0068ff; color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }

@@ -1,0 +1,16 @@
+{
+  "name": "zalo-node-channel",
+  "version": "0.1.0",
+  "description": "Kênh Zalo dùng zca-js (QR login) - cầu nối tới não bộ Python",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "image-size": "^2.0.2",
+    "zca-js": "^2.1.2"
+  }
+}
