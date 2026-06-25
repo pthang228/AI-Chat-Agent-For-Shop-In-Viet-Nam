@@ -118,6 +118,15 @@ a { color: #0068ff; }
 .page-name { font-weight: 600; font-size: 14px; }
 .page-sub { font-size: 12px; color: #888; margin-top: 2px; }
 
+/* Bộ chọn Page trong tab Khách hàng (mỗi Page = data riêng) */
+.page-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.page-tab {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid #d0d7de; background: #fff;
+  font-size: 13px; font-weight: 500; cursor: pointer; color: #444;
+}
+.page-tab.active { background: #1877f2; color: #fff; border-color: #1877f2; }
+.page-current { font-size: 13px; color: #555; margin-bottom: 12px; }
+
 /* ── Modal ── */
 .modal-bg {
   position: fixed; inset: 0; background: rgba(0,0,0,.4);

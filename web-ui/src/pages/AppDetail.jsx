@@ -4,6 +4,7 @@ import { currentUser } from "../auth.js";
 import { getApps } from "../store.js";
 import ZaloConnect from "../components/ZaloConnect.jsx";
 import MetaConnect from "../components/MetaConnect.jsx";
+import MetaConversations from "../components/MetaConversations.jsx";
 import Conversations from "../components/Conversations.jsx";
 
 const CH_LABEL = { zalo: "Zalo", instagram: "Instagram", messenger: "Messenger" };
@@ -57,7 +58,7 @@ export default function AppDetail() {
               <button className={"tab" + (tab === "chats" ? " active" : "")} onClick={() => setTab("chats")}>Khách hàng</button>
             </div>
             <div className="card-box">
-              {tab === "connect" ? <MetaConnect /> : <Conversations />}
+              {tab === "connect" ? <MetaConnect /> : <MetaConversations />}
             </div>
           </>
         ) : (
