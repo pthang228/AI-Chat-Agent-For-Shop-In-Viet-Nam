@@ -71,15 +71,43 @@ check(any("Bảng giá" in m.get("text", "") for r, m in ch._sent), "A5 price_ca
 check(imgs and all(m["attachment"]["payload"]["url"].startswith("https://pub.example.com/media/")
                    for m in imgs), "A5 image_public_url", f"imgs={imgs[:1]}")
 
-# A6: gửi thật dùng token Page (patch requests) → đúng access_token của Page
+# A6: gửi thật dùng token Page (patch requests) → đúng access_token + endpoint Facebook
 with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'requests') as mreq:
     calls = []
     def fake_post(url, params=None, json=None, timeout=None):
-        calls.append((params, json)); m = MagicMock(); m.status_code = 200; return m
+        calls.append((url, params, json)); m = MagicMock(); m.status_code = 200; return m
     mreq.post.side_effect = fake_post
     ch2 = MetaChannel(store=store, page_token="", public_base_url="https://p", conv_manager=cm)
     ch2.send_text("fb:PAGE1:PSID9", "hi")
-    check(calls and calls[-1][0]["access_token"] == "TOK_PAGE1", "A6 send_uses_page_token", f"calls={calls}")
+    check(calls and calls[-1][1]["access_token"] == "TOK_PAGE1", "A6 send_uses_page_token", f"calls={calls}")
+    check("graph.facebook.com" in calls[-1][0] and calls[-1][2].get("messaging_type") == "RESPONSE",
+          "A6 fb_endpoint", f"url={calls[-1][0]}")
+
+# A7: Instagram ĐA KHÁCH — có token Page → gửi qua graph.facebook.com + token Page (RESPONSE)
+with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'requests') as mreq:
+    calls = []
+    def fake_post(url, params=None, json=None, timeout=None):
+        calls.append((url, params, json)); m = MagicMock(); m.status_code = 200; return m
+    mreq.post.side_effect = fake_post
+    ch_ig = MetaChannel(store=store, page_token="", ig_token="IG_TOK",
+                        public_base_url="https://p", conv_manager=cm)
+    ch_ig.send_text("ig:PAGE1:IGU1", "chào")
+    check(calls and "graph.facebook.com" in calls[-1][0], "A7 ig_multitenant_fb_endpoint", f"url={calls[-1][0] if calls else None}")
+    check(calls and calls[-1][1]["access_token"] == "TOK_PAGE1", "A7 ig_uses_page_token", f"calls={calls}")
+    check(calls and calls[-1][2].get("messaging_type") == "RESPONSE", "A7 ig_messaging_type", f"json={calls[-1][2] if calls else None}")
+
+# A8: Instagram DỰ PHÒNG — không có token Page → graph.instagram.com + IG_ACCESS_TOKEN, KHÔNG messaging_type
+with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'requests') as mreq:
+    calls = []
+    def fake_post(url, params=None, json=None, timeout=None):
+        calls.append((url, params, json)); m = MagicMock(); m.status_code = 200; return m
+    mreq.post.side_effect = fake_post
+    ch_ig2 = MetaChannel(store=store, page_token="", ig_token="IG_TOK",
+                         public_base_url="https://p", conv_manager=cm)
+    ch_ig2.send_text("ig:IGU1", "chào")   # 2 phần → page_id=None → fallback
+    check(calls and "graph.instagram.com" in calls[-1][0], "A8 ig_fallback_endpoint", f"url={calls[-1][0] if calls else None}")
+    check(calls and calls[-1][1]["access_token"] == "IG_TOK", "A8 ig_fallback_token", f"calls={calls}")
+    check(calls and "messaging_type" not in calls[-1][2], "A8 ig_fallback_no_messaging_type", f"json={calls[-1][2] if calls else None}")
 
 print("\n── B. Webhook nhận tin (route theo Page) ──")
 
@@ -120,6 +148,22 @@ with patch.object(meta_mod, 'threading') as mth, \
         {"id": "IG1", "messaging": [{"sender": {"id": "IGU1"}, "message": {"text": "giá nhiêu"}}]}]})
     check(fb.handled == [("ig:PAGE1:IGU1", "giá nhiêu")], "B4 instagram_routed_to_page", f"h={fb.handled}")
 
+    # B4b: Instagram Login format — tin trong entry.changes[field=messages].value
+    fb.handled.clear()
+    client.post("/fb/webhook", json={"object": "instagram", "entry": [
+        {"id": "IG1", "changes": [{"field": "messages", "value": {
+            "sender": {"id": "IGU9"}, "recipient": {"id": "IG1"},
+            "message": {"mid": "m1", "text": "giá phòng"}}}]}]})
+    check(fb.handled == [("ig:PAGE1:IGU9", "giá phòng")], "B4b instagram_changes_routed", f"h={fb.handled}")
+
+    # B4c: changes nhưng sender == IG account (echo bot tự gửi) → bỏ
+    fb.handled.clear()
+    client.post("/fb/webhook", json={"object": "instagram", "entry": [
+        {"id": "IG1", "changes": [{"field": "messages", "value": {
+            "sender": {"id": "IG1"}, "recipient": {"id": "IGU9"},
+            "message": {"mid": "m2", "text": "bot tự nói"}}}]}]})
+    check(fb.handled == [], "B4c instagram_changes_echo_skipped", f"h={fb.handled}")
+
     # B5: echo bỏ qua
     fb.handled.clear()
     client.post("/fb/webhook", json={"object": "page", "entry": [
@@ -153,9 +197,9 @@ with patch.object(meta_mod.meta_graph, 'exchange_long_lived_user_token', return_
     store2 = MetaStore(path=Path("test_meta_store2_tmp.json")); store2._pages.clear()
     client = meta_mod.create_meta_webhook(FakeBrain(), cm, store2).test_client()
 
-    # C1: config
+    # C1: config (kèm cờ enable_ig cho frontend xin quyền IG)
     body = client.get("/meta/config").get_json()
-    check("app_id" in body and "configured" in body, "C1 meta_config")
+    check("app_id" in body and "configured" in body and "enable_ig" in body, "C1 meta_config", f"b={body}")
 
     # C2: connect thiếu token → 400
     r = client.post("/meta/connect", json={})
@@ -177,6 +221,19 @@ with patch.object(meta_mod.meta_graph, 'exchange_long_lived_user_token', return_
     # C5: xoá Page
     client.delete("/meta/pages/PAGE_NEW")
     check(store2.get_token("PAGE_NEW") is None, "C5 page_removed")
+
+print("\n── D. Cờ Instagram (FB_ENABLE_IG) ──")
+from app.channels import meta_graph
+# D1: subscribe_fields ở CẤP PAGE chỉ chứa field Messenger hợp lệ, KHÔNG đổi theo
+# cờ IG (tin IG route ở cấp app, không qua subscribed_apps). Nhét field IG vào đây
+# từng làm Graph trả 400 → hỏng cả subscribe `messages`.
+with patch.object(meta_graph.Config, "FB_ENABLE_IG", False):
+    f_off = meta_graph.subscribe_fields()
+with patch.object(meta_graph.Config, "FB_ENABLE_IG", True):
+    f_on = meta_graph.subscribe_fields()
+check("messages" in f_off and "messaging_postbacks" in f_off, "D1 fields_has_messages", f_off)
+check(f_on == f_off, "D1 fields_stable_regardless_of_ig", f"{f_on} vs {f_off}")
+check("instagram" not in f_on and "reaction" not in f_on, "D1 fields_no_invalid_ig", f_on)
 
 print(f"\n{'='*40}\n  KẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 for _f in ("test_meta_tmp.json", "test_meta_store_tmp.json", "test_meta_store2_tmp.json"):

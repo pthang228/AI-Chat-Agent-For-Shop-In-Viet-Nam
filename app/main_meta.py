@@ -59,6 +59,7 @@ def main():
     print(f"  App ID     : {Config.FB_APP_ID or '(CHƯA có → nút Kết nối FB chưa chạy được)'}")
     print(f"  Pages đã nối: {len(store.list_pages())}")
     print(f"  Token .env : {'(có)' if Config.FB_PAGE_ACCESS_TOKEN else '(không — dùng token theo Page từ UI)'}")
+    print(f"  IG token   : {'(có)' if Config.IG_ACCESS_TOKEN else '(CHƯA — gửi DM Instagram sẽ MOCK; điền IG_ACCESS_TOKEN vào .env)'}")
     print(f"  Public URL : {Config.PUBLIC_BASE_URL or '(chưa đặt → ảnh sẽ KHÔNG gửi được)'}")
     print(f"  Verify tok : {Config.FB_VERIFY_TOKEN}")
     print(f"  Sessions   : {conv._file}")

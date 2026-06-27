@@ -41,16 +41,30 @@ export const meta = {
 };
 
 // Quyền xin khi khách đăng nhập Facebook.
-// Hiện chỉ Messenger (chạy ngay). Quyền Instagram (instagram_basic,
-// instagram_manage_messages) chỉ hợp lệ SAU KHI app setup xong sản phẩm
-// Instagram + tài khoản IG Professional liên kết với Page → khi đó thêm lại.
-export const FB_SCOPE = [
+// Messenger luôn xin (chạy ngay). Quyền Instagram CHỈ thêm khi backend báo
+// enable_ig=true (cờ FB_ENABLE_IG ở .env) — vì instagram_basic/
+// instagram_manage_messages chỉ hợp lệ sau khi app setup sản phẩm Instagram +
+// có IG Professional liên kết Page. Xin sớm → "Invalid Scopes" hỏng luôn login.
+const FB_SCOPE_BASE = [
   "public_profile",
   "pages_show_list",
   "pages_messaging",
   "pages_manage_metadata",
   "business_management",   // cần để lấy Page thuộc Business Portfolio (/me/businesses)
-].join(",");
+];
+const IG_SCOPE = [
+  "instagram_basic",
+  "instagram_manage_messages",
+  "pages_read_engagement",
+];
+
+// Ghép scope theo cờ enable_ig của backend.
+export function buildScope(enableIg) {
+  return (enableIg ? [...FB_SCOPE_BASE, ...IG_SCOPE] : FB_SCOPE_BASE).join(",");
+}
+
+// Tương thích ngược (chỉ Messenger).
+export const FB_SCOPE = FB_SCOPE_BASE.join(",");
 
 let _sdkPromise = null;
 
@@ -73,7 +87,8 @@ export function loadFbSdk(appId) {
 }
 
 // Mở popup đăng nhập Facebook → trả về user access token (ngắn hạn).
-export function fbLogin(FB) {
+// scope tuỳ chọn (mặc định chỉ Messenger); MetaConnect truyền scope kèm IG khi bật.
+export function fbLogin(FB, scope = FB_SCOPE) {
   return new Promise((resolve, reject) => {
     FB.login((res) => {
       if (res.authResponse && res.authResponse.accessToken) {
@@ -81,6 +96,6 @@ export function fbLogin(FB) {
       } else {
         reject(new Error("Bạn đã huỷ hoặc chưa cấp quyền"));
       }
-    }, { scope: FB_SCOPE, return_scopes: true });
+    }, { scope, return_scopes: true });
   });
 }

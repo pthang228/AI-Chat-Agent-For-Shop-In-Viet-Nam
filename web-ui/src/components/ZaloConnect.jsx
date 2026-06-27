@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { zalo } from "../zaloApi.js";
+import GuideBox from "./GuideBox.jsx";
 
 const LABELS = {
   checking: ["Đang kiểm tra kết nối…", "muted"],
@@ -120,6 +121,15 @@ export default function ZaloConnect() {
   const qrSrc = qr ? (qr.startsWith("data:") ? qr : "data:image/png;base64," + qr) : null;
   return (
     <div className="connect">
+      <GuideBox
+        title="📘 Hướng dẫn nhanh — Zalo"
+        steps={[
+          { t: "Bước 1 · Bật dịch vụ Zalo", d: <>Mở dịch vụ Zalo (chạy <code>start-all.bat</code>, hoặc <code>cd zalo-node</code> → <code>npm start</code>). Khi đã chạy thì mã QR sẽ hiện bên dưới.</> },
+          { t: "Bước 2 · Quét QR đăng nhập", d: <>Bấm <b>Tạo mã QR</b> → mở <b>Zalo</b> trên điện thoại → quét mã → xác nhận. Nên dùng tài khoản Zalo riêng cho homestay.</> },
+          { t: "Bước 3 · Chọn nhóm nhận báo", d: <>Sau khi đăng nhập, chọn <b>nhóm Zalo</b> để bot báo khi khách đặt phòng / cần gặp chủ, rồi bấm <b>Lưu nhóm</b>.</> },
+        ]}
+        note={<>Bot tự trả lời khách 24/7. Quản lý từng khách ở tab <b>Khách hàng</b>.</>}
+      />
       <p className="hint">Quét mã QR bằng app Zalo trên điện thoại để bot tự trả lời khách.</p>
       <div className="qrbox">
         {qrSrc ? <img src={qrSrc} alt="QR" /> : <span className="muted">Nhấn nút bên dưới để tạo mã QR</span>}

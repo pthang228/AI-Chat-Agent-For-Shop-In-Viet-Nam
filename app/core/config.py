@@ -44,6 +44,16 @@ class Config:
 
     # Telegram — gọi điện qua Telethon
     TELEGRAM_TARGET_ID = os.getenv("TELEGRAM_TARGET_ID", "")  # ID acc nhận cuộc gọi
+    # api_id/api_hash để đăng nhập acc gọi (đăng ký riêng ở my.telegram.org).
+    # Fallback creds Telegram Desktop công khai (CHỈ để chạy thử — đa khách phải đổi sang của bạn).
+    TELEGRAM_API_ID   = int(os.getenv("TELEGRAM_API_ID", "2040"))
+    TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "b18441a1ff607e10a989891a5462e627")
+
+    # Telegram BOT (kênh trả lời khách qua Bot API — KHÁC Telethon ở trên)
+    TELEGRAM_BOT_TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN", "")       # token từ @BotFather
+    TELEGRAM_OWNER_CHAT_ID  = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")   # chat_id chủ (fallback; thường tự bắt qua /start)
+    TELEGRAM_OWNER_SETUP_CODE = os.getenv("TELEGRAM_OWNER_SETUP_CODE", "chunha")  # chủ /start <mã> để tự đăng ký
+    TELEGRAM_API_PORT       = int(os.getenv("TELEGRAM_API_PORT", "5007"))
 
     # Meta (Facebook Messenger + Instagram DM) — chung 1 app/webhook
     FB_APP_ID            = os.getenv("FB_APP_ID", "")            # ID app (công khai) — cho nút "Kết nối Facebook"
@@ -54,6 +64,15 @@ class Config:
     FB_OWNER_PSID        = os.getenv("FB_OWNER_PSID", "")         # PSID chủ nhà để báo (Meta không có nhóm)
     PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL", "")       # URL công khai (ngrok/domain) để gửi ảnh + nhận webhook
     META_WEBHOOK_PORT    = int(os.getenv("META_WEBHOOK_PORT", "5006"))
+    # Bật kênh Instagram: chỉ TRUE khi app Meta đã setup sản phẩm Instagram +
+    # có IG Professional liên kết Page. Bật sớm khi chưa setup → FB Login báo
+    # "Invalid Scopes" → HỎNG luôn đăng nhập Messenger. Mặc định TẮT cho an toàn.
+    FB_ENABLE_IG         = os.getenv("FB_ENABLE_IG", "false").strip().lower() in ("1", "true", "yes", "on")
+    # Instagram qua nhánh "Instagram Login" (graph.instagram.com): gửi DM bằng
+    # token IG riêng (lấy từ "Tạo mã" trong use case Instagram), KHÁC token Page
+    # của Messenger. Single-tenant: 1 token cho 1 tài khoản IG (đủ cho 1 homestay).
+    IG_ACCESS_TOKEN      = os.getenv("IG_ACCESS_TOKEN", "")
+    IG_GRAPH_VERSION     = os.getenv("IG_GRAPH_VERSION", "v21.0")
 
     # Bot
     ROOMS_PHOTOS_DIR  = _resolve(os.getenv("ROOMS_PHOTOS_DIR"), "media/rooms_photos")

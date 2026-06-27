@@ -1,33 +1,38 @@
-# Kiến trúc dự án — Zalo Homestay Bot (Haru & Mochi)
+# Kiến trúc dự án — Homestay Bot ĐA KÊNH (Zalo · Messenger/Instagram · Telegram)
 
 > File này mô tả tổng quan kiến trúc để đọc nhanh, đỡ phải scan lại toàn bộ code.
 > Cập nhật khi thay đổi logic lớn.
 
 ## 1. Tóm tắt
 
-Bot chat tự động trên **Zalo** cho 2 homestay **Haru Staycation** và **Mochi Home**.
-Khi khách nhắn tin 1-1, bot tự tư vấn: xem **lịch phòng trống** (đọc từ Google Sheets),
-gửi **bảng giá**, gửi **ảnh phòng**, và khi khách chốt đặt thì **thông báo + gọi điện cho chủ nhà**.
+Bot chat tự động tư vấn đặt phòng homestay, bán dạng **SaaS cho nhiều homestay**, chạy trên **3 kênh**:
+**Zalo** (cá nhân, đăng nhập QR qua Node), **Meta** (Messenger + Instagram, 1 lần đăng nhập Facebook),
+và **Telegram** (bot, người lạ nhắn được ngay, không cần duyệt).
 
-Chủ nhà có một **dashboard web** để xem hội thoại và bật/tắt bot cho từng khách.
-Hỗ trợ chạy **nhiều tài khoản Zalo** song song (acc 1, acc 2...), mỗi acc 1 process riêng.
+Khi khách nhắn 1-1, bot tự tư vấn: xem **lịch phòng trống** (Google Sheets), gửi **bảng giá**,
+gửi **ảnh phòng**, và khi khách chốt đặt thì **thông báo + gọi điện cho chủ nhà**.
 
-**Stack:** Python · `zlapi` (Zalo client không chính thức) · OpenAI/DeepSeek + Groq (LLM) ·
-Google Sheets (gspread) · Flask (dashboard) · Telethon (gọi điện qua Telegram).
+Mỗi homestay tự cấu hình trong **dashboard web**: kết nối kênh, chọn chủ nhận báo, đăng nhập acc gọi,
+xem hội thoại và bật/tắt bot cho từng khách.
+
+**Stack:** Python · `zca-js` (Zalo QR, Node) / `zlapi` (Zalo cookie cũ) · Graph API (Meta) ·
+Bot API + Telethon (Telegram) · DeepSeek + Groq (LLM) · Google Sheets (gspread) · Flask · React/Vite.
 
 ## 2. Kiến trúc channel-agnostic (đã refactor)
 
 Logic bot được tách làm 2 lớp để sau cắm thêm kênh (Instagram, Messenger, web widget...) mà không viết lại logic:
 
 ```
-        ┌─ ZaloChannel (bot.py) ──── Zalo cá nhân (zlapi)
-Brain ──┼─ (sau này) MetaChannel ── Messenger + Instagram
-(brain.py)─ (sau này) WebChannel ── web chat widget của bạn
-   │       cùng 1 "não bộ"
+        ┌─ ZaloNodeChannel ──────── Zalo QR (zca-js, Node) — đang dùng
+Brain ──┼─ MetaChannel ─────────── Messenger + Instagram (Graph API)
+(brain.py)─ TelegramChannel ────── Telegram bot (Bot API + Telethon gọi điện)
+   │       cùng 1 "não bộ"          (ZaloCookieChannel zlapi — fallback cũ)
    ▼
   Channel (channel.py) — giao diện trừu tượng:
   send_text · send_room_photos · send_price_photos · notify_owner · call_owner
 ```
+
+→ 3 kênh trên ĐỀU đã chạy thật, cùng dùng chung `brain.py`. Thêm kênh mới vẫn theo nguyên tắc này.
 
 - **Brain** (`brain.py`) = toàn bộ logic xử lý (intent, override regex, Sheets, ảnh, booking). KHÔNG biết gì về Zalo. Chỉ ra lệnh qua giao diện `Channel`.
 - **Channel** (`channel.py`) = lớp trừu tượng (ABC) định nghĩa các "primitive" gửi tin.
@@ -84,12 +89,15 @@ F:\New folder\zalo\
 │  │  ├─ claude_ai.py           Gọi LLM (DeepSeek→Groq), đọc system_prompt.txt cùng thư mục
 │  │  ├─ owner_call.py          Beep + gọi Telegram (Telethon) báo chủ
 │  │  └─ system_prompt.txt
+│  │  ├─ telegram_store.py      Token + chủ + caller_session theo từng bot Telegram
+│  │  └─ telegram_login.py      Đăng nhập acc gọi (Telethon) bằng QR trong web
 │  ├─ channels/
 │  │  ├─ zalo_node.py           Kênh Zalo QR — gọi HTTP sang Node service (zca-js)
+│  │  ├─ meta.py                Kênh Messenger + Instagram (Graph API)
+│  │  ├─ telegram.py            Kênh Telegram bot (Bot API + Telethon gọi điện)
 │  │  └─ zalo_cookie/           Kênh Zalo CŨ (zlapi/cookie) — fallback
-│  │     ├─ bot.py  dashboard.py  main.py
-│  ├─ web_api/bridge.py         Flask: /incoming (nhận tin từ Node) + API hội thoại (/conversations…)
-│  └─ main_node.py              Entry kênh QR Node (bridge cổng 5005)
+│  ├─ web_api/                  Flask theo kênh: bridge.py (Zalo 5005) · meta_webhook.py (5006) · telegram_api.py (5007)
+│  └─ main_node.py · main_meta.py · main_telegram.py   Entry từng kênh
 ├─ zalo-node/                   NODE service (zca-js): QR login, nhận/gửi Zalo, /groups, /config, /notify-owner (cổng 4000)
 ├─ web-ui/                      FRONTEND React (Vite): đăng nhập/đăng ký, quản lý app, QR, chọn nhóm, xem hội thoại (cổng 5173)
 ├─ scripts/                     get_zalo_id.py · setup_tg_call.py · debug_sheets.py · run.bat (chạy kênh cũ)
@@ -143,9 +151,22 @@ còn lọc theo giờ thực tế (ẩn ca đã kết thúc), xử lý cả ca q
 - **LLM:** DeepSeek (`deepseek-chat`) chính → fallback Groq (`llama-3.3-70b` → `llama-3.1-8b` → `gemma2-9b`).
   Đều gọi qua OpenAI-compatible API. Cần `DEEPSEEK_API_KEY` hoặc `GROQ_API_KEY`.
 - **Google Sheets:** service account read-only, 2 sheet `HARU_SHEET_ID` / `MOCHI_SHEET_ID`.
-- **Thông báo chủ nhà:** ưu tiên gửi vào nhóm Zalo `OWNER_GROUP_ID`, fallback DM `OWNER_ZALO_ID`.
-- **Gọi điện:** beep loa máy (`winsound`) + gọi qua Telegram (Telethon) tới `TELEGRAM_TARGET_ID`,
-  gọi lại mỗi 3 phút, tối đa 10 lần cho tới khi bắt máy.
+- **Thông báo chủ nhà (`notify_owner`):** Zalo → nhóm `OWNER_GROUP_ID` (fallback DM); Meta → DM PSID;
+  Telegram → DM chủ đã đăng ký (`/chunha` hoặc nút trong web).
+- **Gọi điện (`call_owner`):** beep loa máy (`winsound`) + gọi qua **Telegram bằng Telethon**.
+  - **Acc gọi (người gọi):** 1 tài khoản Telegram THẬT (bot không gọi thoại được). Phiên đăng nhập lưu
+    dạng StringSession. Đăng nhập **bằng QR ngay trong web** (`telegram_login.py`, mỗi bot/homestay 1 acc) —
+    thay cho `scripts/setup_tg_call.py` (terminal) trước đây.
+  - **Người nghe (chủ):** chủ đã đăng ký của bot (`store.get_owner_chat_id`) hoặc `.env TELEGRAM_TARGET_ID`.
+  - **Logic dừng:** gọi lại mỗi 3 phút, tối đa 10 lần; **dừng khi chủ BẮT MÁY** (sự kiện `PhoneCallAccepted`).
+  - `api_id/api_hash` đọc từ `.env` (`TELEGRAM_API_ID/HASH`), không còn hardcode.
+
+### Kênh Telegram (đa khách)
+`channels/telegram.py` (`TelegramChannel`, user_id `tg:<bot_id>:<chat>`) + `web_api/telegram_api.py`
+(LONG-POLLING getUpdates, 1 poller/bot, Flask 5007) + `core/telegram_store.py` (token + chủ + **caller_session**
+theo từng bot → `data/telegram_bots.json`) + `core/telegram_login.py` (đăng nhập acc gọi bằng QR).
+Onboarding: khách **dán token bot** (@BotFather) trong web → tự lưu + poll. Chủ tự đăng ký `/chunha` hoặc
+nút "Đăng ký chủ". Acc gọi: nút "📞 Đăng nhập acc gọi" → quét QR.
 
 ## 7. Chạy
 
@@ -177,8 +198,9 @@ python -m app.channels.zalo_cookie.main    # hoặc scripts/run.bat
 - **Auth web tạm thời:** đăng nhập/đăng ký + danh sách app lưu **localStorage trình duyệt** (chưa backend, mật khẩu chưa hash). Cần thay bằng backend + DB khi bán thật.
 - **Đơn tenant:** Node service hiện 1 instance/1 tài khoản Zalo dùng chung; multi-tenant chưa làm.
 - `requirements.txt` còn thiếu vài gói runtime (`groq`, `telethon`, `flask`, `pillow`); Node cần `npm install` trong `zalo-node/` và `web-ui/`.
-- API_ID/API_HASH Telegram (công khai của TG Desktop) hardcode trong `owner_call.py` & `scripts/setup_tg_call.py`.
+- Telegram `api_id/api_hash` lấy từ `.env` (`TELEGRAM_API_ID/HASH`); fallback creds TG Desktop CHỈ để chạy thử —
+  đa khách phải đăng ký riêng ở my.telegram.org kẻo bị giới hạn/ban.
+- **Bảo mật:** `caller_session` (toàn quyền acc Telegram của khách) đang lưu THÔ trong `data/telegram_bots.json` —
+  cần mã hoá trước khi bán thật.
 - Bot chỉ xử lý chat **1-1**, mọi tin nhóm bị bỏ qua (trừ gửi thông báo vào nhóm chủ).
 - `sheets.py` còn 1 test phụ thuộc giờ thực tế (E7/F4) — không phải lỗi cấu trúc.
-</content>
-</invoke>

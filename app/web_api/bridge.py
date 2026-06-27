@@ -21,13 +21,30 @@ log = logging.getLogger("bridge")
 BOT_STATE_FILE = Config.DATA_DIR / "bot_state.json"
 
 
+ALL_CHANNELS = ("zalo", "meta", "telegram")
+
+
+def _norm_channel(ch: str) -> str:
+    ch = (ch or "").strip().lower()
+    return "meta" if ch in ("messenger", "instagram") else ch
+
+
 def _load_bot_state() -> dict:
     try:
         if BOT_STATE_FILE.exists():
-            return {"enabled": True, **json.loads(BOT_STATE_FILE.read_text(encoding="utf-8"))}
+            return {"enabled": True, "channels": {}, **json.loads(BOT_STATE_FILE.read_text(encoding="utf-8"))}
     except Exception as e:
         log.error(f"[bot_state] load lỗi: {e}")
-    return {"enabled": True}
+    return {"enabled": True, "channels": {}}
+
+
+def _channel_enabled(state: dict, channel: str) -> bool:
+    """Bot của 1 kênh có đang bật không. Chưa set riêng → theo cờ chung 'enabled' (tương thích cũ)."""
+    channel = _norm_channel(channel)
+    chans = state.get("channels") or {}
+    if channel and channel in chans:
+        return bool(chans[channel])
+    return bool(state.get("enabled", True))
 
 
 def _save_bot_state(state: dict) -> None:
@@ -98,19 +115,31 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     @app.route("/bot-status")
     def bot_status():
-        return {"enabled": bool(bot_state.get("enabled", True))}
+        """Trạng thái bot. ?channel=zalo|meta|telegram → của riêng kênh đó (mặc định: cờ chung)."""
+        channel = _norm_channel(request.args.get("channel", ""))
+        return {"enabled": _channel_enabled(bot_state, channel), "channel": channel or "all"}
 
     @app.route("/bot-toggle", methods=["POST"])
     def bot_toggle():
-        """Bật/tắt bot cho cả app. body {enabled: bool, app_name?: str}.
-        Mỗi lần đổi trạng thái sẽ nhắn vào nhóm chung để chủ nhà biết."""
+        """Bật/tắt bot RIÊNG TỪNG KÊNH. body {enabled: bool, channel?: str, app_name?: str}.
+        channel rỗng/"all" = áp cho mọi kênh (vd lúc đăng xuất). Nhắn nhóm để chủ biết."""
         data = request.get_json(force=True, silent=True) or {}
         enabled = bool(data.get("enabled", True))
+        channel = _norm_channel(data.get("channel") or "")
         app_name = _norm_text(data.get("app_name") or "")
-        bot_state["enabled"] = enabled
+
+        chans = bot_state.setdefault("channels", {})
+        if not channel or channel == "all":
+            for c in ALL_CHANNELS:
+                chans[c] = enabled
+            bot_state["enabled"] = enabled
+            scope = "tất cả kênh"
+        else:
+            chans[channel] = enabled
+            scope = channel
         _save_bot_state(bot_state)
 
-        label = f" {app_name}" if app_name else ""
+        label = f" {app_name}" if app_name else f" ({scope})"
         if enabled:
             msg = f"🟢 Bot{label} đã được BẬT — AI sẽ tự động tư vấn khách."
         else:
@@ -119,8 +148,8 @@ def create_bridge(brain, conv_manager) -> Flask:
             brain.channel.notify_owner(msg)
         except Exception as e:
             log.error(f"[bot-toggle] báo nhóm lỗi: {e}")
-        log.info(f"[bot-toggle] enabled={enabled}")
-        return {"ok": True, "enabled": enabled}
+        log.info(f"[bot-toggle] channel={channel or 'all'} enabled={enabled}")
+        return {"ok": True, "enabled": enabled, "channel": channel or "all"}
 
     # ── API hội thoại (thay cho dashboard.py) ──────────────────────────
 
@@ -203,8 +232,8 @@ def create_bridge(brain, conv_manager) -> Flask:
                 return {"ok": True, "owner_takeover": True}
             return {"ok": True, "skipped": "self-echo"}
 
-        # Bot bị tắt toàn cục (nút trên màn hình chính) → không auto-reply khách
-        if not bot_state.get("enabled", True):
+        # Bot kênh Zalo bị tắt → không auto-reply khách
+        if not _channel_enabled(bot_state, "zalo"):
             log.info(f"[Skip] bot_disabled {user_id}")
             return {"ok": True, "skipped": "bot_disabled"}
 

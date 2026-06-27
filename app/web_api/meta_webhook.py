@@ -23,7 +23,7 @@ from flask import Flask, request, jsonify, send_from_directory
 
 from app.core.config import Config
 from app.channels import meta_graph
-from app.web_api.bridge import _load_bot_state, _conv_summary  # dùng chung helper
+from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary  # dùng chung helper
 
 log = logging.getLogger("meta_webhook")
 
@@ -47,10 +47,11 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
 
     @app.route("/meta/config")
     def meta_config():
-        """UI hỏi: app đã cấu hình chưa + app_id để mở FB Login."""
+        """UI hỏi: app đã cấu hình chưa + app_id để mở FB Login + có bật IG không."""
         return {
             "app_id": Config.FB_APP_ID,
             "configured": bool(Config.FB_APP_ID and Config.FB_APP_SECRET),
+            "enable_ig": Config.FB_ENABLE_IG,   # frontend xin thêm quyền IG khi bật
         }
 
     @app.route("/meta/connect", methods=["POST"])
@@ -179,8 +180,20 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
                 page_id = store.page_for_ig(entry_id) or entry_id
             else:
                 page_id = entry_id
+            # Messenger (và IG qua FB-login): tin trong mảng "messaging"
             for ev in entry.get("messaging", []):
                 _dispatch(platform, page_id, ev)
+            # Instagram Login: tin trong "changes" field=messages, value giống 1 ev
+            for ch in entry.get("changes", []):
+                if ch.get("field") != "messages":
+                    continue
+                val = ch.get("value")
+                if not isinstance(val, dict):
+                    continue
+                sender_id = str((val.get("sender") or {}).get("id") or "")
+                if sender_id and sender_id == entry_id:
+                    continue  # tin do chính tài khoản IG gửi (echo) → bỏ
+                _dispatch(platform, page_id, val)
         return "EVENT_RECEIVED", 200
 
     def _valid_signature(raw: bytes, header: str) -> bool:
@@ -211,8 +224,8 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         # user_id đa Page: platform:page_id:recipient → trả lời đúng token Page
         user_id = f"{platform}:{page_id}:{sender}"
 
-        # Bot tắt toàn cục (đọc lại file mỗi tin để đồng bộ cả khi bridge Zalo đổi)
-        if not _load_bot_state().get("enabled", True):
+        # Bot kênh Meta bị tắt (đọc lại file mỗi tin để đồng bộ khi đổi từ web)
+        if not _channel_enabled(_load_bot_state(), "meta"):
             log.info(f"[Meta] bot đang TẮT → bỏ qua {user_id}")
             return
 

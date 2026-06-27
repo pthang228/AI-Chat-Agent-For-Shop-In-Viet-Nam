@@ -7,6 +7,11 @@ boot*.txt
 
 data/*.json
 data/*.session
+data/*.txt
+data/*.out.log
+data/*.err.log
+
+test_sessions_tmp.json
 
 zalo-node/zalo-session.json
 zalo-node/node-config.json

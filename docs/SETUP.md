@@ -1,167 +1,131 @@
-# Hướng dẫn cài đặt Zalo Homestay Bot
+# Hướng dẫn cài đặt — Homestay Bot đa kênh
 
-## Tổng quan
-Bot tự động trả lời tin nhắn Zalo cá nhân của bạn bằng Claude AI,
-check lịch phòng từ Google Sheets, gửi ảnh phòng trống và thông báo khi khách chốt.
+Bot tư vấn đặt phòng tự động, chạy 3 kênh: **Zalo · Messenger/Instagram · Telegram**.
+Dữ liệu phòng/giá/lịch lấy từ **Google Sheets**; khi khách chốt phòng bot **báo + gọi điện cho chủ**.
+Quản lý tất cả trong **dashboard web** (React).
+
+> Kiến trúc chi tiết: xem [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## BƯỚC 1 — Cài thư viện Python
-
-Mở PowerShell trong thư mục này và chạy:
+## BƯỚC 0 — Cài môi trường
 
 ```powershell
-pip install -r requirements.txt
+pip install -r requirements.txt        # Python (backend)
+cd zalo-node && npm install && cd ..    # Node (kênh Zalo QR)
+cd web-ui   && npm install && cd ..     # React (dashboard)
+```
+Cần: **Python 3.12+**, **Node.js**. Kênh Meta cần thêm **ngrok** (URL public cho webhook).
+
+---
+
+## BƯỚC 1 — File `.env`
+
+Copy `.env.example` → `.env` rồi điền. Các khoá chính:
+
+```ini
+# ── LLM (cần ít nhất 1) ──
+DEEPSEEK_API_KEY=...           # chính
+GROQ_API_KEY=...               # dự phòng
+
+# ── Google Sheets (lịch/giá) ──
+HARU_SHEET_ID=...
+MOCHI_SHEET_ID=...
+# + file google_credentials.json (xem BƯỚC 2)
+
+# ── Zalo (kênh QR qua Node) ──
+OWNER_GROUP_ID=...             # nhóm Zalo nhận báo (chọn trong web)
+
+# ── Meta (Messenger + Instagram) ──
+FB_APP_ID=...
+FB_APP_SECRET=...
+FB_VERIFY_TOKEN=haru_verify_token
+FB_ENABLE_IG=true
+NGROK_DOMAIN=...               # domain ngrok tĩnh (free)
+NGROK_AUTHTOKEN=...
+
+# ── Telegram (bot + gọi điện) ──
+TELEGRAM_OWNER_SETUP_CODE=chunha     # mã chủ gõ /start <mã> để tự đăng ký
+TELEGRAM_API_ID=...                  # đăng ký ở my.telegram.org (BƯỚC 5)
+TELEGRAM_API_HASH=...
+TELEGRAM_TARGET_ID=...               # (tuỳ chọn) ID chủ nhận gọi cho bản .env 1-bot
 ```
 
----
-
-## BƯỚC 2 — Lấy Anthropic API Key (Claude)
-
-1. Truy cập: https://console.anthropic.com/settings/keys
-2. Đăng ký tài khoản nếu chưa có
-3. Nhấn **"Create Key"**
-4. Copy key (dạng `sk-ant-...`)
-5. Dán vào file `.env` ở mục `ANTHROPIC_API_KEY`
-
-> **Chi phí**: ~$0.003 mỗi cuộc trò chuyện (rất rẻ)
+> Giữ kín `.env` — đừng commit lên git.
 
 ---
 
-## BƯỚC 3 — Cấu hình Google Sheets
+## BƯỚC 2 — Google Sheets
 
-### 3a. Tạo Google Cloud Project
+1. Tạo project ở https://console.cloud.google.com → bật **Google Sheets API** + **Google Drive API**.
+2. **Service Account → Keys → Add key → JSON** → tải về, đổi tên `google_credentials.json`, để ở gốc dự án.
+3. Mở file đó lấy email `...@...iam.gserviceaccount.com` → **Share** Google Sheet cho email này (quyền Viewer).
+4. Lấy **Sheet ID** từ URL (`docs.google.com/spreadsheets/d/<SHEET_ID>/edit`) → dán vào `.env`.
 
-1. Vào: https://console.cloud.google.com
-2. Tạo project mới (tên bất kỳ)
-3. Tìm và bật 2 API:
-   - **Google Sheets API**
-   - **Google Drive API**
-
-### 3b. Tạo Service Account
-
-1. Vào **IAM & Admin → Service Accounts**
-2. Nhấn **"Create Service Account"**
-3. Đặt tên bất kỳ → nhấn Done
-4. Click vào service account vừa tạo → tab **"Keys"**
-5. **Add Key → Create new key → JSON**
-6. File JSON sẽ được tải xuống → đổi tên thành `google_credentials.json`
-7. Copy file này vào thư mục bot (cùng chỗ với `main.py`)
-
-### 3c. Chia sẻ Google Sheet với Service Account
-
-1. Mở file `google_credentials.json`, tìm email dạng:
-   `your-service@your-project.iam.gserviceaccount.com`
-2. Mở Google Sheet của bạn
-3. Nhấn **Chia sẻ (Share)** → dán email service account → quyền **Viewer**
+Sheet lịch: hàng 1 = tên phòng (gộp ô), hàng 2 = ca giờ, hàng 3+ = dữ liệu (cột B = ngày, `dd/mm/yyyy`).
+Tab đặt theo tháng (vd "Lịch tháng 6/2026"). Ảnh phòng để ở `media/rooms_photos/<số phòng>/`, bảng giá ở `media/price_photos/`.
 
 ---
 
-## BƯỚC 4 — Cấu trúc Google Sheets
+## BƯỚC 3 — Chạy
 
-### Sheet 1: Lịch phòng (tab `Lich_phong`)
+**Nhanh nhất:** double-click `start-all.bat` (mở Zalo Node 4000 · Brain 5005 · Meta 5006 · Telegram 5007 · Web 5173)
+→ mở http://localhost:5173. Chạy ẩn: `start-silent.vbs`. Tắt: `stop-all.bat`.
 
-| Ngày       | Tên phòng | Trạng thái | Ghi chú |
-|------------|-----------|------------|---------|
-| 25/05/2026 | Phòng A   | Đã đặt     |         |
-| 25/05/2026 | Phòng B   | Trống      |         |
-| 26/05/2026 | Phòng A   | Trống      |         |
-
-- **Ngày**: định dạng `dd/mm/yyyy`
-- **Trạng thái**: ghi `Đã đặt` hoặc `Trống`
-
-### Sheet 2: Thông tin phòng (tab `Thong_tin_phong`)
-
-| Tên phòng | Giá phòng       | Mô tả              | Link ảnh | Quy định          |
-|-----------|-----------------|--------------------|----------|-------------------|
-| Phòng A   | 500.000         | View biển, 2 giường| (để trống) | Check-in 14h    |
-| Phòng B   | 350.000         | Studio, 1 giường   | (để trống) | Check-out 12h   |
-
----
-
-## BƯỚC 5 — Cài đặt file .env
-
-1. Copy file `.env.example` → đổi tên thành `.env`
-2. Điền đầy đủ thông tin:
-
-```
-ZALO_PHONE=0912345678           # Số điện thoại Zalo của bạn
-ZALO_PASSWORD=mat_khau_cua_ban  # Mật khẩu Zalo
-
-OWNER_ZALO_ID=1234567890        # ID Zalo của bạn (để nhận thông báo)
-# Cách lấy ID: nhắn tin cho bot @devtest hoặc xem trong Zalo web
-
-ANTHROPIC_API_KEY=sk-ant-...    # Key Claude
-
-AVAILABILITY_SHEET_ID=...       # ID sheet (lấy từ URL)
-ROOMS_INFO_SHEET_ID=...         # Có thể giống AVAILABILITY nếu cùng file
-```
-
-### Cách lấy Sheet ID
-URL sheet trông như này:
-`docs.google.com/spreadsheets/d/**1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs**74OgVE2upms/edit`
-
-Phần in đậm chính là Sheet ID.
-
----
-
-## BƯỚC 6 — Thêm ảnh phòng
-
-1. Tạo thư mục `rooms_photos` trong thư mục bot
-2. Đặt ảnh theo tên phòng, ví dụ:
-   - `rooms_photos/Phòng A.jpg`
-   - `rooms_photos/Phòng B.jpg`
-   - `rooms_photos/Phòng B_2.jpg` (ảnh thứ 2, tối đa 3 ảnh/phòng)
-
----
-
-## BƯỚC 7 — Tùy chỉnh system prompt
-
-Mở file `system_prompt.txt` và sửa:
-- `[TÊN HOMESTAY CỦA BẠN]` → tên homestay thực của bạn
-- Thêm thông tin đặc thù: địa chỉ, tiện ích, chính sách của bạn
-
----
-
-## BƯỚC 8 — Chạy bot
-
+**Chạy tay từng phần (từ gốc dự án):**
 ```powershell
-python main.py
+cd zalo-node; npm start          # 4000 — Zalo QR + nhận/gửi
+python -m app.main_node          # 5005 — não bộ Zalo
+python scripts/run_meta.py       # 5006 — Messenger/Instagram + ngrok
+python -m app.main_telegram      # 5007 — Telegram (long-poll, không cần tunnel)
+cd web-ui; npm run dev           # 5173 — dashboard
 ```
-
-Lần đầu chạy, Zalo có thể yêu cầu xác thực OTP — nhập mã gửi về điện thoại.
+> Web (5173) và các server kênh **độc lập**: đóng web KHÔNG tắt bot; nhưng server kênh phải chạy thì bot mới trả lời.
+> Sau khi sửa `.env`/code Python phải **restart** server kênh (Flask/Node không tự nạp lại).
 
 ---
 
-## Cấu trúc thư mục hoàn chỉnh
+## BƯỚC 4 — Kết nối từng kênh trong web
 
-```
-zalo/
-├── main.py                 # Chạy file này
-├── bot.py                  # Logic bot
-├── claude_ai.py            # Kết nối Claude
-├── sheets.py               # Kết nối Google Sheets
-├── conversation.py         # Quản lý hội thoại
-├── config.py               # Đọc cài đặt
-├── system_prompt.txt       # Cá tính bot (có thể chỉnh)
-├── .env                    # ← BẠN TỰ TẠO (không commit lên git)
-├── .env.example            # Template
-├── google_credentials.json # ← BẠN TỰ TẠO (tải từ Google Cloud)
-├── requirements.txt
-├── rooms_photos/           # Thư mục ảnh phòng
-│   ├── Phòng A.jpg
-│   └── Phòng B.jpg
-└── bot.log                 # Log tự động tạo khi chạy
-```
+Mở dashboard → tạo app cho từng kênh → tab **Kết nối** đã có **hướng dẫn từng bước ngay trên giao diện**:
+
+- **Zalo:** quét QR bằng app Zalo → chọn nhóm nhận báo.
+- **Messenger/Instagram:** bấm **Đăng nhập với Facebook** → chọn Page homestay. (Khách không cần đụng trang
+  lập trình Facebook; vendor lo app + webhook 1 lần.)
+- **Telegram (3 bước):** ① dán **token bot** (@BotFather) → Kết nối; ② **Đăng ký chủ** (bấm Start / gõ `/chunha`);
+  ③ **📞 Đăng nhập acc gọi** → quét QR bằng tài khoản dùng để gọi cho chủ.
 
 ---
 
-## Xử lý sự cố thường gặp
+## BƯỚC 5 — Telegram: lấy `api_id` / `api_hash` (cho việc gọi điện)
 
-| Lỗi | Nguyên nhân | Giải pháp |
-|-----|-------------|-----------|
-| `ModuleNotFoundError: zlapi` | Chưa cài thư viện | `pip install -r requirements.txt` |
-| `Thiếu config` | Chưa tạo `.env` | Copy `.env.example` → `.env` |
-| `INVALID_CREDENTIALS` | Sai thông tin Zalo | Kiểm tra phone/password |
-| `Lỗi đọc lịch phòng` | Sheet chưa được share | Share sheet cho service account email |
-| Không gửi được ảnh | Sai tên file ảnh | Tên file phải giống hệt tên phòng trong sheet |
+Acc gọi (Telethon) cần app riêng của bạn:
+
+1. Vào https://my.telegram.org → đăng nhập bằng SĐT → **API development tools**.
+2. Tạo app (title/short name bất kỳ, platform **Other**) → copy **App api_id** (số) và **App api_hash** (32 ký tự).
+3. Dán vào `.env` (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`) → restart `python -m app.main_telegram`.
+
+> Fallback creds Telegram Desktop chỉ để chạy thử — bán đa khách phải dùng creds riêng kẻo bị giới hạn/ban.
+> `caller_session` lưu trong `data/telegram_bots.json` = toàn quyền acc khách → cần mã hoá trước khi bán thật.
+
+---
+
+## Cách chủ ngừng bị gọi
+
+Khi khách chốt phòng / đòi gặp người, bot **nhắn + gọi** chủ. **Bắt máy** là chuỗi gọi dừng ngay;
+nếu không nghe, máy gọi lại mỗi **3 phút**, tối đa **10 lần** rồi tự dừng.
+
+---
+
+## Xử lý sự cố
+
+| Hiện tượng | Nguyên nhân / Cách xử lý |
+|---|---|
+| Web hiện "Chưa kết nối máy chủ (cổng 5005/5006/5007)" | Server kênh đó chưa chạy → chạy lệnh tương ứng ở BƯỚC 3 |
+| Bot không trả lời | Server kênh tắt, hoặc bot bị tắt toàn cục (nút trên card), hoặc khách đang ở chế độ "chủ xử lý" |
+| Telegram không gọi được chủ | Chưa đăng nhập acc gọi (QR), hoặc chưa đăng ký chủ, hoặc `TELEGRAM_API_ID/HASH` sai → xem `bot_telegram.log` |
+| Meta: tin không về | Webhook chưa khai đúng URL `<ngrok>/fb/webhook` + verify token; app chưa ở chế độ Live |
+| `Lỗi đọc lịch phòng` | Sheet chưa share cho service account, hoặc sai `*_SHEET_ID` |
+| Không gửi được ảnh phòng | Sai thư mục `media/rooms_photos/<số phòng>/` |
+
+**Log:** `bot_telegram.log` · `bot_meta.log` · `bot.log` (Zalo). Chạy ẩn thì log ở `data/*.out.log`.

@@ -4,8 +4,8 @@
     {
       "name": "web-ui",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
-      "runtimeArgs": ["web-ui/node_modules/vite/bin/vite.js", "web-ui", "--port", "5173"],
-      "port": 5173
+      "runtimeArgs": ["web-ui/node_modules/vite/bin/vite.js", "web-ui", "--port", "5183", "--strictPort"],
+      "port": 5183
     }
   ]
 }

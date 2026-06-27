@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { meta, loadFbSdk, fbLogin } from "../metaApi.js";
+import { meta, loadFbSdk, fbLogin, buildScope } from "../metaApi.js";
+import GuideBox from "./GuideBox.jsx";
 
 // Màn "Kết nối Facebook" cho 1 app kênh Messenger/Instagram.
 // Khách bấm đăng nhập FB → chọn Page → backend lưu token + subscribe webhook.
@@ -28,7 +29,7 @@ export default function MetaConnect() {
     setMsg(""); setBusy(true);
     try {
       const FB = await loadFbSdk(cfg.app_id);
-      const userToken = await fbLogin(FB);
+      const userToken = await fbLogin(FB, buildScope(cfg.enable_ig));
       const r = await meta.connect(userToken);
       if (r.ok && r.body?.ok) {
         const n = r.body.pages?.length || 0;
@@ -73,11 +74,23 @@ export default function MetaConnect() {
 
   return (
     <div className="connect">
-      <div className="status ok">🔗 Kết nối Facebook / Instagram</div>
-      <p className="hint">
-        Đăng nhập Facebook và chọn Page homestay của bạn. Bot sẽ tự trả lời tin nhắn của Page (và
-        Instagram liên kết). Bạn không cần thao tác gì trên trang lập trình của Facebook.
-      </p>
+      <div className="status ok">🔗 Kết nối Facebook{cfg.enable_ig ? " / Instagram" : ""}</div>
+
+      <GuideBox
+        title="📘 Hướng dẫn nhanh — Messenger / Instagram"
+        steps={[
+          { t: "Bước 1 · Đăng nhập Facebook", d: <>Bấm <b>Đăng nhập với Facebook</b> bên dưới → chọn đúng <b>Page homestay</b> của bạn.</> },
+          { t: "Bước 2 · Bot tự trả lời", d: <>Xong là bot tự trả lời tin nhắn của Page{cfg.enable_ig ? " và Instagram liên kết" : ""}. Bạn <b>không cần</b> đụng gì vào trang lập trình của Facebook.</> },
+          { t: "Bước 3 · Quản lý khách", d: <>Xem & xử lý hội thoại từng khách ở tab <b>Khách hàng</b>.</> },
+        ]}
+        note={<>Vendor đã lo phần app Meta + webhook. Nếu tin nhắn chưa chạy về, báo vendor kiểm tra webhook giúp.</>}
+      />
+      {!cfg.enable_ig && (
+        <p className="hint">
+          ℹ️ Instagram đang <b>tắt</b>. Bật bằng cách đặt <code>FB_ENABLE_IG=true</code> trong <code>.env</code> sau
+          khi app Meta đã thêm sản phẩm Instagram và có IG Professional liên kết Page, rồi chạy lại máy chủ Meta.
+        </p>
+      )}
 
       <button className="btn-fb" onClick={connect} disabled={busy}>
         <span className="fb-ico">f</span>{busy ? "Đang kết nối…" : "Đăng nhập với Facebook"}

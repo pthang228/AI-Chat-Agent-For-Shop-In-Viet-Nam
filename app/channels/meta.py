@@ -43,6 +43,8 @@ class MetaChannel(Channel):
         graph_version: str = None,
         owner_psid: str = None,
         conv_manager=None,
+        ig_token: str = None,
+        ig_graph_version: str = None,
     ):
         self.store = store          # MetaStore: token theo từng Page (multi-tenant)
         self.page_token = page_token if page_token is not None else Config.FB_PAGE_ACCESS_TOKEN
@@ -50,6 +52,9 @@ class MetaChannel(Channel):
         self.public_base_url = (base or "").rstrip("/")
         self.graph_version = graph_version or Config.FB_GRAPH_VERSION
         self.owner_psid = owner_psid if owner_psid is not None else Config.FB_OWNER_PSID
+        # Instagram (nhánh Instagram Login): gửi qua graph.instagram.com bằng token IG riêng
+        self.ig_token = ig_token if ig_token is not None else Config.IG_ACCESS_TOKEN
+        self.ig_graph_version = ig_graph_version or Config.IG_GRAPH_VERSION
         self.conv_manager = conv_manager
         self.brain = None          # main_meta.py gán Brain sau
         self._sent: list = []      # ghi lại payload đã gửi (phục vụ test/mock)
@@ -74,32 +79,39 @@ class MetaChannel(Channel):
                 return t
         return self.page_token
 
-    def _graph_url(self) -> str:
-        return f"https://graph.facebook.com/{self.graph_version}/me/messages"
+    def _endpoint(self, platform: str, page_id):
+        """(url, token) tuỳ nền tảng:
+          - fb: graph.facebook.com + token Page (Messenger)
+          - ig: ĐA KHÁCH → ưu tiên token Page của khách qua graph.facebook.com
+            (app đã được cấp instagram_manage_messages → gửi IG bằng chính token
+            Page, mỗi homestay 1 token riêng, KHÔNG cần token IG thủ công).
+            Fallback single-tenant: graph.instagram.com + IG_ACCESS_TOKEN (.env).
+        """
+        if platform == "ig":
+            page_tok = self._token_for(page_id) if page_id else None
+            if page_tok:
+                return (f"https://graph.facebook.com/{self.graph_version}/me/messages", page_tok)
+            return (f"https://graph.instagram.com/{self.ig_graph_version}/me/messages", self.ig_token)
+        return (f"https://graph.facebook.com/{self.graph_version}/me/messages",
+                self._token_for(page_id))
 
-    def _send_api(self, page_id, recipient_id: str, message: dict):
-        token = self._token_for(page_id)
+    def _send_api(self, platform, page_id, recipient_id: str, message: dict):
+        url, token = self._endpoint(platform, page_id)
         self._sent.append((recipient_id, message))
         if not token:
-            log.info(f"[Meta mock] (chưa token, page={page_id}) → {recipient_id}: {message}")
+            log.info(f"[Meta mock] (chưa token, {platform} page={page_id}) → {recipient_id}: {message}")
             return None
-        payload = {
-            "recipient": {"id": recipient_id},
-            "message": message,
-            "messaging_type": "RESPONSE",
-        }
+        payload = {"recipient": {"id": recipient_id}, "message": message}
+        # graph.instagram.com (Instagram Login) KHÔNG dùng messaging_type; còn lại có.
+        if "graph.instagram.com" not in url:
+            payload["messaging_type"] = "RESPONSE"
         try:
-            r = requests.post(
-                self._graph_url(),
-                params={"access_token": token},
-                json=payload,
-                timeout=30,
-            )
+            r = requests.post(url, params={"access_token": token}, json=payload, timeout=30)
             if r.status_code >= 400:
-                log.error(f"[Meta] send {r.status_code}: {r.text[:300]}")
+                log.error(f"[Meta][{platform}] send {r.status_code}: {r.text[:300]}")
             return r
         except Exception as e:
-            log.error(f"[Meta] lỗi gửi: {e}")
+            log.error(f"[Meta][{platform}] lỗi gửi: {e}")
             return None
 
     def _public_url(self, path: Path):
@@ -113,7 +125,7 @@ class MetaChannel(Channel):
         rel_url = "/".join(quote(p) for p in rel.parts)
         return f"{self.public_base_url}/media/{rel_url}"
 
-    def _send_dir(self, page_id, recipient_id: str, folder: Path, caption: str) -> bool:
+    def _send_dir(self, platform, page_id, recipient_id: str, folder: Path, caption: str) -> bool:
         if not folder.is_dir():
             return False
         photos = sorted(
@@ -123,9 +135,9 @@ class MetaChannel(Channel):
         urls = [u for u in (self._public_url(p) for p in photos) if u]
         if not urls:
             return False
-        self._send_api(page_id, recipient_id, {"text": caption})
+        self._send_api(platform, page_id, recipient_id, {"text": caption})
         for u in urls:
-            self._send_api(page_id, recipient_id, {
+            self._send_api(platform, page_id, recipient_id, {
                 "attachment": {"type": "image", "payload": {"url": u, "is_reusable": True}}
             })
         return True
@@ -133,32 +145,32 @@ class MetaChannel(Channel):
     # ── Giao diện Channel ─────────────────────────────────────────
 
     def send_text(self, user_id: str, text: str) -> None:
-        _, page_id, rid = self._parse(user_id)
+        platform, page_id, rid = self._parse(user_id)
         for i in range(0, len(text), MAX_LEN):
-            self._send_api(page_id, rid, {"text": text[i:i + MAX_LEN]})
+            self._send_api(platform, page_id, rid, {"text": text[i:i + MAX_LEN]})
 
     def send_room_photos(self, user_id: str, room_names: list) -> None:
-        _, page_id, rid = self._parse(user_id)
+        platform, page_id, rid = self._parse(user_id)
         base = Path(Config.ROOMS_PHOTOS_DIR)
         sent = False
         for phong in room_names:
             so_phong = phong.strip().split()[-1]
-            if self._send_dir(page_id, rid, base / so_phong, f"📸 Ảnh {phong}:"):
+            if self._send_dir(platform, page_id, rid, base / so_phong, f"📸 Ảnh {phong}:"):
                 sent = True
         if not sent:
-            self._send_api(page_id, rid, {
+            self._send_api(platform, page_id, rid, {
                 "text": "📷 Ảnh phòng đang được cập nhật. Bạn muốn mình mô tả chi tiết hơn không?"
             })
 
     def send_price_photos(self, user_id: str) -> None:
-        _, page_id, rid = self._parse(user_id)
+        platform, page_id, rid = self._parse(user_id)
         base = Path(Config.PRICE_PHOTOS_DIR)
         sent = False
         for folder_name, label in [("haru", "Haru Staycation"), ("mochi", "Mochi Home")]:
-            if self._send_dir(page_id, rid, base / folder_name, f"📋 Bảng giá {label}:"):
+            if self._send_dir(platform, page_id, rid, base / folder_name, f"📋 Bảng giá {label}:"):
                 sent = True
         if not sent:
-            self._send_api(page_id, rid, {
+            self._send_api(platform, page_id, rid, {
                 "text": "📋 Bảng giá đang được cập nhật. Bạn có thể hỏi mình giá từng phòng nhé!"
             })
 
@@ -167,7 +179,7 @@ class MetaChannel(Channel):
         (Multi-tenant: hiện báo ở mức vendor; báo theo từng Page sẽ làm sau khi
         brain truyền được ngữ cảnh Page.)"""
         if self.owner_psid:
-            self._send_api(None, self.owner_psid, {"text": text})
+            self._send_api("fb", None, self.owner_psid, {"text": text})
         else:
             log.warning("[Meta] Chưa cấu hình FB_OWNER_PSID → bỏ qua báo chủ (vẫn rep khách bình thường)")
 
