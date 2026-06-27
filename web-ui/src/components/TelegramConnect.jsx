@@ -63,9 +63,23 @@ export default function TelegramConnect() {
     }
   }
 
-  async function disconnect(botId) {
-    if (!confirm("Ngắt kết nối bot này?")) return;
-    await tg.removeBot(botId);
+  async function disconnect(bot) {
+    const name = bot.username ? `@${bot.username}` : bot.bot_id;
+    if (!confirm(
+      `Ngắt kết nối bot ${name}?\n\n` +
+      `Thao tác này sẽ XOÁ:\n` +
+      `• Token bot khỏi hệ thống\n` +
+      `• Thông tin chủ nhà đã đăng ký\n` +
+      `• Phiên đăng nhập acc gọi\n\n` +
+      `Lịch sử hội thoại với khách vẫn còn lưu.\n` +
+      `Bạn có thể kết nối lại bất kỳ lúc nào bằng cách dán token mới.`
+    )) return;
+    await tg.removeBot(bot.bot_id);
+    refreshBots();
+  }
+
+  async function toggleBot(bot) {
+    await tg.botToggle(bot.bot_id, !bot.bot_enabled);
     refreshBots();
   }
 
@@ -168,6 +182,13 @@ export default function TelegramConnect() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button
+                    className={"btn-mini" + (b.bot_enabled ? "" : " danger")}
+                    title={b.bot_enabled ? "Bot đang BẬT — bấm để TẮT" : "Bot đang TẮT — bấm để BẬT"}
+                    onClick={() => toggleBot(b)}
+                  >
+                    {b.bot_enabled ? "🟢 Bot bật" : "🔴 Bot tắt"}
+                  </button>
                   {!b.owner_registered && b.owner_link && (
                     <a className="btn-mini" href={b.owner_link} target="_blank" rel="noreferrer">Đăng ký chủ</a>
                   )}
@@ -175,7 +196,7 @@ export default function TelegramConnect() {
                     ? <button className="btn-mini" onClick={() => callerLogout(b.bot_id)}>Đăng xuất acc gọi</button>
                     : <button className="btn-mini" onClick={() => openLogin(b.bot_id)}>📞 Đăng nhập acc gọi</button>}
                   {b.link && <a className="btn-mini" href={b.link} target="_blank" rel="noreferrer">Mở chat</a>}
-                  <button className="btn-mini danger" onClick={() => disconnect(b.bot_id)}>Ngắt</button>
+                  <button className="btn-mini danger" onClick={() => disconnect(b)}>Ngắt</button>
                 </div>
               </li>
             ))}

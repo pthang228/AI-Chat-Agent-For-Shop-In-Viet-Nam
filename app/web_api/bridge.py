@@ -39,19 +39,26 @@ def _load_bot_state() -> dict:
 
 
 def _channel_enabled(state: dict, channel: str) -> bool:
-    """Bot của 1 kênh có đang bật không. Chưa set riêng → theo cờ chung 'enabled' (tương thích cũ)."""
+    """Bật/tắt theo thứ tự ưu tiên: per-bot → per-channel → global.
+    channel có thể là 'zalo', 'meta', 'telegram', hoặc 'telegram:<bot_id>'."""
     channel = _norm_channel(channel)
     chans = state.get("channels") or {}
     if channel and channel in chans:
         return bool(chans[channel])
+    # per-bot key "telegram:123" → fallback lên channel cha "telegram"
+    if ":" in channel:
+        parent = channel.split(":")[0]
+        if parent in chans:
+            return bool(chans[parent])
     return bool(state.get("enabled", True))
 
 
 def _save_bot_state(state: dict) -> None:
+    # Ghi ra file tạm rồi rename để tránh file bị corrupt khi nhiều process ghi cùng lúc
     try:
-        BOT_STATE_FILE.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        tmp = BOT_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(BOT_STATE_FILE)
     except Exception as e:
         log.error(f"[bot_state] save lỗi: {e}")
 

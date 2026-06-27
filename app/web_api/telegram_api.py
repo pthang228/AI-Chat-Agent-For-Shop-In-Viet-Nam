@@ -18,13 +18,16 @@ from flask import Flask, request, jsonify
 
 from app.core.config import Config
 from app.core import telegram_owner, telegram_login
-from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary
+from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
 
 log = logging.getLogger("telegram_api")
 
 # Registry poller đang chạy: key ("__env__" hoặc bot_id) -> Event dừng
 _pollers: dict = {}
 _plock = threading.Lock()
+
+# Sau bao nhiêu lỗi 401/403 liên tiếp thì dừng poller (token bị thu hồi/sai)
+_MAX_AUTH_FAILURES = 5
 
 
 def parse_message(update: dict):
@@ -93,8 +96,10 @@ def handle_update(update, brain, conv_manager, bot_id=None, store=None):
 
     user_id = _uid(bot_id, chat_id)
 
-    if not _channel_enabled(_load_bot_state(), "telegram"):
-        log.info(f"[TG] bot đang TẮT → bỏ qua {user_id}")
+    # Kiểm tra per-bot trước ("telegram:bot_id"), fallback lên channel rồi global
+    _ch_key = f"telegram:{bot_id}" if bot_id else "telegram"
+    if not _channel_enabled(_load_bot_state(), _ch_key):
+        log.info(f"[TG] bot đang TẮT ({_ch_key}) → bỏ qua {user_id}")
         return
 
     conv = conv_manager.get(user_id)
@@ -122,35 +127,80 @@ def handle_update(update, brain, conv_manager, bot_id=None, store=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def poll_loop(token, bot_id, brain, conv_manager, store=None, stop=None):
-    """Long-poll getUpdates vô hạn (1 thread/bot). stop() để dừng."""
+def poll_loop(key, token, bot_id, brain, conv_manager, store=None, stop=None):
+    """Long-poll getUpdates (1 thread/bot). Tự dừng nếu token sai liên tục."""
     base = f"https://api.telegram.org/bot{token}"
     offset = None
+    auth_failures = 0
     while not (stop and stop()):
         try:
             r = requests.get(f"{base}/getUpdates",
                              params={"timeout": 50, "offset": offset}, timeout=60)
+
+            if r.status_code == 429:
+                # Rate-limit: đọc Retry-After từ Telegram, không spam
+                retry_after = 3
+                try:
+                    retry_after = int(r.json().get("parameters", {}).get("retry_after", 3))
+                except Exception:
+                    pass
+                log.warning(f"[TG poll {key}] rate-limited 429, chờ {retry_after}s")
+                time.sleep(retry_after)
+                continue
+
+            if r.status_code in (401, 403):
+                auth_failures += 1
+                log.error(f"[TG poll {key}] {r.status_code} lần {auth_failures}/{_MAX_AUTH_FAILURES}")
+                if auth_failures >= _MAX_AUTH_FAILURES:
+                    log.error(f"[TG poll {key}] dừng poller — token không còn hợp lệ")
+                    with _plock:
+                        _pollers.pop(key, None)  # xóa khỏi registry → supervisor không restart
+                    return
+                time.sleep(5)
+                continue
+
             if r.status_code >= 400:
-                log.error(f"[TG poll bot={bot_id}] {r.status_code}: {r.text[:200]}")
-                time.sleep(3); continue
+                log.error(f"[TG poll {key}] {r.status_code}: {r.text[:200]}")
+                time.sleep(3)
+                continue
+
+            auth_failures = 0  # reset sau request thành công
             for up in r.json().get("result", []):
                 offset = up["update_id"] + 1
                 handle_update(up, brain, conv_manager, bot_id=bot_id, store=store)
+
         except Exception as e:
-            log.error(f"[TG poll bot={bot_id}] lỗi: {e}")
+            log.error(f"[TG poll {key}] lỗi mạng: {e}")
             time.sleep(3)
 
 
+def _supervised_poll(key, token, bot_id, brain, conv_manager, store, stop_event):
+    """Wrapper tự restart poll_loop nếu crash ngoài dự kiến."""
+    while not stop_event.is_set():
+        try:
+            poll_loop(key, token, bot_id, brain, conv_manager, store, stop_event.is_set)
+        except Exception as e:
+            log.error(f"[TG poller {key}] crash ngoài dự kiến: {e}", exc_info=True)
+        if stop_event.is_set():
+            break
+        with _plock:
+            if key not in _pollers:
+                break  # token hỏng → đã tự xóa khỏi registry, không restart
+        log.info(f"[TG poller {key}] sẽ restart sau 10s")
+        time.sleep(10)
+    log.info(f"[TG poller {key}] đã dừng hoàn toàn")
+
+
 def start_poller(key, token, bot_id, brain, conv_manager, store=None) -> bool:
-    """Bật 1 poller cho bot (nếu chưa chạy). key='__env__' cho bot .env."""
+    """Bật 1 poller có giám sát (nếu chưa chạy). key='__env__' cho bot .env."""
     with _plock:
         if key in _pollers:
             return False
         stop = threading.Event()
         _pollers[key] = stop
     threading.Thread(
-        target=poll_loop,
-        args=(token, bot_id, brain, conv_manager, store, stop.is_set),
+        target=_supervised_poll,
+        args=(key, token, bot_id, brain, conv_manager, store, stop),
         daemon=True,
     ).start()
     log.info(f"[TG] bật poller {key} (bot_id={bot_id})")
@@ -177,6 +227,13 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
     @app.route("/health")
     def health():
         return {"ok": True}
+
+    @app.route("/tg/pollers")
+    def tg_pollers():
+        """Danh sách poller đang chạy — dùng để debug bot có online không."""
+        with _plock:
+            active = list(_pollers.keys())
+        return {"ok": True, "active": active, "count": len(active)}
 
     @app.route("/tg/config")
     def tg_config():
@@ -218,10 +275,12 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
     def tg_bots():
         bots = store.list_bots() if store else []
         code = Config.TELEGRAM_OWNER_SETUP_CODE
-        for b in bots:   # bổ sung link cho UI
+        state = _load_bot_state()
+        for b in bots:
             u = b.get("username")
             b["link"] = f"https://t.me/{u}" if u else None
             b["owner_link"] = f"https://t.me/{u}?start={code}" if u else None
+            b["bot_enabled"] = _channel_enabled(state, f"telegram:{b['bot_id']}")
         return jsonify(bots)
 
     @app.route("/tg/bots/<bot_id>", methods=["DELETE"])
@@ -230,6 +289,23 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
             store.remove(bot_id)
         stop_poller(bot_id)
         return {"ok": True}
+
+    @app.route("/tg/bots/<bot_id>/toggle", methods=["POST"])
+    def tg_bot_toggle(bot_id):
+        """Bật/tắt riêng 1 bot Telegram. body {enabled: bool}."""
+        data = request.get_json(force=True, silent=True) or {}
+        enabled = bool(data.get("enabled", True))
+        state = _load_bot_state()
+        state.setdefault("channels", {})[f"telegram:{bot_id}"] = enabled
+        _save_bot_state(state)
+        log.info(f"[TG] bot {bot_id} toggle → enabled={enabled}")
+        return {"ok": True, "bot_id": bot_id, "enabled": enabled}
+
+    @app.route("/tg/bots/<bot_id>/status")
+    def tg_bot_status(bot_id):
+        state = _load_bot_state()
+        return {"ok": True, "bot_id": bot_id,
+                "enabled": _channel_enabled(state, f"telegram:{bot_id}")}
 
     @app.route("/tg/set-owner", methods=["POST"])
     def tg_set_owner():
@@ -310,6 +386,11 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
     @app.route("/tg/conversations")
     def tg_conversations():
         bot_id = request.args.get("bot_id", "")
+        try:
+            limit = min(max(int(request.args.get("limit", 50)), 1), 200)
+            offset = max(int(request.args.get("offset", 0)), 0)
+        except ValueError:
+            limit, offset = 50, 0
         rows = []
         for uid, conv in list(conv_manager._sessions.items()):
             if not uid.startswith("tg:"):
@@ -320,7 +401,9 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
                 continue
             rows.append(_conv_summary(uid, conv))
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
-        return jsonify(rows)
+        total = len(rows)
+        return jsonify({"total": total, "offset": offset, "limit": limit,
+                        "items": rows[offset:offset + limit]})
 
     @app.route("/tg/conversations/<user_id>")
     def tg_conversation(user_id):

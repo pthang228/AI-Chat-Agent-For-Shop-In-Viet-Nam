@@ -14,6 +14,9 @@ export default function TelegramConversations() {
   const [bots, setBots] = useState(null);   // null=đang tải
   const [botId, setBotId] = useState("");    // "" = tất cả
   const [list, setList] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const PAGE = 50;
   const [offline, setOffline] = useState(false);
   const [sel, setSel] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -26,17 +29,20 @@ export default function TelegramConversations() {
     });
   }, []);
 
-  async function loadList() {
-    const { ok, body } = await tg.conversations(botId);
-    if (!ok || !Array.isArray(body)) { setOffline(true); setList([]); return; }
-    setOffline(false); setList(body);
+  async function loadList(off = 0, append = false) {
+    const { ok, body } = await tg.conversations(botId, { limit: PAGE, offset: off });
+    if (!ok || !body?.items) { setOffline(true); if (!append) setList([]); return; }
+    setOffline(false);
+    setTotal(body.total ?? 0);
+    setOffset(off);
+    setList((prev) => append ? [...(prev ?? []), ...body.items] : body.items);
   }
 
   useEffect(() => {
-    setSel(null); setDetail(null); setList(null);
-    loadList();
+    setSel(null); setDetail(null); setList(null); setOffset(0); setTotal(0);
+    loadList(0);
     clearInterval(timer.current);
-    timer.current = setInterval(loadList, 8000);
+    timer.current = setInterval(() => loadList(0), 8000);
     return () => clearInterval(timer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [botId]);
@@ -111,8 +117,10 @@ export default function TelegramConversations() {
       ) : (
         <div className="convlist">
           <div className="convlist-head">
-            <span className="hint">{list ? `${list.length} hội thoại` : "Đang tải…"} · tự làm mới 8s</span>
-            <button className="btn-ghost" onClick={loadList}>Làm mới</button>
+            <span className="hint">
+              {list ? `${list.length}/${total} hội thoại` : "Đang tải…"} · tự làm mới 8s
+            </span>
+            <button className="btn-ghost" onClick={() => loadList(0)}>Làm mới</button>
           </div>
           {list && list.length === 0 && (
             <p className="hint" style={{ textAlign: "center", padding: "24px 0" }}>Chưa có khách nào nhắn.</p>
@@ -130,6 +138,13 @@ export default function TelegramConversations() {
               </div>
             </div>
           ))}
+          {list && list.length < total && (
+            <div style={{ textAlign: "center", padding: "12px 0" }}>
+              <button className="btn-ghost" onClick={() => loadList(offset + PAGE, true)}>
+                Tải thêm ({total - list.length} còn lại)
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -55,8 +55,9 @@ def _run(coro, timeout=30):
 _logins: dict = {}
 _llock = threading.Lock()
 
-QR_WAIT = 18        # mỗi nhịp chờ quét trước khi tạo lại token
-QR_DEADLINE = 240   # tổng thời gian cho 1 lần đăng nhập (giây)
+QR_WAIT = 18                # mỗi nhịp chờ quét trước khi tạo lại token
+QR_DEADLINE = 240           # tổng thời gian cho 1 lần đăng nhập (giây)
+PW_TIMEOUT = 600            # nếu need_password mà user không nhập trong 10p → đóng client
 
 
 def _qr_png(url: str) -> str:
@@ -127,6 +128,8 @@ async def _wait_qr(bid, st):
                 continue
             except SessionPasswordNeededError:
                 st["state"] = "need_password"     # quét xong nhưng cần 2FA
+                st["pw_deadline"] = time.time() + PW_TIMEOUT
+                asyncio.ensure_future(_wait_password_timeout(bid, st))
                 return                            # GIỮ client để submit_password
         st["state"] = "expired"
         await client.disconnect()
@@ -138,6 +141,24 @@ async def _wait_qr(bid, st):
             await client.disconnect()
         except Exception:
             pass
+
+
+async def _wait_password_timeout(bid, st):
+    """Nếu user không nhập mật khẩu 2FA trong PW_TIMEOUT giây thì đóng client."""
+    deadline = st.get("pw_deadline", time.time() + PW_TIMEOUT)
+    while time.time() < deadline:
+        await asyncio.sleep(10)
+        if st.get("state") != "need_password":
+            return  # đã xử lý xong (done/error/stop)
+    if st.get("state") == "need_password":
+        log.info(f"[TG login {bid}] need_password timeout → disconnect client")
+        st["state"] = "expired"
+        client = st.get("client")
+        if client:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
 
 
 def submit_password(bot_id, password) -> dict:

@@ -51,8 +51,18 @@ export const tg = {
       body: JSON.stringify({ bot_id: botId }),
     }),
 
-  conversations: (botId) =>
-    j("/tg/conversations" + (botId ? "?bot_id=" + encodeURIComponent(botId) : "")),
+  pollers: () => j("/tg/pollers"),
+  botToggle: (botId, enabled) =>
+    j(`/tg/bots/${encodeURIComponent(botId)}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
+  conversations: (botId, { limit = 50, offset = 0 } = {}) => {
+    const p = new URLSearchParams({ limit, offset });
+    if (botId) p.set("bot_id", botId);
+    return j("/tg/conversations?" + p.toString());
+  },
   conversation: (uid) => j("/tg/conversations/" + encodeURIComponent(uid)),
   toggleBot: (uid, botOn) =>
     j("/tg/conversations/" + encodeURIComponent(uid) + "/toggle-bot", {
