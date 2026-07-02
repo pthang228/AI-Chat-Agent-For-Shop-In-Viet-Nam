@@ -12,25 +12,33 @@ export default function Login() {
   const [err, setErr] = useState("");
   const gbtn = useRef(null);
 
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => {
     if (GOOGLE_CLIENT_ID && gbtn.current) {
-      renderGoogleButton(gbtn.current, (u) => {
-        try { loginWithGoogle(u); nav("/"); } catch (e) { setErr(e.message); }
+      renderGoogleButton(gbtn.current, async (u) => {
+        try { await loginWithGoogle(u); nav("/"); } catch (e) { setErr(e.message); }
       }).catch(() => {});
     }
   }, []);
 
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
-    setErr("");
-    try { login({ username, password, remember }); nav("/"); }
+    setErr(""); setBusy(true);
+    try { await login({ username, password, remember }); nav("/"); }
     catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
   }
 
-  function demo() {
-    setErr("");
-    try { login({ username: "demo", password: "demo", remember: true }); }
-    catch { try { register({ username: "demo", password: "demo", homestay: "Homestay Demo", remember: true }); } catch (e) { setErr(e.message); return; } }
+  async function demo() {
+    setErr(""); setBusy(true);
+    try {
+      await login({ username: "demo@homestay.vn", password: "demo1234", remember: true });
+    } catch {
+      try { await register({ username: "demo@homestay.vn", password: "demo1234", homestay: "Homestay Demo", remember: true }); }
+      catch (e) { setErr(e.message); setBusy(false); return; }
+    }
+    setBusy(false);
     nav("/");
   }
 
@@ -79,11 +87,13 @@ export default function Login() {
 
         {err && <div className="err">{err}</div>}
 
-        <button className="btn-primary" type="submit">Đăng nhập <IcArrow width={18} height={18} /></button>
+        <button className="btn-primary" type="submit" disabled={busy}>
+          {busy ? "Đang đăng nhập…" : "Đăng nhập"} <IcArrow width={18} height={18} />
+        </button>
 
         <div className="or">hoặc</div>
 
-        <button type="button" className="btn-outline" onClick={demo}>
+        <button type="button" className="btn-outline" onClick={demo} disabled={busy}>
           <IcSpark width={18} height={18} style={{ color: "var(--gold)" }} /> Dùng thử nhanh với tài khoản demo
         </button>
       </form>

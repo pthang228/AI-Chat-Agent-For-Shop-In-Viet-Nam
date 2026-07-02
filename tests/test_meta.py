@@ -21,6 +21,7 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
+os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -37,7 +38,7 @@ def check(cond, name, detail=""):
     else: FAIL += 1; print(f"  ✗ FAIL {name}: {detail}")
 
 cm = ConversationManager(account="meta-test")
-cm._file = Path("test_meta_tmp.json"); cm._sessions.clear()
+cm._sessions.clear()
 
 # Store cô lập, nạp sẵn 1 Page có token để test gửi đúng token
 store = MetaStore(path=Path("test_meta_store_tmp.json"))

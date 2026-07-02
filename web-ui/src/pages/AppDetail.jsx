@@ -10,10 +10,13 @@ import MetaConversations from "../components/MetaConversations.jsx";
 import Conversations from "../components/Conversations.jsx";
 import TelegramConnect from "../components/TelegramConnect.jsx";
 import TelegramConversations from "../components/TelegramConversations.jsx";
+import TikTokConnect from "../components/TikTokConnect.jsx";
+import TikTokConversations from "../components/TikTokConversations.jsx";
 import { IcHome, IcBack, IcLogout, IcSpark } from "../components/icons.jsx";
+import StatsPanel from "../components/StatsPanel.jsx";
 
-const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram" };
-const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram" };
+const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", tiktok: "TikTok" };
+const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", tiktok: "tiktok" };
 const isMeta = (ch) => ch === "meta" || ch === "messenger" || ch === "instagram";
 const botKey = (ch) => (ch === "messenger" || ch === "instagram") ? "meta" : ch;
 
@@ -26,20 +29,45 @@ export default function AppDetail() {
   const nav = useNavigate();
   const [tab, setTab] = useState("connect");
   const user = currentUser();
-  const app = getApps(user.username).find((a) => a.id === id);
-  const hostName = user.homestay || user.username;
+  const [app, setApp] = useState(undefined);   // undefined=đang tải | null=không thấy | object
+  const hostName = user?.homestay || user?.username || "";
 
+  useEffect(() => {
+    getApps().then((r) => {
+      if (Array.isArray(r)) setApp(r.find((a) => a.id === id) || null);
+      else setApp(null);   // offline/unauth → coi như không thấy, có link về danh sách
+    });
+  }, [id]);
+
+  if (app === undefined) {
+    return (
+      <div className="dash">
+        <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> Homestay Bot</div></header>
+        <main className="content"><p>Đang tải…</p></main>
+      </div>
+    );
+  }
   if (!app) {
     return (
       <div className="dash">
         <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> Homestay Bot</div></header>
-        <main className="content"><p>Không tìm thấy app. <Link to="/">← Về danh sách</Link></p></main>
+        <main className="content"><p>Không tìm thấy app (hoặc máy chủ 5005 chưa chạy). <Link to="/">← Về danh sách</Link></p></main>
       </div>
     );
   }
 
-  const Connect = app.channel === "zalo" ? ZaloConnect : isMeta(app.channel) ? MetaConnect : TelegramConnect;
-  const Chats = app.channel === "zalo" ? Conversations : isMeta(app.channel) ? MetaConversations : TelegramConversations;
+  const Connect = app.channel === "zalo" ? ZaloConnect
+    : isMeta(app.channel) ? MetaConnect
+    : app.channel === "tiktok" ? TikTokConnect
+    : TelegramConnect;
+  const Chats = app.channel === "zalo" ? Conversations
+    : isMeta(app.channel) ? MetaConversations
+    : app.channel === "tiktok" ? TikTokConversations
+    : TelegramConversations;
+  const statsChannel = app.channel === "zalo" ? "zalo"
+    : isMeta(app.channel) ? "meta"
+    : app.channel === "tiktok" ? "tiktok"
+    : "telegram";
 
   return (
     <div className="dash">
@@ -65,10 +93,13 @@ export default function AppDetail() {
         <div className="tabs">
           <button className={"tab" + (tab === "connect" ? " active" : "")} onClick={() => setTab("connect")}>Kết nối</button>
           <button className={"tab" + (tab === "chats" ? " active" : "")} onClick={() => setTab("chats")}>Khách hàng</button>
+          <button className={"tab" + (tab === "stats" ? " active" : "")} onClick={() => setTab("stats")}>Thống kê</button>
         </div>
 
         <div className="card-box">
-          {tab === "connect" ? <Connect /> : <Chats />}
+          {tab === "connect" && <Connect />}
+          {tab === "chats" && <Chats />}
+          {tab === "stats" && <StatsPanel channel={statsChannel} />}
         </div>
       </main>
     </div>

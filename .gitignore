@@ -6,12 +6,19 @@ boot*.txt
 *.log
 
 data/*.json
+data/*.json.migrated
 data/*.session
 data/*.txt
 data/*.out.log
 data/*.err.log
+data/*.db
+data/*.db-wal
+data/*.db-shm
 
 test_sessions_tmp.json
+test_db_tmp.sqlite
+test_db_tmp.sqlite-wal
+test_db_tmp.sqlite-shm
 
 zalo-node/zalo-session.json
 zalo-node/node-config.json

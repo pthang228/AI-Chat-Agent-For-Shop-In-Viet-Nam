@@ -4,6 +4,7 @@ import Register from "./pages/Register.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import AppDetail from "./pages/AppDetail.jsx";
 import Settings from "./pages/Settings.jsx";
+import Billing from "./pages/Billing.jsx";
 import { currentUser } from "./auth.js";
 
 function Protected({ children }) {
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/" element={<Protected><Dashboard /></Protected>} />
         <Route path="/app/:id" element={<Protected><AppDetail /></Protected>} />
         <Route path="/settings" element={<Protected><Settings /></Protected>} />
+        <Route path="/billing" element={<Protected><Billing /></Protected>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

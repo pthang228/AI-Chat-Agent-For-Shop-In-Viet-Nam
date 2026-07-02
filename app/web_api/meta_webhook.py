@@ -19,13 +19,42 @@ import logging
 import threading
 from pathlib import Path
 
+import requests as _req
+
 from flask import Flask, request, jsonify, send_from_directory
 
 from app.core.config import Config
 from app.channels import meta_graph
 from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary  # dùng chung helper
+from app.web_api.stats_util import compute_stats
 
 log = logging.getLogger("meta_webhook")
+
+
+def _fetch_meta_name(user_id, sender, page_id, platform, brain, conv_manager):
+    """Gọi Graph API lấy tên khách, lưu vào conv (chạy nền, chỉ 1 lần khi chưa có tên)."""
+    try:
+        token = brain.channel._token_for(page_id) if hasattr(brain.channel, "_token_for") else None
+        if not token:
+            return
+        fields = "name" if platform == "fb" else "name,username"
+        r = _req.get(
+            f"https://graph.facebook.com/{Config.FB_GRAPH_VERSION}/{sender}",
+            params={"fields": fields, "access_token": token},
+            timeout=10,
+        )
+        log.debug(f"[meta name] {sender} → status={r.status_code} body={r.text[:200]}")
+        if r.status_code == 200:
+            data = r.json()
+            name = data.get("name") or data.get("username") or ""
+            if name:
+                conv = conv_manager.get(user_id)
+                if not conv.name:
+                    conv.name = name
+                    conv_manager.save()
+                    log.info(f"[meta name] {sender} → '{name}'")
+    except Exception as e:
+        log.warning(f"[meta name] {sender}: {e}")
 
 
 def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
@@ -71,13 +100,16 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
             log.error(f"[meta/connect] lỗi: {e}")
             return {"ok": False, "error": str(e)}, 502
 
+        from app.web_api.auth_api import current_username
+        owner = current_username()   # chủ homestay đang đăng nhập (để tính quota/gói)
         result = []
         for pg in pages:
             pid = str(pg.get("id"))
             tok = pg.get("access_token")
             iga = pg.get("instagram_business_account") or {}
             store.upsert(pid, name=pg.get("name"), access_token=tok,
-                         ig_id=iga.get("id"), ig_username=iga.get("username"))
+                         ig_id=iga.get("id"), ig_username=iga.get("username"),
+                         owner_username=owner)
             subscribed = meta_graph.subscribe_page(pid, tok) if tok else False
             result.append({
                 "page_id": pid, "name": pg.get("name"),
@@ -88,6 +120,47 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
     @app.route("/meta/pages")
     def meta_pages():
         return jsonify(store.list_pages() if store else [])
+
+    @app.route("/meta/stats")
+    def meta_stats():
+        return jsonify(compute_stats(
+            conv_manager, request.args.get("from"), request.args.get("to"),
+            uid_filter=lambda u: u.startswith(("fb:", "ig:"))))
+
+    @app.route("/meta/fetch-names", methods=["POST"])
+    def meta_fetch_names():
+        """Thủ công fetch tên từ Graph API cho tất cả khách Meta chưa có tên."""
+        missing = [
+            uid for uid, conv in conv_manager._sessions.items()
+            if uid.startswith(("fb:", "ig:")) and not conv.name
+        ]
+        results = {}
+        for uid in missing:
+            parts = uid.split(":")
+            platform = parts[0]
+            page_id = parts[1] if len(parts) >= 3 else ""
+            sender = parts[2] if len(parts) >= 3 else ""
+            token = brain.channel._token_for(page_id) if hasattr(brain.channel, "_token_for") else None
+            if not token:
+                results[uid] = "no_token"
+                continue
+            try:
+                fields = "name,username"
+                r = _req.get(
+                    f"https://graph.facebook.com/{Config.FB_GRAPH_VERSION}/{sender}",
+                    params={"fields": fields, "access_token": token},
+                    timeout=10,
+                )
+                results[uid] = {"status": r.status_code, "body": r.json()}
+                if r.status_code == 200:
+                    data = r.json()
+                    name = data.get("name") or data.get("username") or ""
+                    if name:
+                        conv_manager.get(uid).name = name
+            except Exception as e:
+                results[uid] = str(e)
+        conv_manager.save()
+        return jsonify({"checked": len(missing), "results": results})
 
     @app.route("/meta/pages/<page_id>", methods=["DELETE"])
     def meta_remove(page_id):
@@ -102,6 +175,12 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
     @app.route("/meta/conversations")
     def meta_conversations():
         page_id = request.args.get("page_id", "")
+        # Mặc định 200 khách mới nhất (giữ shape mảng cho UI). ?limit=&offset=.
+        try:
+            limit = min(max(int(request.args.get("limit", 200)), 1), 1000)
+            offset = max(int(request.args.get("offset", 0)), 0)
+        except ValueError:
+            limit, offset = 200, 0
         rows = []
         for uid, conv in list(conv_manager._sessions.items()):
             uid_parts = uid.split(":")
@@ -110,7 +189,7 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
                 continue
             rows.append(_conv_summary(uid, conv))
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
-        return jsonify(rows)
+        return jsonify(rows[offset:offset + limit])
 
     @app.route("/meta/conversations/<user_id>")
     def meta_conversation(user_id):
@@ -124,6 +203,7 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         ]
         return jsonify({
             "user_id": user_id,
+            "name": getattr(conv, "name", ""),
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
             "checkin": conv.checkin,
@@ -139,6 +219,23 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         conv.set_owner_active(not bot_on)
         conv_manager.save()
         return {"ok": True, "bot_on": bot_on, "owner_active": conv.is_owner_active()}
+
+    @app.route("/meta/conversations/<user_id>/send", methods=["POST"])
+    def meta_send_message(user_id):
+        data = request.get_json(force=True, silent=True) or {}
+        text = (data.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "tin trống"}, 400
+        try:
+            brain.channel.send_text(user_id, text)
+        except Exception as e:
+            log.error(f"[meta send] lỗi gửi {user_id}: {e}")
+            return {"ok": False, "error": str(e)}, 500
+        conv = conv_manager.get(user_id)
+        conv.add_assistant_message(text)
+        conv.set_owner_active(True)
+        conv_manager.save()
+        return {"ok": True}
 
     @app.route("/meta/conversations/<user_id>", methods=["DELETE"])
     def meta_reset_conversation(user_id):
@@ -224,6 +321,15 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         # user_id đa Page: platform:page_id:recipient → trả lời đúng token Page
         user_id = f"{platform}:{page_id}:{sender}"
 
+        # Lưu tên khách nếu chưa có (gọi Graph API 1 lần, nền, không block)
+        conv_check = conv_manager.get(user_id)
+        if not conv_check.name:
+            _uid, _snd, _pg, _pf = user_id, sender, page_id, platform
+            threading.Thread(
+                target=lambda: _fetch_meta_name(_uid, _snd, _pg, _pf, brain, conv_manager),
+                daemon=True,
+            ).start()
+
         # Bot kênh Meta bị tắt (đọc lại file mỗi tin để đồng bộ khi đổi từ web)
         if not _channel_enabled(_load_bot_state(), "meta"):
             log.info(f"[Meta] bot đang TẮT → bỏ qua {user_id}")
@@ -232,6 +338,13 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         conv = conv_manager.get(user_id)
         if conv.is_owner_active():
             log.info(f"[Meta] owner_active {user_id} → im lặng")
+            return
+
+        # Gói/quota AI của CHỦ Page (ghi 1 lượt khi cho qua); chưa gắn chủ → gate toàn cục
+        from app.core import billing
+        owner = store.get_owner_username(page_id) if (store and page_id) else None
+        if not billing.channel_gate(owner):
+            log.info(f"[Meta] gói/quota chủ ({owner}) không cho phép → bỏ qua {user_id}")
             return
 
         log.info(f"[Meta][{platform}] page={page_id} {sender} | {text[:80]!r}")

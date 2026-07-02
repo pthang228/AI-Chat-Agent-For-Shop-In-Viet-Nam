@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 def main():
     port = Config.META_WEBHOOK_PORT
 
-    # Sessions RIÊNG cho Meta (sessions_meta.json) để không đụng file của kênh Zalo
+    # Sessions RIÊNG cho Meta (account="meta" trong SQLite) để không đụng kênh Zalo
     conv = ConversationManager(account="meta")
     store = MetaStore()   # kho token đa Page (khách kết nối qua UI)
     channel = MetaChannel(store=store, conv_manager=conv)
@@ -62,11 +62,12 @@ def main():
     print(f"  IG token   : {'(có)' if Config.IG_ACCESS_TOKEN else '(CHƯA — gửi DM Instagram sẽ MOCK; điền IG_ACCESS_TOKEN vào .env)'}")
     print(f"  Public URL : {Config.PUBLIC_BASE_URL or '(chưa đặt → ảnh sẽ KHÔNG gửi được)'}")
     print(f"  Verify tok : {Config.FB_VERIFY_TOKEN}")
-    print(f"  Sessions   : {conv._file}")
+    print(f"  Database   : {conv._db.path} (account={conv._account})")
     print("=" * 55)
     print("🤖 Đang chờ tin từ Messenger/Instagram... Ctrl+C để dừng.\n")
 
-    app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
+    from app.web_api.serve import run
+    run(app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":

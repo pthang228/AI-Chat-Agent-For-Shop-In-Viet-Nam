@@ -1,13 +1,14 @@
-# Kiến trúc dự án — Homestay Bot ĐA KÊNH (Zalo · Messenger/Instagram · Telegram)
+# Kiến trúc dự án — Homestay Bot ĐA KÊNH (Zalo · Messenger/Instagram · Telegram · TikTok)
 
 > File này mô tả tổng quan kiến trúc để đọc nhanh, đỡ phải scan lại toàn bộ code.
 > Cập nhật khi thay đổi logic lớn.
 
 ## 1. Tóm tắt
 
-Bot chat tự động tư vấn đặt phòng homestay, bán dạng **SaaS cho nhiều homestay**, chạy trên **3 kênh**:
+Bot chat tự động tư vấn đặt phòng homestay, bán dạng **SaaS cho nhiều homestay**, chạy trên **4 kênh**:
 **Zalo** (cá nhân, đăng nhập QR qua Node), **Meta** (Messenger + Instagram, 1 lần đăng nhập Facebook),
-và **Telegram** (bot, người lạ nhắn được ngay, không cần duyệt).
+**Telegram** (bot, người lạ nhắn được ngay, không cần duyệt), và **TikTok** (Business Messaging API,
+webhook — cần TikTok duyệt app; chưa có token chạy chế độ mock).
 
 Khi khách nhắn 1-1, bot tự tư vấn: xem **lịch phòng trống** (Google Sheets), gửi **bảng giá**,
 gửi **ảnh phòng**, và khi khách chốt đặt thì **thông báo + gọi điện cho chủ nhà**.
@@ -26,6 +27,7 @@ Logic bot được tách làm 2 lớp để sau cắm thêm kênh (Instagram, Me
         ┌─ ZaloNodeChannel ──────── Zalo QR (zca-js, Node) — đang dùng
 Brain ──┼─ MetaChannel ─────────── Messenger + Instagram (Graph API)
 (brain.py)─ TelegramChannel ────── Telegram bot (Bot API + Telethon gọi điện)
+   │    └─ TikTokChannel ───────── TikTok DM (Business Messaging API, webhook)
    │       cùng 1 "não bộ"          (ZaloCookieChannel zlapi — fallback cũ)
    ▼
   Channel (channel.py) — giao diện trừu tượng:
@@ -84,7 +86,8 @@ F:\New folder\zalo\
 │  │  ├─ config.py              Config + BASE_DIR/DATA_DIR/MEDIA_DIR (resolve path theo gốc dự án)
 │  │  ├─ brain.py               "Não bộ": intent + override + Sheets + ảnh + booking (độc lập kênh)
 │  │  ├─ channel.py             Giao diện ABC: send_text/room_photos/price_photos/notify_owner/call_owner
-│  │  ├─ conversation.py        ConversationState + Manager (persist data/sessions.json)
+│  │  ├─ conversation.py        ConversationState + Manager (persist SQLite data/homestay.db, dirty-tracking)
+│  │  ├─ db.py                  SQLite dùng chung (WAL) — bảng sessions + stats_archive, chịu được 10k+ khách
 │  │  ├─ sheets.py              Đọc Google Sheets lịch phòng
 │  │  ├─ claude_ai.py           Gọi LLM (DeepSeek→Groq), đọc system_prompt.txt cùng thư mục
 │  │  ├─ owner_call.py          Beep + gọi Telegram (Telethon) báo chủ
@@ -95,14 +98,15 @@ F:\New folder\zalo\
 │  │  ├─ zalo_node.py           Kênh Zalo QR — gọi HTTP sang Node service (zca-js)
 │  │  ├─ meta.py                Kênh Messenger + Instagram (Graph API)
 │  │  ├─ telegram.py            Kênh Telegram bot (Bot API + Telethon gọi điện)
+│  │  ├─ tiktok.py              Kênh TikTok DM (Business Messaging API, mock khi chưa token)
 │  │  └─ zalo_cookie/           Kênh Zalo CŨ (zlapi/cookie) — fallback
-│  ├─ web_api/                  Flask theo kênh: bridge.py (Zalo 5005) · meta_webhook.py (5006) · telegram_api.py (5007)
-│  └─ main_node.py · main_meta.py · main_telegram.py   Entry từng kênh
+│  ├─ web_api/                  Flask theo kênh: bridge.py (Zalo 5005, kèm auth_api) · meta_webhook.py (5006) · telegram_api.py (5007) · tiktok_api.py (5008) · stats_util.py (thống kê chung) · auth_api.py (users/token/apps) · serve.py (waitress WSGI)
+│  └─ main_node.py · main_meta.py · main_telegram.py · main_tiktok.py   Entry từng kênh
 ├─ zalo-node/                   NODE service (zca-js): QR login, nhận/gửi Zalo, /groups, /config, /notify-owner (cổng 4000)
 ├─ web-ui/                      FRONTEND React (Vite): đăng nhập/đăng ký, quản lý app, QR, chọn nhóm, xem hội thoại (cổng 5173)
 ├─ scripts/                     get_zalo_id.py · setup_tg_call.py · debug_sheets.py · run.bat (chạy kênh cũ)
-├─ tests/                       test_flow.py · test_intent.py · test_sheets.py · test_bridge.py
-├─ data/                        sessions*.json · zalo_cookies*.json · tg_caller_session.session
+├─ tests/                       test_flow.py · test_intent.py · test_sheets.py · test_bridge.py · test_meta.py · test_telegram.py · test_tiktok.py
+├─ data/                        homestay.db (SQLite: sessions + stats_archive) · *.json.migrated (backup JSON cũ) · zalo_cookies*.json · tg_caller_session.session
 ├─ media/                       price_photos/ · rooms_photos/<số phòng>/
 ├─ docs/                        SETUP.md · ARCHITECTURE.md
 ├─ .env · google_credentials.json · requirements.txt · start-all.bat

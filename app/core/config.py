@@ -22,6 +22,9 @@ class Config:
     BASE_DIR  = BASE_DIR
     DATA_DIR  = DATA_DIR
     MEDIA_DIR = MEDIA_DIR
+    # SQLite dùng chung (sessions + stats_archive). Đổi qua .env HOMESTAY_DB_PATH
+    # (tests đặt biến này để không đụng DB thật).
+    DB_PATH   = _resolve(os.getenv("HOMESTAY_DB_PATH"), "data/homestay.db")
     # Phiên Telethon (không kèm .session — Telethon tự thêm)
     TG_SESSION = str(DATA_DIR / "tg_caller_session")
 
@@ -74,10 +77,31 @@ class Config:
     IG_ACCESS_TOKEN      = os.getenv("IG_ACCESS_TOKEN", "")
     IG_GRAPH_VERSION     = os.getenv("IG_GRAPH_VERSION", "v21.0")
 
+    # TikTok (Business Messaging API) — kênh TikTok DM.
+    # LƯU Ý: API nhắn tin TikTok chỉ cấp cho TikTok Business Account + app developer
+    # được duyệt (business-api.tiktok.com). Chưa có token → channel chạy MOCK
+    # (log thay vì gọi mạng) — giao diện quản lý/hội thoại/thống kê vẫn dùng được.
+    TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")   # token 1 tài khoản (.env, single-tenant/test)
+    TIKTOK_BUSINESS_ID  = os.getenv("TIKTOK_BUSINESS_ID", "")    # business_id của tài khoản .env
+    TIKTOK_API_BASE     = os.getenv("TIKTOK_API_BASE", "https://business-api.tiktok.com/open_api/v1.3")
+    TIKTOK_VERIFY_TOKEN = os.getenv("TIKTOK_VERIFY_TOKEN", "haru_tiktok_verify")  # khớp khi khai webhook
+    TIKTOK_API_PORT     = int(os.getenv("TIKTOK_API_PORT", "5008"))
+
     # Bot
     ROOMS_PHOTOS_DIR  = _resolve(os.getenv("ROOMS_PHOTOS_DIR"), "media/rooms_photos")
     PRICE_PHOTOS_DIR  = _resolve(None, "media/price_photos")
     REPLY_DELAY      = int(os.getenv("REPLY_DELAY", "2"))
+    # Giữ hội thoại khách bao lâu trước khi dọn khỏi tab Khách hàng (giờ).
+    # Mặc định 720h = 30 ngày (trước đây 48h → khách im 2 ngày là MẤT).
+    # Khi dọn, số liệu vẫn được gấp vào data/stats_archive*.json cho thống kê.
+    SESSION_RETENTION_HOURS = int(os.getenv("SESSION_RETENTION_HOURS", "720"))
+
+    # Billing — gói dịch vụ & nạp tiền
+    BILLING_PROMO_CODE = os.getenv("BILLING_PROMO_CODE", "")   # mã giới thiệu của bạn → dùng thử 7 ngày (rỗng = tắt)
+    BILLING_ADMIN_KEY  = os.getenv("BILLING_ADMIN_KEY", "")    # khoá API admin xác nhận nạp (rỗng = chỉ dùng script)
+    BANK_NAME    = os.getenv("BANK_NAME", "")     # vd: Vietcombank
+    BANK_ACCOUNT = os.getenv("BANK_ACCOUNT", "")  # số tài khoản nhận tiền
+    BANK_HOLDER  = os.getenv("BANK_HOLDER", "")   # tên chủ tài khoản
 
     # Dashboard web
     DASHBOARD_PORT     = int(os.getenv("DASHBOARD_PORT", "5000"))

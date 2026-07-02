@@ -14,6 +14,7 @@ import threading
 from flask import Flask, request, jsonify
 
 from app.core.config import Config
+from app.web_api.stats_util import compute_stats
 
 log = logging.getLogger("bridge")
 
@@ -21,11 +22,19 @@ log = logging.getLogger("bridge")
 BOT_STATE_FILE = Config.DATA_DIR / "bot_state.json"
 
 
-ALL_CHANNELS = ("zalo", "meta", "telegram")
+ALL_CHANNELS = ("zalo", "meta", "telegram", "tiktok")
 
 
 def _norm_channel(ch: str) -> str:
-    ch = (ch or "").strip().lower()
+    """Chuẩn hoá tên kênh. Key per-bot 'kênh:<id>' chỉ lower phần kênh —
+    GIỮ NGUYÊN <id> (bot_id/business_id có thể phân biệt hoa thường)."""
+    ch = (ch or "").strip()
+    if ":" in ch:
+        parent, rest = ch.split(":", 1)
+        parent = parent.lower()
+        parent = "meta" if parent in ("messenger", "instagram") else parent
+        return f"{parent}:{rest}"
+    ch = ch.lower()
     return "meta" if ch in ("messenger", "instagram") else ch
 
 
@@ -90,6 +99,7 @@ def _conv_summary(uid, conv):
     visible = [m for m in conv.messages if not m.get("content", "").startswith("[HỆ THỐNG]")]
     return {
         "user_id": uid,
+        "name": getattr(conv, "name", ""),
         "owner_active": conv.is_owner_active(),
         "stage": conv.stage,
         "checkin": conv.checkin,
@@ -111,8 +121,16 @@ def create_bridge(brain, conv_manager) -> Flask:
     def _cors(resp):
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp
+
+    # Auth thật (users/token/apps trong SQLite) — web React đăng nhập qua đây
+    from app.web_api.auth_api import register_auth_routes
+    register_auth_routes(app)
+
+    # Gói dịch vụ & nạp tiền
+    from app.web_api.billing_api import register_billing_routes
+    register_billing_routes(app)
 
     @app.route("/health")
     def health():
@@ -162,12 +180,19 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     @app.route("/conversations")
     def list_conversations():
+        # Trả mảng (giữ shape cũ cho UI), mặc định 200 khách mới nhất —
+        # 10k khách không đổ hết về mỗi lần web tự làm mới. ?limit=&offset=.
+        try:
+            limit = min(max(int(request.args.get("limit", 200)), 1), 1000)
+            offset = max(int(request.args.get("offset", 0)), 0)
+        except ValueError:
+            limit, offset = 200, 0
         rows = [
             _conv_summary(uid, conv)
             for uid, conv in list(conv_manager._sessions.items())
         ]
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
-        return jsonify(rows)
+        return jsonify(rows[offset:offset + limit])
 
     @app.route("/conversations/<user_id>")
     def get_conversation(user_id):
@@ -181,6 +206,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         ]
         return jsonify({
             "user_id": user_id,
+            "name": getattr(conv, "name", ""),
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
             "checkin": conv.checkin,
@@ -198,10 +224,33 @@ def create_bridge(brain, conv_manager) -> Flask:
         conv_manager.save()
         return {"ok": True, "bot_on": bot_on, "owner_active": conv.is_owner_active()}
 
+    @app.route("/conversations/<user_id>/send", methods=["POST"])
+    def send_message(user_id):
+        """Chủ nhà gửi tin thủ công từ dashboard → gửi thật qua kênh + lưu vào lịch sử."""
+        data = request.get_json(force=True, silent=True) or {}
+        text = (data.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "tin trống"}, 400
+        try:
+            brain.channel.send_text(user_id, text)
+        except Exception as e:
+            log.error(f"[send] lỗi gửi {user_id}: {e}")
+            return {"ok": False, "error": str(e)}, 500
+        conv = conv_manager.get(user_id)
+        conv.add_assistant_message(text)
+        conv.set_owner_active(True)   # chủ đang xử lý → bot dừng tự động trả lời
+        conv_manager.save()
+        return {"ok": True}
+
     @app.route("/conversations/<user_id>", methods=["DELETE"])
     def reset_conversation(user_id):
         conv_manager.reset(user_id)
         return {"ok": True}
+
+    @app.route("/stats")
+    def conv_stats():
+        return jsonify(compute_stats(
+            conv_manager, request.args.get("from"), request.args.get("to")))
 
     @app.route("/incoming", methods=["POST"])
     def incoming():
@@ -244,7 +293,18 @@ def create_bridge(brain, conv_manager) -> Flask:
             log.info(f"[Skip] bot_disabled {user_id}")
             return {"ok": True, "skipped": "bot_disabled"}
 
+        # Gói dịch vụ hết hạn → bot ngừng tự trả lời (gia hạn trong web → chạy lại)
+        from app.core import billing
+        if not billing.has_active_subscription():
+            log.info(f"[Skip] billing_expired {user_id}")
+            return {"ok": True, "skipped": "billing_expired"}
+
         conv = conv_manager.get(user_id)
+
+        # Cập nhật tên hiển thị nếu Node truyền dName
+        d_name = (data.get("dName") or "").strip()
+        if d_name and d_name != conv.name:
+            conv.name = d_name
 
         # Chủ nhà đang tiếp quản → bot im lặng
         if conv.is_owner_active():

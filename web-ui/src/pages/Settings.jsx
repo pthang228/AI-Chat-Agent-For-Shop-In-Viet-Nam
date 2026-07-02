@@ -11,10 +11,10 @@ function initials(name) {
 export default function Settings() {
   const nav = useNavigate();
   const user = currentUser();
-  const isGoogle = user?.provider === "google" && !user?.password;
+  const isGoogle = user?.provider === "google" && !user?.has_password;
 
   const [homestay, setHomestay] = useState(user?.homestay || "");
-  const [email, setEmail] = useState(user?.email || (isGoogle ? user?.username : ""));
+  const [email, setEmail] = useState(user?.email || "");
   const [savedMsg, setSavedMsg] = useState("");
 
   const [oldPw, setOldPw] = useState("");
@@ -22,16 +22,16 @@ export default function Settings() {
   const [pwMsg, setPwMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function saveProfile(e) {
+  async function saveProfile(e) {
     e.preventDefault();
-    try { updateProfile({ username: user.username, homestay, email }); setSavedMsg("✅ Đã lưu thông tin."); }
+    try { await updateProfile({ homestay, email }); setSavedMsg("✅ Đã lưu thông tin."); }
     catch (e) { setSavedMsg("❌ " + e.message); }
   }
 
-  function savePassword(e) {
+  async function savePassword(e) {
     e.preventDefault();
     setPwMsg("");
-    try { changePassword({ username: user.username, oldPassword: oldPw, newPassword: newPw }); setPwMsg("✅ Đã đổi mật khẩu."); setOldPw(""); setNewPw(""); }
+    try { await changePassword({ oldPassword: oldPw, newPassword: newPw }); setPwMsg("✅ Đã đổi mật khẩu."); setOldPw(""); setNewPw(""); }
     catch (e) { setPwMsg("❌ " + e.message); }
   }
 
@@ -91,24 +91,21 @@ export default function Settings() {
         {/* Đổi mật khẩu */}
         <form className="panel set-card" onSubmit={savePassword} style={{ marginTop: 16 }}>
           <h3 style={{ fontSize: 17, marginBottom: 4 }}>Mật khẩu</h3>
-          {isGoogle ? (
-            <p className="hint">Tài khoản này đăng nhập bằng <b>Google</b> — không cần mật khẩu riêng.</p>
-          ) : (
-            <>
-              <div className="field" style={{ marginTop: 10 }}>
-                <label className="field-label"><IcLock width={14} height={14} /> Mật khẩu hiện tại</label>
-                <input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} placeholder="••••••••" />
-              </div>
-              <div className="field">
-                <label className="field-label"><IcLock width={14} height={14} /> Mật khẩu mới</label>
-                <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Tối thiểu 4 ký tự" />
-              </div>
-              <div className="row" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>
-                <button className="btn-primary sm" type="submit">Đổi mật khẩu</button>
-                {pwMsg && <span className="savemsg" style={{ margin: 0 }}>{pwMsg}</span>}
-              </div>
-            </>
+          {isGoogle && (
+            <p className="hint">Tài khoản đăng nhập bằng <b>Google</b> — có thể đặt thêm mật khẩu để đăng nhập bằng email (bỏ trống "Mật khẩu hiện tại").</p>
           )}
+          <div className="field" style={{ marginTop: 10 }}>
+            <label className="field-label"><IcLock width={14} height={14} /> Mật khẩu hiện tại</label>
+            <input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} placeholder={isGoogle ? "(chưa có — bỏ trống)" : "••••••••"} />
+          </div>
+          <div className="field">
+            <label className="field-label"><IcLock width={14} height={14} /> Mật khẩu mới</label>
+            <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Tối thiểu 4 ký tự" />
+          </div>
+          <div className="row" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>
+            <button className="btn-primary sm" type="submit">Đổi mật khẩu</button>
+            {pwMsg && <span className="savemsg" style={{ margin: 0 }}>{pwMsg}</span>}
+          </div>
         </form>
 
         {/* Đăng xuất */}

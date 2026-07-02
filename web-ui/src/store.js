@@ -1,35 +1,25 @@
-// Lưu danh sách "app" (kênh bot) theo từng tài khoản — tạm thời bằng localStorage.
+// Danh sách "app" (kênh bot) của user — lưu TRÊN SERVER (SQLite qua /auth/apps),
+// thay localStorage hb_apps cũ. Mọi hàm giờ là async.
 
-const APPS_KEY = "hb_apps";
+import { authApi } from "./authApi.js";
+import { getToken } from "./auth.js";
 
-function all() {
-  try { return JSON.parse(localStorage.getItem(APPS_KEY)) || {}; }
-  catch { return {}; }
-}
-function save(a) { localStorage.setItem(APPS_KEY, JSON.stringify(a)); }
-
-export function getApps(username) {
-  return all()[username] || [];
-}
-
-export function addApp(username, { name, channel }) {
-  const a = all();
-  const list = a[username] || [];
-  const item = {
-    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-    name: (name || "").trim() || "App chưa đặt tên",
-    channel: channel || "zalo",
-    connected: false,
-    createdAt: Date.now(),
-  };
-  list.push(item);
-  a[username] = list;
-  save(a);
-  return item;
+// Trả về: mảng app | "offline" (server 5005 chưa chạy) | "unauth" (phiên hết hạn)
+export async function getApps() {
+  const r = await authApi.apps(getToken());
+  if (r.status === 0) return "offline";
+  if (r.status === 401) return "unauth";
+  return Array.isArray(r.body) ? r.body : [];
 }
 
-export function removeApp(username, id) {
-  const a = all();
-  a[username] = (a[username] || []).filter((x) => x.id !== id);
-  save(a);
+export async function addApp({ name, channel }) {
+  const r = await authApi.addApp(getToken(), { name, channel });
+  if (!r.ok) throw new Error(r.body?.error || "Không thêm được app");
+  return r.body.app;
+}
+
+export async function removeApp(id) {
+  const r = await authApi.removeApp(getToken(), id);
+  if (!r.ok) throw new Error(r.body?.error || "Không xoá được app");
+  return true;
 }

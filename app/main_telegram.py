@@ -51,7 +51,7 @@ def main():
     print(f"  Bot đã nối : {len(bots)} (dán token thêm trong web)")
     print(f"  Bot .env   : {'(có)' if Config.TELEGRAM_BOT_TOKEN else '(không)'}")
     print(f"  Mã chủ     : /start {Config.TELEGRAM_OWNER_SETUP_CODE}  (hoặc /chunha)")
-    print(f"  Sessions   : {conv._file}")
+    print(f"  Database   : {conv._db.path} (account={conv._account})")
     print("=" * 55)
 
     # Bật poller cho từng bot đã lưu (đa khách)
@@ -66,7 +66,8 @@ def main():
     else:
         print("⚠️  Chưa có bot nào. Vào web → kênh Telegram → dán token bot (@BotFather).\n")
 
-    app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
+    from app.web_api.serve import run
+    run(app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":

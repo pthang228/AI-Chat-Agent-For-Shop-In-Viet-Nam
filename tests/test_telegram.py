@@ -20,6 +20,7 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
+os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -34,7 +35,7 @@ def check(cond, name, detail=""):
     else: FAIL += 1; print(f"  ✗ FAIL {name}: {detail}")
 
 cm = ConversationManager(account="tg-test")
-cm._file = Path("test_tg_tmp.json"); cm._sessions.clear()
+cm._sessions.clear()
 
 print("\n── A. TelegramChannel ──")
 ch = TelegramChannel(token="", owner_chat_id="OWNER_CHAT", conv_manager=cm)

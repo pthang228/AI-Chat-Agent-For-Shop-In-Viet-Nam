@@ -19,6 +19,7 @@ from flask import Flask, request, jsonify
 from app.core.config import Config
 from app.core import telegram_owner, telegram_login
 from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
+from app.web_api.stats_util import compute_stats
 
 log = logging.getLogger("telegram_api")
 
@@ -96,6 +97,12 @@ def handle_update(update, brain, conv_manager, bot_id=None, store=None):
 
     user_id = _uid(bot_id, chat_id)
 
+    # Cập nhật tên hiển thị của khách (lấy từ tin Telegram)
+    if name:
+        conv_for_name = conv_manager.get(user_id)
+        if name != conv_for_name.name:
+            conv_for_name.name = name
+
     # Kiểm tra per-bot trước ("telegram:bot_id"), fallback lên channel rồi global
     _ch_key = f"telegram:{bot_id}" if bot_id else "telegram"
     if not _channel_enabled(_load_bot_state(), _ch_key):
@@ -105,6 +112,14 @@ def handle_update(update, brain, conv_manager, bot_id=None, store=None):
     conv = conv_manager.get(user_id)
     if conv.is_owner_active():
         log.info(f"[TG] owner_active {user_id} → im lặng")
+        return
+
+    # Gói dịch vụ của CHỦ bot: hết hạn / hết quota AI tháng → ngừng trả lời
+    # (ghi 1 lượt AI khi cho qua). Bot chưa gắn chủ → gate toàn cục.
+    from app.core import billing
+    owner = store.get_owner_username(bot_id) if (store and bot_id) else None
+    if not billing.channel_gate(owner):
+        log.info(f"[TG] gói/quota chủ ({owner}) không cho phép → bỏ qua {user_id}")
         return
 
     log.info(f"[TG] bot={bot_id} {chat_id} | {text[:80]!r}")
@@ -235,6 +250,22 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
             active = list(_pollers.keys())
         return {"ok": True, "active": active, "count": len(active)}
 
+    @app.route("/tg/stats")
+    def tg_stats():
+        bot_id = request.args.get("bot_id", "")
+
+        def _flt(u):
+            if not u.startswith("tg:"):
+                return False
+            if bot_id:
+                parts = u.split(":")
+                return len(parts) >= 3 and parts[1] == bot_id
+            return True
+
+        return jsonify(compute_stats(
+            conv_manager, request.args.get("from"), request.args.get("to"),
+            uid_filter=_flt))
+
     @app.route("/tg/config")
     def tg_config():
         """Thông tin chung: mã đăng ký chủ + bot .env (nếu có)."""
@@ -263,7 +294,9 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
         bot_id = str(res["id"])
         username = res.get("username", "")
         name = res.get("first_name", "")
-        store.upsert(bot_id, token=token, username=username, name=name)
+        from app.web_api.auth_api import current_username
+        owner = current_username()   # chủ homestay đang đăng nhập (để tính quota/gói)
+        store.upsert(bot_id, token=token, username=username, name=name, owner_username=owner)
         start_poller(bot_id, token, bot_id, brain, conv_manager, store)
         return {"ok": True, "bot": {
             "bot_id": bot_id, "username": username, "name": name,
@@ -383,6 +416,39 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
 
     # ── Hội thoại (lọc theo bot) ───────────────────────────────────────
 
+    def _backfill_tg_names(missing):
+        """Gọi Telegram getChat để lấy tên cho các khách chưa có tên (chạy nền)."""
+        changed = False
+        for uid in missing:
+            parts = uid.split(":")
+            if len(parts) < 3:
+                continue
+            bid, chat_id = parts[1], parts[2]
+            bot = store.get(bid) if store else None
+            token = bot.get("token") if bot else None
+            if not token:
+                continue
+            try:
+                r = requests.get(
+                    f"https://api.telegram.org/bot{token}/getChat",
+                    params={"chat_id": chat_id},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    res = r.json().get("result", {})
+                    name = " ".join(x for x in [res.get("first_name"), res.get("last_name")] if x)
+                    if not name:
+                        name = res.get("username", "")
+                    if name:
+                        conv = conv_manager.get(uid)
+                        if not conv.name:
+                            conv.name = name
+                            changed = True
+            except Exception as e:
+                log.debug(f"[tg name] {uid}: {e}")
+        if changed:
+            conv_manager.save()
+
     @app.route("/tg/conversations")
     def tg_conversations():
         bot_id = request.args.get("bot_id", "")
@@ -392,6 +458,7 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
         except ValueError:
             limit, offset = 50, 0
         rows = []
+        missing_names = []
         for uid, conv in list(conv_manager._sessions.items()):
             if not uid.startswith("tg:"):
                 continue
@@ -400,6 +467,10 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
             if bot_id and uid_bot != bot_id:
                 continue
             rows.append(_conv_summary(uid, conv))
+            if not conv.name:
+                missing_names.append(uid)
+        if missing_names:
+            threading.Thread(target=_backfill_tg_names, args=(missing_names,), daemon=True).start()
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
         total = len(rows)
         return jsonify({"total": total, "offset": offset, "limit": limit,
@@ -417,10 +488,33 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
         ]
         return jsonify({
             "user_id": user_id,
+            "name": getattr(conv, "name", ""),
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
             "messages": msgs,
         })
+
+    @app.route("/tg/conversations/<user_id>/send", methods=["POST"])
+    def tg_send_message(user_id):
+        data = request.get_json(force=True, silent=True) or {}
+        text = (data.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "tin trống"}, 400
+        # set_ctx đúng bot để gửi qua đúng token
+        parts = user_id.split(":")
+        bot_id = parts[1] if len(parts) >= 3 else None
+        try:
+            if bot_id:
+                channel.set_ctx(bot_id)
+            channel.send_text(user_id, text)
+        except Exception as e:
+            log.error(f"[tg send] lỗi gửi {user_id}: {e}")
+            return {"ok": False, "error": str(e)}, 500
+        conv = conv_manager.get(user_id)
+        conv.add_assistant_message(text)
+        conv.set_owner_active(True)
+        conv_manager.save()
+        return {"ok": True}
 
     @app.route("/tg/conversations/<user_id>/toggle-bot", methods=["POST"])
     def tg_toggle_bot(user_id):

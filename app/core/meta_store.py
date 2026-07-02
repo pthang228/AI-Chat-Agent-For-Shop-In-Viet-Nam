@@ -41,19 +41,26 @@ class MetaStore:
             except Exception as e:
                 log.error(f"[MetaStore] save lỗi: {e}")
 
-    def upsert(self, page_id, name=None, access_token=None, ig_id=None, ig_username=None):
+    def upsert(self, page_id, name=None, access_token=None, ig_id=None, ig_username=None, owner_username=None):
         pid = str(page_id)
         p = self._pages.get(pid, {})
         if name is not None:         p["name"] = name
         if access_token is not None: p["access_token"] = access_token
         if ig_id is not None:        p["ig_id"] = str(ig_id)
         if ig_username is not None:  p["ig_username"] = ig_username
+        # owner_username = tài khoản chủ homestay sở hữu Page (để tính quota/gói)
+        if owner_username and not p.get("owner_username"):
+            p["owner_username"] = owner_username
         self._pages[pid] = p
         self.save()
 
     def get_token(self, page_id):
         p = self._pages.get(str(page_id))
         return p.get("access_token") if p else None
+
+    def get_owner_username(self, page_id):
+        p = self._pages.get(str(page_id))
+        return p.get("owner_username") if p else None
 
     def page_for_ig(self, ig_id):
         """Map IG business account id → page_id (sự kiện Instagram dùng ig id ở entry)."""

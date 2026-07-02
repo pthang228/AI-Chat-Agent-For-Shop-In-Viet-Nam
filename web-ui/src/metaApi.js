@@ -38,6 +38,18 @@ export const meta = {
     }),
   resetConv: (uid) =>
     j("/meta/conversations/" + encodeURIComponent(uid), { method: "DELETE" }),
+  sendMessage: (uid, text) =>
+    j("/meta/conversations/" + encodeURIComponent(uid) + "/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+  stats: (from, to) => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    return j(`/meta/stats?${p}`);
+  },
 };
 
 // Quyền xin khi khách đăng nhập Facebook.

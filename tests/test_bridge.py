@@ -21,6 +21,7 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
+os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -36,9 +37,9 @@ def check(cond, name, detail=""):
     if cond: PASS += 1; print(f"  ✓ {name}")
     else: FAIL += 1; print(f"  ✗ FAIL {name}: {detail}")
 
-# Cô lập sessions
+# Cô lập sessions (DB test qua HOMESTAY_DB_PATH ở trên)
 cm = ConversationManager(account=1)
-cm._file = Path("test_bridge_tmp.json"); cm._sessions.clear()
+cm._sessions.clear()
 
 # ── FakeChannel để brain "gửi" mà ta bắt được ──
 class FakeChannel(Channel):

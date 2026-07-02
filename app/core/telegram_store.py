@@ -39,15 +39,24 @@ class TelegramStore:
             except Exception as e:
                 log.error(f"[TGStore] save lỗi: {e}")
 
-    def upsert(self, bot_id, token=None, username=None, name=None):
+    def upsert(self, bot_id, token=None, username=None, name=None, owner_username=None):
         bid = str(bot_id)
         with self._lock:
             b = self._bots.get(bid, {})
             if token is not None:    b["token"] = token
             if username is not None: b["username"] = username
             if name is not None:     b["name"] = name
+            # owner_username = tài khoản CHỦ HOMESTAY sở hữu bot này (để tính quota/gói).
+            # Chỉ set khi chưa có (giữ chủ đầu tiên đã kết nối).
+            if owner_username and not b.get("owner_username"):
+                b["owner_username"] = owner_username
             self._bots[bid] = b
             self.save()
+
+    def get_owner_username(self, bot_id):
+        with self._lock:
+            b = self._bots.get(str(bot_id))
+            return b.get("owner_username") if b else None
 
     def set_owner(self, bot_id, chat_id, name=""):
         bid = str(bot_id)

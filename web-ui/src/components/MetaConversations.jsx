@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { meta } from "../metaApi.js";
+import ChatSend from "./ChatSend.jsx";
+
+function displayName(c) {
+  return c.name ? `${c.name} (…${c.user_id.slice(-6)})` : `…${c.user_id.slice(-8)}`;
+}
 
 function relTime(iso) {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -110,7 +115,7 @@ export default function MetaConversations() {
         <div className="chatview">
           <div className="chat-top">
             <button className="btn-ghost" onClick={() => { setSel(null); setDetail(null); }}>← Danh sách</button>
-            <strong>…{detail.user_id.slice(-8)}</strong>
+            <strong>{displayName(detail)}</strong>
             {detail.owner_active
               ? <span className="badge owner">⛔ Chủ đang xử lý</span>
               : <span className="badge bot">🤖 Bot đang trả lời</span>}
@@ -129,6 +134,11 @@ export default function MetaConversations() {
               </div>
             ))}
           </div>
+          <ChatSend onSend={async (text) => {
+            const r = await meta.sendMessage(detail.user_id, text);
+            if (r.ok) { openChat(detail.user_id); loadList(); }
+            return r.ok;
+          }} />
         </div>
       ) : (
         <div className="convlist">
@@ -143,7 +153,7 @@ export default function MetaConversations() {
             <div className="convrow" key={c.user_id} onClick={() => openChat(c.user_id)}>
               <div className="conv-main">
                 <div className="conv-line1">
-                  <strong>…{c.user_id.slice(-8)}</strong>
+                  <strong>{displayName(c)}</strong>
                   {c.owner_active
                     ? <span className="badge owner">⛔ Chủ</span>
                     : <span className="badge bot">🤖 Bot</span>}

@@ -30,4 +30,16 @@ export const brain = {
     }),
   reset: (id) =>
     j("/conversations/" + encodeURIComponent(id), { method: "DELETE" }),
+  sendMessage: (id, text) =>
+    j("/conversations/" + encodeURIComponent(id) + "/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+  stats: (from, to) => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    return j(`/stats?${p}`);
+  },
 };

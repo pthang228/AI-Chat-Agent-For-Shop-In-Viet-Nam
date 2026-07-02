@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { tg } from "../telegramApi.js";
+import { tiktok } from "../tiktokApi.js";
 import ChatSend from "./ChatSend.jsx";
 
 function displayName(c) {
@@ -14,10 +14,10 @@ function relTime(iso) {
   return `${Math.floor(diff / 86400)} ngày trước`;
 }
 
-// Khách hàng kênh Telegram — tách theo từng bot (mỗi homestay 1 bot).
-export default function TelegramConversations() {
-  const [bots, setBots] = useState(null);   // null=đang tải
-  const [botId, setBotId] = useState("");    // "" = tất cả
+// Khách hàng kênh TikTok — tách theo từng account (mỗi homestay 1 account).
+export default function TikTokConversations() {
+  const [accounts, setAccounts] = useState(null);   // null=đang tải
+  const [bizId, setBizId] = useState("");           // "" = tất cả
   const [list, setList] = useState(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -28,14 +28,14 @@ export default function TelegramConversations() {
   const timer = useRef(null);
 
   useEffect(() => {
-    tg.bots().then((r) => {
-      if (r.ok && Array.isArray(r.body)) setBots(r.body);
-      else { setOffline(true); setBots([]); }
+    tiktok.accounts().then((r) => {
+      if (r.ok && Array.isArray(r.body)) setAccounts(r.body);
+      else { setOffline(true); setAccounts([]); }
     });
   }, []);
 
   async function loadList(off = 0, append = false) {
-    const { ok, body } = await tg.conversations(botId, { limit: PAGE, offset: off });
+    const { ok, body } = await tiktok.conversations(bizId, { limit: PAGE, offset: off });
     if (!ok || !body?.items) { setOffline(true); if (!append) setList([]); return; }
     setOffline(false);
     setTotal(body.total ?? 0);
@@ -50,49 +50,48 @@ export default function TelegramConversations() {
     timer.current = setInterval(() => loadList(0), 8000);
     return () => clearInterval(timer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [botId]);
+  }, [bizId]);
 
   async function openChat(uid) {
     setSel(uid);
-    const { ok, body } = await tg.conversation(uid);
+    const { ok, body } = await tiktok.conversation(uid);
     if (ok) setDetail(body);
   }
   async function onToggle() {
     if (!detail) return;
-    await tg.toggleBot(detail.user_id, detail.owner_active);
+    await tiktok.toggleBot(detail.user_id, detail.owner_active);
     openChat(detail.user_id); loadList();
   }
   async function onReset(uid) {
     if (!confirm("Xoá toàn bộ hội thoại của khách này?")) return;
-    await tg.resetConv(uid);
+    await tiktok.resetConv(uid);
     setSel(null); setDetail(null); loadList();
   }
-
   async function onSetOwner(uid) {
-    if (!confirm("Đặt người này làm CHỦ NHÀ (nhận tin nhắn báo + cuộc gọi khi khách cần)?")) return;
-    const r = await tg.setOwner(uid);
+    if (!confirm("Đặt người này làm CHỦ NHÀ (nhận tin nhắn báo khi khách cần)?")) return;
+    const r = await tiktok.setOwner(uid);
     alert(r.ok ? "✅ Đã đặt làm chủ nhà." : "❌ Lỗi đặt chủ.");
   }
 
-  if (bots === null)
+  if (accounts === null)
     return <div className="connect"><div className="status muted">Đang tải…</div></div>;
   if (offline)
     return (
       <div className="connect">
-        <div className="status warn">⚠️ Chưa kết nối được máy chủ Telegram (cổng 5007)</div>
-        <p className="hint">Chạy <code>python -m app.main_telegram</code> rồi tải lại.</p>
+        <div className="status warn">⚠️ Chưa kết nối được máy chủ TikTok (cổng 5008)</div>
+        <p className="hint">Chạy <code>python -m app.main_tiktok</code> rồi tải lại.</p>
       </div>
     );
 
   return (
     <div>
-      {bots.length > 1 && (
+      {accounts.length > 1 && (
         <div className="page-tabs">
-          <button className={"page-tab" + (botId === "" ? " active" : "")} onClick={() => setBotId("")}>Tất cả</button>
-          {bots.map((b) => (
-            <button key={b.bot_id} className={"page-tab" + (b.bot_id === botId ? " active" : "")}
-                    onClick={() => setBotId(b.bot_id)}>
-              @{b.username || b.bot_id}
+          <button className={"page-tab" + (bizId === "" ? " active" : "")} onClick={() => setBizId("")}>Tất cả</button>
+          {accounts.map((a) => (
+            <button key={a.business_id} className={"page-tab" + (a.business_id === bizId ? " active" : "")}
+                    onClick={() => setBizId(a.business_id)}>
+              {a.name || a.username || a.business_id}
             </button>
           ))}
         </div>
@@ -119,7 +118,7 @@ export default function TelegramConversations() {
             ))}
           </div>
           <ChatSend onSend={async (text) => {
-            const r = await tg.sendMessage(detail.user_id, text);
+            const r = await tiktok.sendMessage(detail.user_id, text);
             if (r.ok) { openChat(detail.user_id); loadList(0); }
             return r.ok;
           }} />

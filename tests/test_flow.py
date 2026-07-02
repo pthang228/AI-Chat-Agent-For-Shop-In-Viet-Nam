@@ -44,6 +44,7 @@ sys.modules.update({
 })
 
 os.environ.setdefault('REPLY_DELAY', '0')
+os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
 sys.path.insert(0, '.')
 
 from app.channels.zalo_cookie import bot as bot_module
@@ -52,11 +53,8 @@ from app.core.brain import Brain, FIRST_MESSAGE_GREETING, _infer_date_from_text
 from app.core.channel import Channel
 from app.core.conversation import ConversationManager
 
-# Cô lập test khỏi sessions.json production: chuyển hướng mọi lần save() sang file
-# tạm và bắt đầu với state rỗng. Nếu không, test sẽ ghi đè dữ liệu thật và các
-# lần chạy sau load lại state cũ (uid trùng) gây fail giả.
-from pathlib import Path as _Path
-conv_manager._file = _Path("test_sessions_tmp.json")
+# Cô lập test khỏi DB production: HOMESTAY_DB_PATH (đặt ở trên, TRƯỚC import app)
+# trỏ sang test_db_tmp.sqlite. Bắt đầu với state rỗng để tránh uid trùng.
 conv_manager._sessions.clear()
 
 _UID_COUNTER = [0]

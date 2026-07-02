@@ -57,10 +57,11 @@ def main():
     print(f"✅ Não bộ + cầu nối sẵn sàng")
     print(f"   Node service : {node_url}  (đăng nhập QR tại đây)")
     print(f"   Bridge       : http://127.0.0.1:{bridge_port}/incoming")
-    print(f"   Sessions     : {conv._file}")
+    print(f"   Database     : {conv._db.path} (account={conv._account})")
     print("🤖 Đang chờ tin nhắn khách... Ctrl+C để dừng.\n")
 
-    app.run(host="127.0.0.1", port=bridge_port, threaded=True, use_reloader=False)
+    from app.web_api.serve import run
+    run(app, host="127.0.0.1", port=bridge_port)
 
 
 if __name__ == "__main__":

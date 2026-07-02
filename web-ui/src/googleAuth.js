@@ -31,7 +31,9 @@ export function decodeJwt(token) {
   } catch { return {}; }
 }
 
-// Khởi tạo + render nút Google vào phần tử el. onUser nhận {email,name,picture}.
+// Khởi tạo + render nút Google vào phần tử el.
+// onUser nhận {credential, email, name, picture} — credential (id_token) được gửi
+// cho BACKEND xác thực với Google (decode client-side chỉ để hiển thị nhanh).
 export async function renderGoogleButton(el, onUser) {
   if (!GOOGLE_CLIENT_ID || !el) return false;
   const google = await loadGis();
@@ -39,7 +41,7 @@ export async function renderGoogleButton(el, onUser) {
     client_id: GOOGLE_CLIENT_ID,
     callback: ({ credential }) => {
       const p = decodeJwt(credential);
-      onUser({ email: p.email, name: p.name, picture: p.picture });
+      onUser({ credential, email: p.email, name: p.name, picture: p.picture });
     },
   });
   google.accounts.id.renderButton(el, { theme: "outline", size: "large", text: "continue_with", shape: "pill", locale: "vi", width: 320 });

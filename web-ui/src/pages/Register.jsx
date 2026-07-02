@@ -10,22 +10,26 @@ export default function Register() {
   const [homestay, setH] = useState("");
   const [username, setU] = useState("");
   const [password, setP] = useState("");
+  const [promo, setPromo] = useState("");
   const [err, setErr] = useState("");
   const gbtn = useRef(null);
 
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => {
     if (GOOGLE_CLIENT_ID && gbtn.current) {
-      renderGoogleButton(gbtn.current, (u) => {
-        try { loginWithGoogle(u); nav("/"); } catch (e) { setErr(e.message); }
+      renderGoogleButton(gbtn.current, async (u) => {
+        try { await loginWithGoogle(u); nav("/"); } catch (e) { setErr(e.message); }
       }).catch(() => {});
     }
   }, []);
 
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
-    setErr("");
-    try { register({ username, password, homestay }); nav("/"); }
+    setErr(""); setBusy(true);
+    try { await register({ username, password, homestay, promo }); nav("/"); }
     catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -75,9 +79,19 @@ export default function Register() {
           </div>
         </div>
 
+        <div className="field">
+          <label className="field-label">Mã giới thiệu <span style={{ fontWeight: 400, color: "var(--faint)" }}>(nếu có — tặng 7 ngày dùng thử)</span></label>
+          <div className="input-wrap">
+            <span className="input-ico">🎁</span>
+            <input value={promo} onChange={(e) => setPromo(e.target.value)} placeholder="Không bắt buộc" />
+          </div>
+        </div>
+
         {err && <div className="err">{err}</div>}
 
-        <button className="btn-primary" type="submit">Tạo tài khoản <IcArrow width={18} height={18} /></button>
+        <button className="btn-primary" type="submit" disabled={busy}>
+          {busy ? "Đang tạo…" : "Tạo tài khoản"} <IcArrow width={18} height={18} />
+        </button>
       </form>
 
       <div className="auth-foot"><IcShield width={15} height={15} /> Bảo mật chuẩn ngân hàng · Dữ liệu khách được mã hoá</div>

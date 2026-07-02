@@ -19,6 +19,7 @@ Start-Svc $npm     'start'                     (Join-Path $ROOT 'zalo-node') 'za
 Start-Svc 'python' @('-m','app.main_node')     $ROOT                         'main_node'
 Start-Svc 'python' @('scripts\run_meta.py')    $ROOT                         'run_meta'
 Start-Svc 'python' @('-m','app.main_telegram') $ROOT                         'telegram'
+Start-Svc 'python' @('-m','app.main_tiktok')   $ROOT                         'tiktok'
 Start-Svc $npm     @('run','dev')              (Join-Path $ROOT 'web-ui')    'web-ui'
 
 Start-Sleep -Seconds 8

@@ -71,4 +71,17 @@ export const tg = {
       body: JSON.stringify({ bot_on: botOn }),
     }),
   resetConv: (uid) => j("/tg/conversations/" + encodeURIComponent(uid), { method: "DELETE" }),
+  sendMessage: (uid, text) =>
+    j("/tg/conversations/" + encodeURIComponent(uid) + "/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+  stats: (from, to, botId = "") => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    if (botId) p.set("bot_id", botId);
+    return j(`/tg/stats?${p}`);
+  },
 };

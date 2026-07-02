@@ -1,94 +1,133 @@
-// Auth TẠM THỜI bằng localStorage (chưa có backend, mật khẩu chưa mã hoá).
-// Hỗ trợ đăng nhập bằng mật khẩu hoặc Google (Gmail). Lên production thay bằng API thật.
+// Auth THẬT qua API (bridge 5005, users/token trong SQLite) — thay localStorage cũ.
+// Token phiên lưu ở localStorage (ghi nhớ) hoặc sessionStorage (mất khi đóng tab);
+// thông tin user được cache cùng chỗ để currentUser() dùng ĐỒNG BỘ như cũ.
+// Tài khoản/app cũ trong localStorage (hb_users/hb_apps) được TỰ CHUYỂN lên server
+// ở lần đăng nhập đầu tiên.
 
-const USERS_KEY = "hb_users";
-const SESSION_KEY = "hb_session";
+import { authApi, OFFLINE_MSG } from "./authApi.js";
 
-function getUsers() {
-  try { return JSON.parse(localStorage.getItem(USERS_KEY)) || {}; }
-  catch { return {}; }
-}
-function setUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
+const TOKEN_KEY = "hb_token";
+const USER_KEY = "hb_user";
+const LEGACY_USERS_KEY = "hb_users";
+const LEGACY_APPS_KEY = "hb_apps";
 
-// Ghi nhớ = lưu phiên ở localStorage (còn sau khi đóng trình duyệt).
-// Không ghi nhớ = lưu ở sessionStorage (mất khi đóng tab/trình duyệt).
-function setSession(username, remember) {
-  localStorage.removeItem(SESSION_KEY);
-  sessionStorage.removeItem(SESSION_KEY);
-  (remember ? localStorage : sessionStorage).setItem(SESSION_KEY, username);
-}
-
-export function register({ username, password, homestay, remember = true }) {
-  username = (username || "").trim().toLowerCase();
-  if (!username || !password) throw new Error("Vui lòng nhập email và mật khẩu");
-  if (password.length < 4) throw new Error("Mật khẩu tối thiểu 4 ký tự");
-  const users = getUsers();
-  if (users[username]) throw new Error("Tài khoản đã tồn tại");
-  users[username] = { username, password, provider: "password", homestay: (homestay || "").trim(), createdAt: Date.now() };
-  setUsers(users);
-  setSession(username, remember);
-  return users[username];
-}
-
-export function login({ username, password, remember = true }) {
-  username = (username || "").trim().toLowerCase();
-  const u = getUsers()[username];
-  if (!u || u.password !== password) throw new Error("Sai email hoặc mật khẩu");
-  setSession(username, remember);
-  return u;
-}
-
-// Đăng nhập / đăng ký bằng Google — định danh theo email, không cần mật khẩu.
-export function loginWithGoogle({ email, name, picture }) {
-  const username = (email || "").trim().toLowerCase();
-  if (!username) throw new Error("Không lấy được email từ Google");
-  const users = getUsers();
-  if (!users[username]) {
-    users[username] = { username, password: null, provider: "google", homestay: (name || "").trim(), picture: picture || "", createdAt: Date.now() };
-  } else {
-    if (!users[username].provider) users[username].provider = "google";
-    if (picture) users[username].picture = picture;
-    if (!users[username].homestay && name) users[username].homestay = name;
+function clearSession() {
+  for (const s of [localStorage, sessionStorage]) {
+    s.removeItem(TOKEN_KEY);
+    s.removeItem(USER_KEY);
+    s.removeItem("hb_session");   // phiên kiểu cũ
   }
-  setUsers(users);
-  setSession(username, true);
-  return users[username];
 }
 
-export function updateProfile({ username, homestay, email }) {
-  username = (username || "").trim().toLowerCase();
-  const users = getUsers();
-  if (!users[username]) throw new Error("Không tìm thấy tài khoản");
-  if (email !== undefined) {
-    email = (email || "").trim();
-    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Email không hợp lệ");
-    users[username].email = email;
-  }
-  if (homestay !== undefined) users[username].homestay = (homestay || "").trim();
-  setUsers(users);
-  return users[username];
+function setSession(token, user, remember) {
+  clearSession();
+  const s = remember ? localStorage : sessionStorage;
+  s.setItem(TOKEN_KEY, token);
+  s.setItem(USER_KEY, JSON.stringify(user));
 }
 
-export function changePassword({ username, oldPassword, newPassword }) {
-  username = (username || "").trim().toLowerCase();
-  const users = getUsers();
-  const u = users[username];
-  if (!u) throw new Error("Không tìm thấy tài khoản");
-  if (u.provider === "google" && !u.password) throw new Error("Tài khoản Google đăng nhập bằng Gmail, không có mật khẩu");
-  if (u.password && u.password !== oldPassword) throw new Error("Mật khẩu hiện tại không đúng");
-  if ((newPassword || "").length < 4) throw new Error("Mật khẩu mới tối thiểu 4 ký tự");
-  u.password = newPassword;
-  setUsers(users);
-  return u;
-}
-
-export function logout() {
-  localStorage.removeItem(SESSION_KEY);
-  sessionStorage.removeItem(SESSION_KEY);
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
 }
 
 export function currentUser() {
-  const s = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
-  if (!s) return null;
-  return getUsers()[s] || null;
+  const raw = localStorage.getItem(USER_KEY) || sessionStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function cacheUser(user) {
+  const s = localStorage.getItem(TOKEN_KEY) ? localStorage : sessionStorage;
+  s.setItem(USER_KEY, JSON.stringify(user));
+}
+
+function fail(r, fallback = "Có lỗi xảy ra") {
+  throw new Error(r.status === 0 ? OFFLINE_MSG : (r.body?.error || fallback));
+}
+
+// ── Migrate dữ liệu localStorage kiểu cũ lên server (chạy 1 lần/user) ──
+
+function legacyUser(username) {
+  try {
+    const users = JSON.parse(localStorage.getItem(LEGACY_USERS_KEY)) || {};
+    return users[(username || "").trim().toLowerCase()] || null;
+  } catch { return null; }
+}
+
+async function migrateLegacyApps(username, token) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LEGACY_APPS_KEY)) || {};
+    const apps = all[username] || [];
+    if (!apps.length) return;
+    for (const a of apps) {
+      await authApi.addApp(token, { name: a.name, channel: a.channel });  // server tự chống trùng
+    }
+    delete all[username];
+    localStorage.setItem(LEGACY_APPS_KEY, JSON.stringify(all));
+  } catch { /* best-effort */ }
+}
+
+// ── API công khai (giữ tên hàm cũ, giờ là async) ───────────────────
+
+export async function register({ username, password, homestay, promo = "", remember = true }) {
+  username = (username || "").trim().toLowerCase();
+  const r = await authApi.register(username, password, homestay || "", promo || "");
+  if (!r.ok) fail(r, "Đăng ký thất bại");
+  setSession(r.body.token, r.body.user, remember);
+  await migrateLegacyApps(username, r.body.token);
+  return r.body.user;
+}
+
+export async function login({ username, password, remember = true }) {
+  username = (username || "").trim().toLowerCase();
+  let r = await authApi.login(username, password);
+  // Tài khoản kiểu cũ (localStorage) chưa có trên server → tự chuyển lên
+  if (!r.ok && r.body?.code === "not_found") {
+    const legacy = legacyUser(username);
+    if (legacy && legacy.password === password) {
+      r = await authApi.register(username, password, legacy.homestay || "");
+    }
+  }
+  if (!r.ok) fail(r, "Sai email hoặc mật khẩu");
+  setSession(r.body.token, r.body.user, remember);
+  await migrateLegacyApps(username, r.body.token);
+  return r.body.user;
+}
+
+// Đăng nhập Google: gửi credential (id_token) cho server xác thực với Google.
+export async function loginWithGoogle({ credential }) {
+  const r = await authApi.google(credential);
+  if (!r.ok) fail(r, "Đăng nhập Google thất bại");
+  setSession(r.body.token, r.body.user, true);
+  await migrateLegacyApps(r.body.user.username, r.body.token);
+  return r.body.user;
+}
+
+export async function updateProfile({ homestay, email }) {
+  const r = await authApi.update(getToken(), { homestay, email });
+  if (!r.ok) fail(r, "Lưu thất bại");
+  cacheUser(r.body.user);
+  return r.body.user;
+}
+
+export async function changePassword({ oldPassword, newPassword }) {
+  const r = await authApi.password(getToken(), oldPassword, newPassword);
+  if (!r.ok) fail(r, "Đổi mật khẩu thất bại");
+  return true;
+}
+
+// Làm mới thông tin user từ server (gọi lúc vào Dashboard — bắt phiên hết hạn).
+export async function refreshUser() {
+  const token = getToken();
+  if (!token) return null;
+  const r = await authApi.me(token);
+  if (r.status === 401) { clearSession(); return null; }   // token hết hạn
+  if (r.ok && r.body?.user) { cacheUser(r.body.user); return r.body.user; }
+  return currentUser();   // offline → dùng cache
+}
+
+export function logout() {
+  const token = getToken();
+  if (token) authApi.logout(token);   // best-effort, không chờ
+  clearSession();
 }
