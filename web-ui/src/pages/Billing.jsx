@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { currentUser } from "../auth.js";
 import { billing, vnd } from "../billingApi.js";
 import { IcHome, IcBack } from "../components/icons.jsx";
+import BackLink from "../components/BackLink.jsx";
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -141,15 +142,15 @@ export default function Billing() {
       </div>
       <div className="tier-grid">
         {me.tiers.map((t) => {
-          const price = t.prices[duration];
+          const price = t.prices[duration];              // undefined = hạng này không bán thời hạn này
           const cur = me.tier === t.tier && !me.on_trial;
           return (
-            <div key={t.tier} className={"tier-card" + (t.tier === "pro" ? " hot" : "") + (cur ? " current" : "")}>
+            <div key={t.tier} className={"tier-card" + (t.tier === "pro" ? " hot" : "") + (cur ? " current" : "") + (price === undefined ? " na" : "")}>
               {t.tier === "pro" && <div className="plan-badge">Phổ biến</div>}
               <div className="plan-ico">{TIER_ICON[t.tier]}</div>
               <div className="plan-name">{t.label}</div>
-              <div className="plan-price">{vnd(price)}</div>
-              <div className="plan-days">{DUR_LABEL[duration]}</div>
+              <div className="plan-price">{price === undefined ? "—" : vnd(price)}</div>
+              <div className="plan-days">{price === undefined ? "Không có gói này" : DUR_LABEL[duration]}</div>
               <ul className="tier-feats">
                 <li>🤖 {t.quota.toLocaleString("vi-VN")} lượt AI/tháng</li>
                 <li>📡 {t.channels ? `${t.channels} kênh` : "Tất cả kênh"}</li>
@@ -157,13 +158,15 @@ export default function Billing() {
                 <li className={t.call_owner ? "" : "off"}>{t.call_owner ? "✅" : "✖"} Gọi điện báo chủ</li>
                 <li className={t.adv_stats ? "" : "off"}>{t.adv_stats ? "✅" : "✖"} Thống kê nâng cao</li>
               </ul>
-              {cur ? (
-                <button className="btn-outline sm" disabled>Đang dùng</button>
+              {price === undefined ? (
+                <button className="btn-outline sm" disabled title="Muốn dùng vĩnh viễn hãy chọn Pro trở lên">Chỉ từ gói Pro</button>
+              ) : cur && me.lifetime ? (
+                <button className="btn-outline sm" disabled>👑 Đang dùng vĩnh viễn</button>
               ) : (
                 <button className={"btn-primary sm" + (me.balance < price ? " plan-poor" : "")}
                         onClick={() => doBuy(t.tier)} disabled={me.balance < price}
-                        title={me.balance < price ? "Ví chưa đủ — nạp thêm bên dưới" : ""}>
-                  {me.balance < price ? "Ví chưa đủ" : "Chọn gói này"}
+                        title={me.balance < price ? "Ví chưa đủ — nạp thêm bên dưới" : cur ? "Cộng thêm thời hạn vào gói hiện tại" : ""}>
+                  {me.balance < price ? "Ví chưa đủ" : cur ? "Gia hạn thêm" : "Chọn gói này"}
                 </button>
               )}
             </div>
@@ -249,7 +252,7 @@ function Shell({ hostName, children }) {
     <div className="dash">
       <header className="topbar">
         <div className="brand">
-          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> Homestay Bot</Link>
+          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> NovaChat</Link>
         </div>
         <div className="user">
           <Link to="/settings" className="user-pill" title="Cài đặt tài khoản">
@@ -258,6 +261,7 @@ function Shell({ hostName, children }) {
         </div>
       </header>
       <main className="content narrow" style={{ maxWidth: 820 }}>
+        <BackLink />
         <div className="dash-head" style={{ marginBottom: 18 }}>
           <div>
             <div className="hello">Thanh toán</div>

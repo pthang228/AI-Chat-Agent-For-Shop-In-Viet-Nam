@@ -132,6 +132,14 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.web_api.billing_api import register_billing_routes
     register_billing_routes(app)
 
+    # Prompt Builder — shop gửi link dữ liệu + hướng dẫn → AI viết prompt
+    from app.web_api.prompt_api import register_prompt_routes
+    register_prompt_routes(app)
+
+    # Chat tư vấn dịch vụ (bong bóng chat góc web, không cần đăng nhập)
+    from app.web_api.support_api import register_support_routes
+    register_support_routes(app)
+
     @app.route("/health")
     def health():
         return {"ok": True}

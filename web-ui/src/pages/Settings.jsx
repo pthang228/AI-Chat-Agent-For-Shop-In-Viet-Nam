@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { currentUser, updateProfile, changePassword } from "../auth.js";
 import { logoutAndStopBots } from "../session.js";
 import { IcHome, IcBack, IcLogout, IcUser, IcMail, IcLock } from "../components/icons.jsx";
+import BackLink from "../components/BackLink.jsx";
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -48,7 +49,7 @@ export default function Settings() {
     <div className="dash">
       <header className="topbar">
         <div className="brand">
-          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> Homestay Bot</Link>
+          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> NovaChat</Link>
         </div>
         <div className="user">
           <span className="user-pill"><span className="avatar">{initials(hostName)}</span>{hostName}</span>
@@ -56,6 +57,7 @@ export default function Settings() {
       </header>
 
       <main className="content narrow" style={{ maxWidth: 640 }}>
+        <BackLink />
         <div className="dash-head" style={{ marginBottom: 18 }}>
           <div>
             <div className="hello">Tài khoản</div>
@@ -74,12 +76,12 @@ export default function Settings() {
           </div>
 
           <div className="field" style={{ marginTop: 16 }}>
-            <label className="field-label"><IcUser width={14} height={14} /> Tên homestay</label>
-            <input value={homestay} onChange={(e) => setHomestay(e.target.value)} placeholder="VD: Haru Staycation" />
+            <label className="field-label"><IcUser width={14} height={14} /> Tên shop / thương hiệu</label>
+            <input value={homestay} onChange={(e) => setHomestay(e.target.value)} placeholder="VD: Mia Spa & Nail" />
           </div>
           <div className="field">
             <label className="field-label"><IcMail width={14} height={14} /> Email liên hệ</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@homestay.vn" />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@gmail.com" />
             <p className="hint" style={{ marginTop: 6 }}>Dùng để nhận thông báo & khôi phục tài khoản sau này.</p>
           </div>
           <div className="row" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>

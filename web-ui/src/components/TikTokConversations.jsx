@@ -14,7 +14,7 @@ function relTime(iso) {
   return `${Math.floor(diff / 86400)} ngày trước`;
 }
 
-// Khách hàng kênh TikTok — tách theo từng account (mỗi homestay 1 account).
+// Khách hàng kênh TikTok — tách theo từng account (mỗi khách hàng 1 account).
 export default function TikTokConversations() {
   const [accounts, setAccounts] = useState(null);   // null=đang tải
   const [bizId, setBizId] = useState("");           // "" = tất cả

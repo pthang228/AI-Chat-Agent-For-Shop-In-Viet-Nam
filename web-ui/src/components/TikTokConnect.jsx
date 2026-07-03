@@ -78,7 +78,7 @@ export default function TikTokConnect() {
       <GuideBox
         title="📘 Hướng dẫn kết nối — TikTok"
         steps={[
-          { t: "Bước 1 · Tài khoản TikTok Business", d: <>Tài khoản TikTok của homestay phải chuyển sang <b>Business Account</b> (Cài đặt → Tài khoản → Chuyển sang tài khoản Doanh nghiệp — miễn phí).</> },
+          { t: "Bước 1 · Tài khoản TikTok Business", d: <>Tài khoản TikTok của shop phải chuyển sang <b>Business Account</b> (Cài đặt → Tài khoản → Chuyển sang tài khoản Doanh nghiệp — miễn phí).</> },
           { t: "Bước 2 · Lấy access token", d: <>Vào <b>business.tiktok.com</b> / TikTok for Developers → tạo app (hoặc dùng app của nhà cung cấp) → cấp quyền <b>Business Messaging</b> → copy <b>Access Token</b> và <b>Business ID</b> của tài khoản.</> },
           { t: "Bước 3 · Dán & kết nối", d: <>Dán token + Business ID vào ô dưới, bấm <b>Kết nối</b>. Sau đó khai webhook nhận tin: <code>{webhookUrl}</code> (verify token: <code>{cfg.verify_token}</code>).</> },
           { t: "Bước 4 · Đặt chủ nhà", d: <>Chủ nhắn thử account TikTok 1 tin → vào tab <b>Khách hàng</b> → mở hội thoại của chủ → bấm <b>⭐ Đặt làm chủ</b> để nhận tin báo khi khách chốt phòng.</> },

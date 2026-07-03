@@ -131,6 +131,16 @@ credit("b@x.vn", 10_000_000)
 st = billing.buy_plan("b@x.vn", "pro", "lifetime")
 check(st["lifetime"] and st["expires_at"] is None and st["tier"] == "pro", "C6 lifetime", f"{st}")
 
+# Khởi đầu KHÔNG có gói vĩnh viễn
+check("lifetime" not in billing.PRICES["starter"], "C7 starter_no_lifetime_price")
+try:
+    billing.buy_plan("a@x.vn", "starter", "lifetime"); check(False, "C7 starter_lifetime_blocked")
+except ValueError as e:
+    check("không có" in str(e), "C7 starter_lifetime_blocked", str(e))
+# Catalog cho UI cũng không liệt kê
+cat = {t["tier"]: t["prices"] for t in billing.plans_catalog()}
+check("lifetime" not in cat["starter"] and "lifetime" in cat["pro"], "C8 catalog_hides_it")
+
 print("\n── D. Quota lượt AI ──")
 wipe()
 billing.ensure_billing("q@x.vn"); credit("q@x.vn", 500_000)

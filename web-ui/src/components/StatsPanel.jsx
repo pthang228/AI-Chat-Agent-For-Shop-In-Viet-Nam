@@ -112,7 +112,7 @@ function BarChart({ timeline, period }) {
                 <div className="bc-bar" style={{
                   height: barH + "px",
                   width: "80%",
-                  background: isHighlight(d.date) ? "#c1923a" : "#2f5d46",
+                  background: isHighlight(d.date) ? "#cf9536" : "#7C3AED",
                 }} />
               )}
             </div>

@@ -14,7 +14,7 @@ function relTime(iso) {
   return `${Math.floor(diff / 86400)} ngày trước`;
 }
 
-// Khách hàng kênh Meta — TÁCH RIÊNG theo từng Page (mỗi homestay 1 danh sách).
+// Khách hàng kênh Meta — TÁCH RIÊNG theo từng Page (mỗi khách hàng 1 danh sách).
 export default function MetaConversations() {
   const [pages, setPages] = useState(null);   // null = đang tải
   const [pageId, setPageId] = useState("");    // Page đang chọn

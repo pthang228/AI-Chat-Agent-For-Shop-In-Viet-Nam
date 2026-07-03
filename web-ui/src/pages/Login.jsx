@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { login, register, loginWithGoogle } from "../auth.js";
 import { renderGoogleButton, GOOGLE_CLIENT_ID } from "../googleAuth.js";
-import { IcHome, IcMail, IcLock, IcArrow, IcSpark, IcShield } from "../components/icons.jsx";
+import { IcHome, IcMail, IcLock, IcArrow, IcSpark, IcShield, IcBack } from "../components/icons.jsx";
 
 export default function Login() {
   const nav = useNavigate();
@@ -35,7 +35,7 @@ export default function Login() {
     try {
       await login({ username: "demo@homestay.vn", password: "demo1234", remember: true });
     } catch {
-      try { await register({ username: "demo@homestay.vn", password: "demo1234", homestay: "Homestay Demo", remember: true }); }
+      try { await register({ username: "demo@homestay.vn", password: "demo1234", homestay: "Shop Demo", remember: true }); }
       catch (e) { setErr(e.message); setBusy(false); return; }
     }
     setBusy(false);
@@ -44,10 +44,11 @@ export default function Login() {
 
   return (
     <div className="auth-wrap">
+      <Link to="/" className="auth-back"><IcBack width={16} height={16} /> Về trang chủ</Link>
       <div className="auth-head">
         <div className="brand-logo"><IcHome width={26} height={26} /></div>
         <h1 className="auth-title">Chào mừng trở lại</h1>
-        <p className="auth-sub">Trợ lý chăm sóc khách tự động cho homestay của bạn — kết nối Zalo, Messenger, Instagram và Telegram chỉ trong vài chạm.</p>
+        <p className="auth-sub">Trợ lý chăm sóc khách tự động cho shop của bạn — kết nối Zalo, Messenger, Instagram và Telegram chỉ trong vài chạm.</p>
       </div>
 
       <form className="auth-card" onSubmit={submit}>
@@ -69,7 +70,7 @@ export default function Login() {
           <label className="field-label">Email</label>
           <div className="input-wrap">
             <span className="input-ico"><IcMail /></span>
-            <input value={username} onChange={(e) => setU(e.target.value)} placeholder="ban@homestay.vn" autoFocus />
+            <input value={username} onChange={(e) => setU(e.target.value)} placeholder="ban@gmail.com" autoFocus />
           </div>
         </div>
 

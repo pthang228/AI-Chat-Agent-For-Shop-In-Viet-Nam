@@ -79,7 +79,7 @@ export default function MetaConnect() {
       <GuideBox
         title="📘 Hướng dẫn nhanh — Messenger / Instagram"
         steps={[
-          { t: "Bước 1 · Đăng nhập Facebook", d: <>Bấm <b>Đăng nhập với Facebook</b> bên dưới → chọn đúng <b>Page homestay</b> của bạn.</> },
+          { t: "Bước 1 · Đăng nhập Facebook", d: <>Bấm <b>Đăng nhập với Facebook</b> bên dưới → chọn đúng <b>Page của shop</b> bạn.</> },
           { t: "Bước 2 · Bot tự trả lời", d: <>Xong là bot tự trả lời tin nhắn của Page{cfg.enable_ig ? " và Instagram liên kết" : ""}. Bạn <b>không cần</b> đụng gì vào trang lập trình của Facebook.</> },
           { t: "Bước 3 · Quản lý khách", d: <>Xem & xử lý hội thoại từng khách ở tab <b>Khách hàng</b>.</> },
         ]}

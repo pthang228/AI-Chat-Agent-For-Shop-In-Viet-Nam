@@ -3,7 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { register, loginWithGoogle } from "../auth.js";
 import { renderGoogleButton, GOOGLE_CLIENT_ID } from "../googleAuth.js";
 import { GoogleG } from "./Login.jsx";
-import { IcHome, IcMail, IcLock, IcUser, IcArrow, IcShield } from "../components/icons.jsx";
+import { IcHome, IcMail, IcLock, IcUser, IcArrow, IcShield, IcBack } from "../components/icons.jsx";
 
 export default function Register() {
   const nav = useNavigate();
@@ -34,10 +34,11 @@ export default function Register() {
 
   return (
     <div className="auth-wrap">
+      <Link to="/" className="auth-back"><IcBack width={16} height={16} /> Về trang chủ</Link>
       <div className="auth-head">
         <div className="brand-logo"><IcHome width={26} height={26} /></div>
         <h1 className="auth-title">Tạo tài khoản mới</h1>
-        <p className="auth-sub">Trợ lý chăm sóc khách tự động cho homestay của bạn — kết nối Zalo, Messenger, Instagram và Telegram chỉ trong vài chạm.</p>
+        <p className="auth-sub">Trợ lý chăm sóc khách tự động cho shop của bạn — kết nối Zalo, Messenger, Instagram và Telegram chỉ trong vài chạm.</p>
       </div>
 
       <form className="auth-card" onSubmit={submit}>
@@ -56,10 +57,10 @@ export default function Register() {
         <div className="or">hoặc dùng email</div>
 
         <div className="field">
-          <label className="field-label">Tên homestay</label>
+          <label className="field-label">Tên shop / thương hiệu</label>
           <div className="input-wrap">
             <span className="input-ico"><IcUser /></span>
-            <input value={homestay} onChange={(e) => setH(e.target.value)} placeholder="VD: Haru Staycation" autoFocus />
+            <input value={homestay} onChange={(e) => setH(e.target.value)} placeholder="VD: Mia Spa & Nail" autoFocus />
           </div>
         </div>
 
@@ -67,7 +68,7 @@ export default function Register() {
           <label className="field-label">Email</label>
           <div className="input-wrap">
             <span className="input-ico"><IcMail /></span>
-            <input value={username} onChange={(e) => setU(e.target.value)} placeholder="ban@homestay.vn" />
+            <input value={username} onChange={(e) => setU(e.target.value)} placeholder="ban@gmail.com" />
           </div>
         </div>
 

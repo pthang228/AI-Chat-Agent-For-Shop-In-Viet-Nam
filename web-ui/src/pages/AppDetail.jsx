@@ -14,6 +14,7 @@ import TikTokConnect from "../components/TikTokConnect.jsx";
 import TikTokConversations from "../components/TikTokConversations.jsx";
 import { IcHome, IcBack, IcLogout, IcSpark } from "../components/icons.jsx";
 import StatsPanel from "../components/StatsPanel.jsx";
+import BackLink from "../components/BackLink.jsx";
 
 const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", tiktok: "TikTok" };
 const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", tiktok: "tiktok" };
@@ -42,7 +43,7 @@ export default function AppDetail() {
   if (app === undefined) {
     return (
       <div className="dash">
-        <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> Homestay Bot</div></header>
+        <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> NovaChat</div></header>
         <main className="content"><p>Đang tải…</p></main>
       </div>
     );
@@ -50,7 +51,7 @@ export default function AppDetail() {
   if (!app) {
     return (
       <div className="dash">
-        <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> Homestay Bot</div></header>
+        <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> NovaChat</div></header>
         <main className="content"><p>Không tìm thấy app (hoặc máy chủ 5005 chưa chạy). <Link to="/">← Về danh sách</Link></p></main>
       </div>
     );
@@ -73,7 +74,7 @@ export default function AppDetail() {
     <div className="dash">
       <header className="topbar">
         <div className="brand">
-          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> Homestay Bot</Link>
+          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> NovaChat</Link>
         </div>
         <div className="user">
           <Link to="/settings" className="user-pill" title="Cài đặt tài khoản"><span className="avatar">{initials(hostName)}</span>{hostName}</Link>
@@ -82,6 +83,7 @@ export default function AppDetail() {
       </header>
 
       <main className="content narrow">
+        <BackLink label="Về danh sách app" />
         <div className="detail-bar">
           <div className="detail-titles">
             <h2 className="detail-title">{app.name}</h2>

@@ -98,7 +98,7 @@ export default function Dashboard() {
   return (
     <div className="dash">
       <header className="topbar">
-        <div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> Homestay Bot</div>
+        <div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> NovaChat</div>
         <div className="user">
           <Link to="/settings" className="user-pill" title="Cài đặt tài khoản">
             <span className="avatar">{initials(hostName)}</span>{hostName}
@@ -114,7 +114,7 @@ export default function Dashboard() {
             {bill.active
               ? bill.on_trial
                 ? <>🎁 Đang dùng thử — còn <b>{bill.days_left}</b> ngày. <u>Xem gói dịch vụ →</u></>
-                : <>📦 {bill.plan_label} — còn <b>{bill.days_left}</b> ngày. <u>Gia hạn →</u></>
+                : <>📦 Gói {bill.tier_label} · {bill.plan_label} — còn <b>{bill.days_left}</b> ngày. <u>Gia hạn →</u></>
               : <>⛔ <b>Gói dịch vụ đã hết hạn</b> — bot đã tạm ngừng trả lời khách. <u>Gia hạn ngay →</u></>}
           </Link>
         )}
@@ -146,6 +146,10 @@ export default function Dashboard() {
                 <span>Thống kê</span>
               </button>
             )}
+            <Link to="/prompt" className="stats-icon-btn" title="Dạy AI về shop của bạn — AI tự soạn prompt từ link dữ liệu">
+              <span style={{ fontSize: 15 }}>🧠</span>
+              <span>Dạy AI</span>
+            </Link>
           </div>
         </div>
 

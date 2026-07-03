@@ -45,8 +45,9 @@ DURATIONS = {
     "lifetime": {"label": "vĩnh viễn", "days": None},
 }
 # GIÁ [tier][duration] (VND) — chỉnh ở đây là xong.
+# Hạng Khởi đầu KHÔNG có gói vĩnh viễn (muốn vĩnh viễn → lên Pro).
 PRICES = {
-    "starter":  {"month": 250_000,   "quarter": 675_000,   "year": 2_500_000,  "lifetime": 5_000_000},
+    "starter":  {"month": 250_000,   "quarter": 675_000,   "year": 2_500_000},
     "pro":      {"month": 500_000,   "quarter": 1_350_000, "year": 5_000_000,  "lifetime": 10_000_000},
     "business": {"month": 1_300_000, "quarter": 3_500_000, "year": 13_000_000, "lifetime": 26_000_000},
 }
@@ -249,6 +250,8 @@ def buy_plan(username: str, tier: str, duration: str) -> dict:
         raise ValueError("Hạng gói không hợp lệ")
     if duration not in DURATIONS:
         raise ValueError("Thời hạn không hợp lệ")
+    if duration not in PRICES[tier]:
+        raise ValueError(f"Hạng {TIERS[tier]['label']} không có gói {DURATIONS[duration]['label']}")
     price = PRICES[tier][duration]
     db = get_db()
     ensure_billing(username)
@@ -296,7 +299,8 @@ def plans_catalog() -> list:
         out.append({
             "tier": tk, "label": t["label"], "quota": t["quota"],
             "channels": t["channels"], "call_owner": t["call_owner"], "adv_stats": t["adv_stats"],
-            "prices": {dk: PRICES[tk][dk] for dk in DURATIONS},
+            # Chỉ liệt kê thời hạn hạng này CÓ bán (starter không có lifetime)
+            "prices": {dk: PRICES[tk][dk] for dk in DURATIONS if dk in PRICES[tk]},
         })
     return out
 

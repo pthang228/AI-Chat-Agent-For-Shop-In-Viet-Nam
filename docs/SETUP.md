@@ -86,6 +86,10 @@ cd web-ui; npm run dev           # 5173 — dashboard
 > Các server chạy bằng **waitress** (WSGI production, `pip install waitress`); ĐĂNG NHẬP web cần server 5005
 > (tài khoản + app lưu trong `data/homestay.db`, không còn nằm trong trình duyệt).
 
+### Dạy AI (Prompt Builder)
+- Trang **/prompt** (nút "🧠 Dạy AI" trên Dashboard): dán link dữ liệu (bảng giá, website, Google Docs công khai — không giới hạn số link) + viết hướng dẫn → AI soạn prompt chi tiết → duyệt → bot dùng NGAY (không cần restart).
+- Prompt tuỳ chỉnh lưu ở `data/custom_prompt.txt` (bản cũ tự sao lưu vào `data/prompt_backups/`); "Khôi phục mặc định" quay về prompt gốc.
+
 ### Gói dịch vụ & nạp tiền
 - Tài khoản mới dùng thử **3 ngày** (nhập mã giới thiệu → **7 ngày**).
 - **3 hạng × 4 thời hạn** (mua bằng ví trong trang **Gói dịch vụ** `/billing`):

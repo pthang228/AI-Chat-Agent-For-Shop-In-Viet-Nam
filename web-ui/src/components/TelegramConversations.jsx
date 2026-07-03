@@ -14,7 +14,7 @@ function relTime(iso) {
   return `${Math.floor(diff / 86400)} ngày trước`;
 }
 
-// Khách hàng kênh Telegram — tách theo từng bot (mỗi homestay 1 bot).
+// Khách hàng kênh Telegram — tách theo từng bot (mỗi khách hàng 1 bot).
 export default function TelegramConversations() {
   const [bots, setBots] = useState(null);   // null=đang tải
   const [botId, setBotId] = useState("");    // "" = tất cả

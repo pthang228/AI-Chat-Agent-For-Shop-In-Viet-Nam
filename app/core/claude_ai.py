@@ -55,6 +55,17 @@ def _today_context() -> str:
 
 
 def _load_system_prompt() -> str:
+    # Prompt TUỲ CHỈNH (shop tạo bằng AI trong web → data/custom_prompt.txt) được
+    # ưu tiên; chưa có → dùng prompt mặc định đi kèm code. Đọc lại MỖI request
+    # nên lưu prompt mới trong web là áp dụng ngay, không cần restart.
+    custom = Config.DATA_DIR / "custom_prompt.txt"
+    try:
+        if custom.exists():
+            text = custom.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except Exception:
+        pass
     p = Path(__file__).parent / "system_prompt.txt"
     if p.exists():
         return p.read_text(encoding="utf-8")
