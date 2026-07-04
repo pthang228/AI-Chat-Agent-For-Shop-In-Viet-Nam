@@ -94,6 +94,9 @@ class ZaloNodeChannel(Channel):
         self._post("/send-image", {"userId": user_id, "paths": photos})
         return True
 
+    def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
+        return self._send_dir(user_id, Path(folder), caption)
+
     def send_room_photos(self, user_id: str, room_names: list[str]) -> None:
         base = Path(Config.ROOMS_PHOTOS_DIR)
         sent = False

@@ -22,7 +22,7 @@ log = logging.getLogger("bridge")
 BOT_STATE_FILE = Config.DATA_DIR / "bot_state.json"
 
 
-ALL_CHANNELS = ("zalo", "meta", "telegram", "tiktok")
+ALL_CHANNELS = ("zalo", "meta", "telegram", "tiktok", "shopee")
 
 
 def _norm_channel(ch: str) -> str:
@@ -135,6 +135,10 @@ def create_bridge(brain, conv_manager) -> Flask:
     # Prompt Builder — shop gửi link dữ liệu + hướng dẫn → AI viết prompt
     from app.web_api.prompt_api import register_prompt_routes
     register_prompt_routes(app)
+
+    # Thư viện ảnh — bộ ảnh đặt tên để bot gửi khách
+    from app.web_api.photo_api import register_photo_routes
+    register_photo_routes(app)
 
     # Chat tư vấn dịch vụ (bong bóng chat góc web, không cần đăng nhập)
     from app.web_api.support_api import register_support_routes

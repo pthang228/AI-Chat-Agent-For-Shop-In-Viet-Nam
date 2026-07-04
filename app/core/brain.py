@@ -347,6 +347,26 @@ class Brain:
                 return  # Greeting + bảng giá là đủ (bảng giá đã gửi rồi, không gửi lại)
             # Có intent cụ thể khác → tiếp tục xử lý bên dưới (gửi thêm câu trả lời thực)
 
+        # ── Thư viện ảnh: khách hỏi trúng TÊN/keywords bộ ảnh shop tự đặt ──
+        # (shop upload trong web → media/photo_library). Match được → gửi bộ đó;
+        # không match / kênh chưa hỗ trợ → rơi xuống cơ chế cũ y nguyên.
+        if intent in ("photo_request", "price_list_request"):
+            from app.core import photo_library
+            matched = photo_library.find_sets(text)
+            if matched:
+                sent_any = False
+                for s in matched:
+                    if self.channel.send_photo_folder(
+                            user_id, photo_library.set_dir(s["slug"]), f"📸 {s['name']}:"):
+                        sent_any = True
+                if sent_any:
+                    names = ", ".join(s["name"] for s in matched)
+                    fixed = f"Đây là ảnh {names} bạn nhé! 📸"
+                    self.channel.send_text(user_id, fixed)
+                    conv.add_assistant_message(fixed)
+                    log.info(f"[PhotoLib] gửi bộ ảnh: {names}")
+                    return
+
         # Khi khách xin bảng giá
         if intent == "price_list_request":
             if reply:

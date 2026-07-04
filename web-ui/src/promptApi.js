@@ -23,10 +23,16 @@ async function j(path, opts = {}) {
 
 export const promptApi = {
   current: () => j("/prompt/current"),
+  template: () => j("/prompt/template"),
   // AI viết prompt — chậm (20-60s), đừng đặt timeout phía UI
   generate: (links, instructions) =>
     j("/prompt/generate", { method: "POST", body: JSON.stringify({ links, instructions }) }),
-  apply: (prompt) =>
-    j("/prompt/apply", { method: "POST", body: JSON.stringify({ prompt }) }),
+  // chunks (mẩu tri thức) đi kèm draft từ generate — có chunks = chế độ lai (RAG)
+  apply: (prompt, chunks = null) =>
+    j("/prompt/apply", { method: "POST", body: JSON.stringify({ prompt, chunks }) }),
+  knowledge: () => j("/prompt/knowledge"),
+  // Chat THỬ với bot (AI thật + chẩn đoán) — không lưu, không gửi khách nào
+  test: (message, history = []) =>
+    j("/prompt/test", { method: "POST", body: JSON.stringify({ message, history }) }),
   restoreDefault: () => j("/prompt/restore-default", { method: "POST" }),
 };

@@ -156,6 +156,10 @@ class TikTokChannel(Channel):
         for i in range(0, len(text), MAX_LEN):
             self._send_api(business_id, uid, {"text": text[i:i + MAX_LEN]})
 
+    def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
+        business_id, uid = self._parse(user_id)
+        return self._send_dir(business_id, uid, Path(folder), caption)
+
     def send_room_photos(self, user_id: str, room_names: list) -> None:
         business_id, uid = self._parse(user_id)
         base = Path(Config.ROOMS_PHOTOS_DIR)

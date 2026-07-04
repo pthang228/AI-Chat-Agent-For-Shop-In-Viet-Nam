@@ -24,8 +24,8 @@ const STAGE_COLOR = {
   confirmed:      "#4f9d6b",
   owner_notified: "#7b3fb3",
 };
-const CH_COLOR = { zalo: "#0068ff", meta: "#7b3fb3", telegram: "#229ed9", tiktok: "#161823" };
-const CH_LABEL = { zalo: "Zalo", meta: "Mess+IG", telegram: "Telegram", tiktok: "TikTok" };
+const CH_COLOR = { zalo: "#0068ff", meta: "#7b3fb3", telegram: "#229ed9", tiktok: "#161823", shopee: "#EE4D2D" };
+const CH_LABEL = { zalo: "Zalo", meta: "Mess+IG", telegram: "Telegram", tiktok: "TikTok", shopee: "Shopee" };
 
 function StatCard({ icon, label, value, sub, accent }) {
   return (

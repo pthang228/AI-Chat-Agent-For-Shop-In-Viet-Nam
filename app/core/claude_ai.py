@@ -54,6 +54,10 @@ def _today_context() -> str:
     )
 
 
+# Marker chế độ LAI (persona + tri thức RAG) — đồng bộ với prompt_builder.HYBRID_MARKER
+HYBRID_MARKER = "#NOVACHAT-HYBRID-V1"
+
+
 def _load_system_prompt() -> str:
     # Prompt TUỲ CHỈNH (shop tạo bằng AI trong web → data/custom_prompt.txt) được
     # ưu tiên; chưa có → dùng prompt mặc định đi kèm code. Đọc lại MỖI request
@@ -70,6 +74,52 @@ def _load_system_prompt() -> str:
     if p.exists():
         return p.read_text(encoding="utf-8")
     return "Bạn là trợ lý chăm sóc khách hàng homestay."
+
+
+def _load_tech_rules() -> str:
+    # Quy ước kỹ thuật (JSON <analysis>, intent, bảo mật) do CODE sở hữu — chế độ
+    # lai luôn tự ghép vào để persona AI sinh ra không thể phá máy móc của brain.
+    p = Path(__file__).parent / "tech_rules.txt"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def _compose_system(user_message: str, history: list) -> tuple:
+    """Ghép system prompt + thông tin chẩn đoán (cho trang Test bot).
+    Chế độ LAI: persona (ngắn) + DỮ LIỆU SHOP tra theo câu hỏi (RAG) + quy ước
+    kỹ thuật. Prompt cũ (không marker): giữ nguyên như trước.
+    Trả (system_str, debug) — debug = {mode, chunks[], system_chars}."""
+    base = _load_system_prompt()
+    if not base.startswith(HYBRID_MARKER):
+        system = _today_context() + base
+        return system, {"mode": "legacy", "chunks": [], "system_chars": len(system)}
+
+    from app.core import knowledge  # import trễ — tránh vòng lặp import khi test mock
+    persona = base[len(HYBRID_MARKER):].lstrip("\n")
+    # Query tra cứu = tin hiện tại + tin user gần nhất (câu follow-up "giá bao nhiêu?"
+    # cần ngữ cảnh phòng vừa nhắc ở tin trước)
+    prev_user = ""
+    for m in reversed(history or []):
+        if m.get("role") == "user":
+            prev_user = str(m.get("content") or "")
+            break
+    hits = knowledge.retrieve(f"{prev_user}\n{user_message}".strip())
+    kb_block = knowledge.format_block(hits)
+    parts = [_today_context() + persona]
+    if kb_block:
+        parts.append(kb_block)
+    tech = _load_tech_rules()
+    if tech:
+        parts.append(tech)
+    system = "\n\n".join(parts)
+    return system, {
+        "mode": "hybrid",
+        "chunks": [{"title": h.get("title") or "(không tiêu đề)"} for h in hits],
+        "system_chars": len(system),
+    }
+
+
+def _build_system_prompt(user_message: str, history: list) -> str:
+    return _compose_system(user_message, history)[0]
 
 
 def _call_ai(messages: list) -> str:
@@ -114,13 +164,8 @@ def _call_ai(messages: list) -> str:
     raise last_error
 
 
-def analyze_message(user_message: str, history: list[dict]) -> dict:
-    messages = [{"role": "system", "content": _today_context() + _load_system_prompt()}]
-    messages += list(history)
-    messages.append({"role": "user", "content": user_message})
-
-    full_text = _call_ai(messages)
-
+def _parse_ai_output(full_text: str) -> dict:
+    """Bóc <analysis> JSON + thẻ [BOOKING_CONFIRMED] khỏi output AI."""
     analysis_match = re.search(r"<analysis>(.*?)</analysis>", full_text, re.DOTALL)
     reply = re.sub(r"<analysis>.*?</analysis>", "", full_text, flags=re.DOTALL).strip()
 
@@ -130,7 +175,6 @@ def analyze_message(user_message: str, history: list[dict]) -> dict:
         "checkout": None,
         "booking_confirmed": False,
     }
-
     if analysis_match:
         try:
             analysis = json.loads(analysis_match.group(1).strip())
@@ -142,3 +186,22 @@ def analyze_message(user_message: str, history: list[dict]) -> dict:
         reply = reply.replace("[BOOKING_CONFIRMED]", "").strip()
 
     return {"reply": reply, **analysis}
+
+
+def analyze_message(user_message: str, history: list[dict]) -> dict:
+    messages = [{"role": "system", "content": _build_system_prompt(user_message, history)}]
+    messages += list(history)
+    messages.append({"role": "user", "content": user_message})
+    return _parse_ai_output(_call_ai(messages))
+
+
+def analyze_with_debug(user_message: str, history: list[dict]) -> dict:
+    """Như analyze_message nhưng kèm 'debug' (mode, mẩu tri thức đã tra, cỡ context)
+    — dùng cho trang Test bot của shop, KHÔNG lưu session, không gửi kênh nào."""
+    system, dbg = _compose_system(user_message, history)
+    messages = [{"role": "system", "content": system}]
+    messages += list(history)
+    messages.append({"role": "user", "content": user_message})
+    out = _parse_ai_output(_call_ai(messages))
+    out["debug"] = dbg
+    return out

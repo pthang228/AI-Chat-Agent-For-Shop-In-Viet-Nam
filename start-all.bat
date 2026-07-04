@@ -20,10 +20,13 @@ start "Meta Bot" /D "%~dp0" cmd /k python scripts\run_meta.py
 echo [4/6] Telegram bot ...
 start "Telegram Bot" /D "%~dp0" cmd /k python -m app.main_telegram
 
-echo [5/6] TikTok bot ...
+echo [5/7] TikTok bot ...
 start "TikTok Bot" /D "%~dp0" cmd /k python -m app.main_tiktok
 
-echo [6/6] Web UI (giao dien quan ly) ...
+echo [6/7] Shopee bot ...
+start "Shopee Bot" /D "%~dp0" cmd /k python -m app.main_shopee
+
+echo [7/7] Web UI (giao dien quan ly) ...
 start "Web UI" /D "%~dp0web-ui" cmd /k npm run dev
 
 echo.
@@ -32,6 +35,6 @@ timeout /t 8 >nul
 start http://localhost:5173
 
 echo.
-echo Xong! 6 cua so dich vu da mo. Dong cua so nao = tat dich vu do.
-echo De DUNG het: dong ca 6 cua so (hoac chay stop-all.bat).
+echo Xong! 7 cua so dich vu da mo. Dong cua so nao = tat dich vu do.
+echo De DUNG het: dong ca 7 cua so (hoac chay stop-all.bat).
 pause

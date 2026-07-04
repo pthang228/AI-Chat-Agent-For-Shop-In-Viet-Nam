@@ -105,6 +105,27 @@ CREATE TABLE IF NOT EXISTS deposits (
 );
 CREATE INDEX IF NOT EXISTS idx_deposits_user ON deposits(username);
 
+-- Kho tri thức RAG — "Dạy AI" chế độ lai băm dữ liệu shop thành mẩu (chunk),
+-- mỗi tin nhắn chỉ tra mẩu liên quan thay vì nhồi cả prompt 13k ký tự
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop       TEXT NOT NULL DEFAULT 'default',
+    title      TEXT NOT NULL DEFAULT '',
+    content    TEXT NOT NULL,
+    keywords   TEXT NOT NULL DEFAULT '[]',  -- JSON array các cách khách hay hỏi
+    pinned     INTEGER NOT NULL DEFAULT 0,  -- 1 = luôn kèm khi không match gì (thông tin chung)
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_shop ON knowledge_chunks(shop);
+
+-- Bộ ảnh đặt tên (Thư viện ảnh) — shop upload, bot gửi khi khách hỏi trúng tên/keywords
+CREATE TABLE IF NOT EXISTS photo_sets (
+    slug       TEXT PRIMARY KEY,             -- tên thư mục an toàn (bỏ dấu, dash)
+    name       TEXT NOT NULL,                -- tên hiển thị shop đặt
+    keywords   TEXT NOT NULL DEFAULT '[]',   -- JSON array các cách khách hay hỏi
+    created_at TEXT NOT NULL
+);
+
 -- Lịch sử giao dịch (nạp/mua gói/khuyến mãi)
 CREATE TABLE IF NOT EXISTS transactions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

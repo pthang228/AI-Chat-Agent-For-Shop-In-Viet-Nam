@@ -149,6 +149,10 @@ class MetaChannel(Channel):
         for i in range(0, len(text), MAX_LEN):
             self._send_api(platform, page_id, rid, {"text": text[i:i + MAX_LEN]})
 
+    def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
+        platform, page_id, rid = self._parse(user_id)
+        return self._send_dir(platform, page_id, rid, Path(folder), caption)
+
     def send_room_photos(self, user_id: str, room_names: list) -> None:
         platform, page_id, rid = self._parse(user_id)
         base = Path(Config.ROOMS_PHOTOS_DIR)

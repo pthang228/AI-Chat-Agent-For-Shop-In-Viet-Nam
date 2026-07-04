@@ -87,9 +87,19 @@ class Config:
     TIKTOK_VERIFY_TOKEN = os.getenv("TIKTOK_VERIFY_TOKEN", "haru_tiktok_verify")  # khớp khi khai webhook
     TIKTOK_API_PORT     = int(os.getenv("TIKTOK_API_PORT", "5008"))
 
+    # Shopee Open Platform (open.shopee.com) — app của VENDOR (partner) dùng chung,
+    # mỗi shop khách chỉ cần uỷ quyền → shop_id + access_token
+    SHOPEE_PARTNER_ID   = os.getenv("SHOPEE_PARTNER_ID", "")
+    SHOPEE_PARTNER_KEY  = os.getenv("SHOPEE_PARTNER_KEY", "")
+    SHOPEE_API_BASE     = os.getenv("SHOPEE_API_BASE", "https://partner.shopeemobile.com")
+    SHOPEE_ACCESS_TOKEN = os.getenv("SHOPEE_ACCESS_TOKEN", "")   # token 1 shop (.env, test)
+    SHOPEE_SHOP_ID      = os.getenv("SHOPEE_SHOP_ID", "")
+    SHOPEE_API_PORT     = int(os.getenv("SHOPEE_API_PORT", "5009"))
+
     # Bot
     ROOMS_PHOTOS_DIR  = _resolve(os.getenv("ROOMS_PHOTOS_DIR"), "media/rooms_photos")
     PRICE_PHOTOS_DIR  = _resolve(None, "media/price_photos")
+    PHOTO_LIBRARY_DIR = _resolve(os.getenv("PHOTO_LIBRARY_DIR"), "media/photo_library")  # bộ ảnh đặt tên
     REPLY_DELAY      = int(os.getenv("REPLY_DELAY", "2"))
     # Giữ hội thoại khách bao lâu trước khi dọn khỏi tab Khách hàng (giờ).
     # Mặc định 720h = 30 ngày (trước đây 48h → khách im 2 ngày là MẤT).

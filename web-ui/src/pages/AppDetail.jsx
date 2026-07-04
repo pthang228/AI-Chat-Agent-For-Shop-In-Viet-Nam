@@ -12,12 +12,14 @@ import TelegramConnect from "../components/TelegramConnect.jsx";
 import TelegramConversations from "../components/TelegramConversations.jsx";
 import TikTokConnect from "../components/TikTokConnect.jsx";
 import TikTokConversations from "../components/TikTokConversations.jsx";
+import ShopeeConnect from "../components/ShopeeConnect.jsx";
+import ShopeeConversations from "../components/ShopeeConversations.jsx";
 import { IcHome, IcBack, IcLogout, IcSpark } from "../components/icons.jsx";
 import StatsPanel from "../components/StatsPanel.jsx";
 import BackLink from "../components/BackLink.jsx";
 
-const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", tiktok: "TikTok" };
-const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", tiktok: "tiktok" };
+const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", tiktok: "TikTok", shopee: "Shopee" };
+const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", tiktok: "tiktok", shopee: "shopee" };
 const isMeta = (ch) => ch === "meta" || ch === "messenger" || ch === "instagram";
 const botKey = (ch) => (ch === "messenger" || ch === "instagram") ? "meta" : ch;
 
@@ -60,14 +62,17 @@ export default function AppDetail() {
   const Connect = app.channel === "zalo" ? ZaloConnect
     : isMeta(app.channel) ? MetaConnect
     : app.channel === "tiktok" ? TikTokConnect
+    : app.channel === "shopee" ? ShopeeConnect
     : TelegramConnect;
   const Chats = app.channel === "zalo" ? Conversations
     : isMeta(app.channel) ? MetaConversations
     : app.channel === "tiktok" ? TikTokConversations
+    : app.channel === "shopee" ? ShopeeConversations
     : TelegramConversations;
   const statsChannel = app.channel === "zalo" ? "zalo"
     : isMeta(app.channel) ? "meta"
     : app.channel === "tiktok" ? "tiktok"
+    : app.channel === "shopee" ? "shopee"
     : "telegram";
 
   return (
@@ -83,7 +88,7 @@ export default function AppDetail() {
       </header>
 
       <main className="content narrow">
-        <BackLink label="Về danh sách app" />
+        <BackLink to="/?s=chatbot" label="Về danh sách app" />
         <div className="detail-bar">
           <div className="detail-titles">
             <h2 className="detail-title">{app.name}</h2>

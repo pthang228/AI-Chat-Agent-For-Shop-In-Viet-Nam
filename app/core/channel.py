@@ -31,6 +31,12 @@ class Channel(ABC):
         """Gửi ảnh bảng giá của các homestay."""
         raise NotImplementedError
 
+    def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
+        """Gửi cả 1 thư mục ảnh (bộ ảnh Thư viện ảnh do shop đặt tên).
+        Mặc định: kênh chưa hỗ trợ → False (brain sẽ fallback cơ chế cũ).
+        Các kênh override bằng _send_dir sẵn có của mình."""
+        return False
+
     # ── Thông báo chủ nhà ──────────────────────────────────────────
 
     @abstractmethod

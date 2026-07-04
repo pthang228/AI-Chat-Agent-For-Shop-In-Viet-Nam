@@ -110,6 +110,19 @@ export default function Settings() {
           </div>
         </form>
 
+        {/* Bong bóng chat tư vấn */}
+        <div className="panel set-card" style={{ marginTop: 16 }}>
+          <h3 style={{ fontSize: 17, marginBottom: 4 }}>Bong bóng chat tư vấn</h3>
+          <p className="hint" style={{ marginBottom: 12 }}>
+            Bong bóng "Mi" ở góc màn hình có thể <b>kéo để di chuyển</b> và bấm <b>✕</b> để ẩn.
+            Nếu đã ẩn, bấm nút dưới để hiện lại.
+          </p>
+          <button className="btn-outline" style={{ width: "auto" }}
+                  onClick={() => { localStorage.removeItem("hb_cw_hidden"); localStorage.removeItem("hb_cw_pos"); alert("✅ Đã hiện lại bong bóng chat (về vị trí mặc định). Tải lại trang nếu chưa thấy."); }}>
+            💬 Hiện lại bong bóng chat
+          </button>
+        </div>
+
         {/* Đăng xuất */}
         <div className="panel set-card" style={{ marginTop: 16 }}>
           <h3 style={{ fontSize: 17, marginBottom: 4 }}>Phiên đăng nhập</h3>

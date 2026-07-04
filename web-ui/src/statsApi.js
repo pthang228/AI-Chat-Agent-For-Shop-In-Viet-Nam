@@ -2,6 +2,7 @@ import { brain } from "./brainApi.js";
 import { meta } from "./metaApi.js";
 import { tg } from "./telegramApi.js";
 import { tiktok } from "./tiktokApi.js";
+import { shopee } from "./shopeeApi.js";
 
 // Tính from/to dựa trên period key
 export function periodDates(period) {
@@ -60,6 +61,7 @@ async function fetchOne(channel, from, to) {
   else if (channel === "meta") r = await meta.stats(from, to);
   else if (channel === "telegram") r = await tg.stats(from, to);
   else if (channel === "tiktok") r = await tiktok.stats(from, to);
+  else if (channel === "shopee") r = await shopee.stats(from, to);
   else return emptyStats();
   return (r.ok && r.body) ? r.body : emptyStats();
 }
@@ -68,18 +70,19 @@ async function fetchOne(channel, from, to) {
 export async function fetchStats(channel, period) {
   const { from, to } = periodDates(period);
   if (channel === "all") {
-    const [z, m, t, tt] = await Promise.all([
+    const [z, m, t, tt, sp] = await Promise.all([
       fetchOne("zalo", from, to),
       fetchOne("meta", from, to),
       fetchOne("telegram", from, to),
       fetchOne("tiktok", from, to),
+      fetchOne("shopee", from, to),
     ]);
-    const merged = mergeStats(mergeStats(mergeStats(z, m), t), tt);
+    const merged = mergeStats(mergeStats(mergeStats(mergeStats(z, m), t), tt), sp);
     return {
       ...merged,
       by_channel: {
         zalo: z.total_conv, meta: m.total_conv,
-        telegram: t.total_conv, tiktok: tt.total_conv,
+        telegram: t.total_conv, tiktok: tt.total_conv, shopee: sp.total_conv,
       },
     };
   }
