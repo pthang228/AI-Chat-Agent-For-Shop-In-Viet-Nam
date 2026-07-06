@@ -62,6 +62,7 @@ export default function AdminShopDetail() {
   const { username } = useParams();
   const user = currentUser();
   const [data, setData] = useState(null); // null=tải | object | "denied" | "offline" | "notfound"
+  const [brain, setBrain] = useState(null); // não bot: {prompt, knowledge, photos}
   const [busy, setBusy] = useState("");   // "block" | "plan" | ""
   const [tier, setTier] = useState("pro");
   const [duration, setDuration] = useState("month");
@@ -77,6 +78,14 @@ export default function AdminShopDetail() {
       const b = await r.json();
       setData(b?.ok ? b : "offline");
     } catch { setData("offline"); }
+    // Não bot (prompt + dữ liệu + ảnh) — tải song song, lỗi thì bỏ qua phần này
+    try {
+      const r = await fetch(HOST.bridge + "/admin/shops/" + encodeURIComponent(username) + "/brain", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const b = await r.json();
+      if (b?.ok) setBrain(b);
+    } catch { /* server cũ chưa có endpoint */ }
   }
   useEffect(() => { load(); }, [username]);
 
@@ -299,6 +308,72 @@ export default function AdminShopDetail() {
                 </table>
               </div>
             </div>
+
+            {/* Não bot & dữ liệu train (read-only) */}
+            {brain && (
+              <>
+                <div className="panel adm-panel">
+                  <h3 style={{ marginTop: 0 }}>
+                    🧠 Prompt train{" "}
+                    <span className="hint" style={{ fontWeight: 400 }}>
+                      {brain.prompt?.source === "custom"
+                        ? `— shop tự train (${brain.prompt.mode === "hybrid" ? "chế độ lai" : "bản đầy đủ"}`
+                          + (brain.prompt.updated_at ? `, sửa ${fmtTime(brain.prompt.updated_at)})` : ")")
+                        : "— dùng prompt mặc định của hệ thống"}
+                    </span>
+                  </h3>
+                  {brain.prompt?.prompt ? (
+                    <details className="adm-fold">
+                      <summary>Xem nội dung ({(brain.prompt.prompt.length || 0).toLocaleString("vi-VN")} ký tự)</summary>
+                      <pre className="adm-pre">{brain.prompt.prompt}</pre>
+                    </details>
+                  ) : <p className="hint">Shop chưa train prompt nào.</p>}
+                </div>
+
+                <div className="panel adm-panel">
+                  <h3 style={{ marginTop: 0 }}>📚 Dữ liệu đã dạy ({brain.knowledge.length} mẩu)</h3>
+                  {brain.knowledge.length === 0 && <p className="hint">Shop chưa dạy dữ liệu nào (kho tri thức trống).</p>}
+                  {brain.knowledge.map((c) => (
+                    <details key={c.id} className="adm-fold">
+                      <summary>
+                        {c.pinned ? "📌 " : ""}{c.title || "(không tiêu đề)"}
+                        {c.keywords.length > 0 && (
+                          <span className="hint"> — {c.keywords.slice(0, 5).join(", ")}</span>
+                        )}
+                      </summary>
+                      <pre className="adm-pre">{c.content}</pre>
+                    </details>
+                  ))}
+                </div>
+
+                <div className="panel adm-panel">
+                  <h3 style={{ marginTop: 0 }}>🖼 Thư viện ảnh shop ({brain.photos.length} bộ)</h3>
+                  {brain.photos.length === 0 && <p className="hint">Shop chưa tạo bộ ảnh nào.</p>}
+                  {brain.photos.map((s) => (
+                    <div key={s.slug} className="adm-photoset">
+                      <div className="adm-photoset-head">
+                        <b>{s.name}</b>
+                        <span className="hint">
+                          {s.files.length} ảnh{s.keywords.length > 0 ? ` · từ khoá: ${s.keywords.join(", ")}` : ""}
+                        </span>
+                      </div>
+                      <div className="adm-photo-grid">
+                        {s.files.slice(0, 12).map((f) => (
+                          <a key={f} href={`${HOST.bridge}/photos/file/${s.slug}/${encodeURIComponent(f)}`}
+                             target="_blank" rel="noreferrer">
+                            <img src={`${HOST.bridge}/photos/file/${s.slug}/${encodeURIComponent(f)}`}
+                                 alt={f} loading="lazy" />
+                          </a>
+                        ))}
+                        {s.files.length > 12 && (
+                          <span className="hint">…và {s.files.length - 12} ảnh nữa</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
       </main>

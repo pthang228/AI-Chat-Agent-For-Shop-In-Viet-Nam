@@ -324,6 +324,13 @@ r = ax.post("/admin/shops/shopb@x.vn/block", headers=HA, json={"blocked": False}
 check(r.status_code == 200 and not r.json["blocked"], "O18 bỏ chặn shop B")
 r = ac.post("/auth/login", json={"username": "shopb@x.vn", "password": "1234"})
 check(r.status_code == 200 and r.json["ok"], "O19 bỏ chặn → đăng nhập lại OK")
+# Não bot (prompt + dữ liệu + ảnh) read-only cho admin
+r = ax.get("/admin/shops/shopb@x.vn/brain", headers=HA)
+check(r.status_code == 200 and r.json["ok"] and r.json["shop_key"] == "shopb@x.vn"
+      and len(r.json["photos"]) >= 1 and "prompt" in r.json and "knowledge" in r.json,
+      "O20 admin xem não bot shop B (prompt/dữ liệu/ảnh)", r.text[:120])
+r = ax.get("/admin/shops/shopb@x.vn/brain")
+check(r.status_code == 401, "O21 não bot không token → 401")
 
 # dọn file persona + ảnh test + file tạm
 try:

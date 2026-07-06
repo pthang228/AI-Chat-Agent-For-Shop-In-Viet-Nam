@@ -10,6 +10,8 @@ Gắn vào bridge 5005, sau auth guard (staff đã bị chặn qua staff_deny "/
                                   cả workspace + huỷ phiên + bot ngừng trả lời).
   POST /admin/shops/<username>/plan {action, tier, duration} → CẤP gói (không trừ ví)
                                   hoặc THU HỒI gói (hết hạn ngay).
+  GET  /admin/shops/<username>/brain → NÃO BOT của shop (read-only): prompt train,
+                                  dữ liệu đã dạy (knowledge), thư viện ảnh gắn web.
 """
 
 import logging
@@ -185,6 +187,32 @@ def register_admin_routes(app):
             "by_day": rev_by_day,
             "recent": recent_orders,
         }})
+
+    @app.route("/admin/shops/<username>/brain")
+    def admin_shop_brain(username):
+        """NÃO BOT của shop (read-only cho admin): prompt persona, kho tri thức
+        đã dạy, bộ ảnh shop upload — cấu hình do shop tạo, KHÔNG phải chat khách."""
+        u, err = _platform_admin_or_403()
+        if err:
+            return err
+        rows = db.query(
+            "SELECT username FROM users WHERE username=? AND COALESCE(role,'owner')='owner'",
+            (username,))
+        if not rows:
+            return jsonify({"ok": False, "error": "Không tìm thấy shop"}), 404
+        from app.core import tenant, knowledge, prompt_builder
+        from app.core import photo_library as pl
+        shop = tenant.shop_key(username)   # chủ nền tảng → não 'default'
+        try:
+            prompt = prompt_builder.current(shop)
+        except Exception as e:
+            prompt = {"prompt": "", "source": "error", "mode": "", "error": str(e)}
+        chunks = [dict(id=c.get("id"), title=c.get("title"), content=c.get("content"),
+                       keywords=c.get("keywords") or [], pinned=bool(c.get("pinned")))
+                  for c in knowledge.list_chunks(shop)]
+        photos = pl.list_sets(tenant_ws=username)
+        return jsonify({"ok": True, "shop_key": shop, "prompt": prompt,
+                        "knowledge": chunks, "photos": photos})
 
     def _shop_or_404(username):
         """Shop hợp lệ để admin thao tác: tồn tại, role owner, KHÔNG phải chủ nền tảng."""

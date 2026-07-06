@@ -1708,3 +1708,15 @@ a.stats-icon-btn { text-decoration: none; }
 .adm-act-row select { padding: 8px 10px; width: auto; flex: 0 0 auto; }
 .adm-danger { color: #c0392b !important; border-color: #e5b4ad !important; }
 .adm-danger:hover { background: #fdf1ef !important; }
+/* Não bot & dữ liệu train (read-only) */
+.adm-fold { border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 13px; margin-top: 8px; }
+.adm-fold summary { cursor: pointer; font-size: 13.5px; font-weight: 600; }
+.adm-pre { margin: 10px 0 2px; padding: 12px; background: #f7f5fc; border-radius: 8px;
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  max-height: 420px; overflow-y: auto; }
+.adm-photoset { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.adm-photoset:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+.adm-photoset-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.adm-photo-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; }
+.adm-photo-grid img { width: 92px; height: 92px; object-fit: cover; border-radius: 8px;
+  border: 1px solid var(--line); display: block; }
