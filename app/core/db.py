@@ -320,6 +320,8 @@ class Db:
             ("orders", "tenant",           "TEXT NOT NULL DEFAULT ''"),
             ("canned_replies", "tenant",   "TEXT NOT NULL DEFAULT ''"),
             ("photo_sets", "tenant",       "TEXT NOT NULL DEFAULT ''"),
+            # Quản trị nền tảng CHẶN shop (khoá đăng nhập + tắt bot cả workspace)
+            ("users", "blocked",           "INTEGER NOT NULL DEFAULT 0"),
         ]
         for table, col, decl in adds:
             try:

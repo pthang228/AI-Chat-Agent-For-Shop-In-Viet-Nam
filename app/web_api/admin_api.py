@@ -2,15 +2,19 @@
 API QUẢN TRỊ NỀN TẢNG — chỉ CHỦ NỀN TẢNG (tenant.default_owner) dùng được.
 Gắn vào bridge 5005, sau auth guard (staff đã bị chặn qua staff_deny "/admin").
 
-  GET /admin/shops            → danh sách MỌI shop trên hệ thống: gói, hạn, quota AI,
-                                 số hội thoại/khách, số đơn, nhân viên, hoạt động cuối.
-  GET /admin/shops/<username> → CHI TIẾT 1 shop (read-only, KHÔNG lộ nội dung chat):
-                                 đơn hàng + doanh thu, hoạt động theo ngày, kênh đã nối.
+  GET  /admin/shops            → danh sách MỌI shop trên hệ thống: gói, hạn, quota AI,
+                                  số hội thoại/khách, số đơn, nhân viên, hoạt động cuối.
+  GET  /admin/shops/<username> → CHI TIẾT 1 shop (read-only, KHÔNG lộ nội dung chat):
+                                  đơn hàng + doanh thu, hoạt động theo ngày, kênh đã nối.
+  POST /admin/shops/<username>/block {blocked} → CHẶN/BỎ CHẶN shop (khoá đăng nhập
+                                  cả workspace + huỷ phiên + bot ngừng trả lời).
+  POST /admin/shops/<username>/plan {action, tier, duration} → CẤP gói (không trừ ví)
+                                  hoặc THU HỒI gói (hết hạn ngay).
 """
 
 import logging
 
-from flask import jsonify
+from flask import jsonify, request
 
 from app.core.db import get_db
 from app.web_api.auth_api import _user_for_token, _bearer
@@ -52,8 +56,8 @@ def register_admin_routes(app):
         out = []
         # Chỉ liệt kê SHOP (role owner) — acc admin chính danh không phải shop
         for r in db.query(
-                "SELECT username, homestay, created_at FROM users "
-                "WHERE COALESCE(role,'owner') = 'owner' ORDER BY created_at"):
+                "SELECT username, homestay, created_at, COALESCE(blocked,0) AS blocked "
+                "FROM users WHERE COALESCE(role,'owner') = 'owner' ORDER BY created_at"):
             uname = r["username"]
             # chủ nền tảng gộp cả dữ liệu cũ tenant=''
             conv_n, last = conv_by.get(uname, (0, None))
@@ -74,6 +78,7 @@ def register_admin_routes(app):
                         active = False
             out.append({
                 "active": active,
+                "blocked": bool(r["blocked"]),
                 "username": uname,
                 "shop_name": r["homestay"] or uname,
                 "created_at": r["created_at"],
@@ -100,8 +105,8 @@ def register_admin_routes(app):
             return err
         from app.core import tenant
         rows = db.query(
-            "SELECT username, homestay, created_at FROM users "
-            "WHERE username=? AND COALESCE(role,'owner')='owner'", (username,))
+            "SELECT username, homestay, created_at, COALESCE(blocked,0) AS blocked "
+            "FROM users WHERE username=? AND COALESCE(role,'owner')='owner'", (username,))
         if not rows:
             return jsonify({"ok": False, "error": "Không tìm thấy shop"}), 404
         shop = rows[0]
@@ -166,6 +171,7 @@ def register_admin_routes(app):
             "username": shop["username"],
             "shop_name": shop["homestay"] or shop["username"],
             "created_at": shop["created_at"],
+            "blocked": bool(shop["blocked"]),
             "is_platform_admin": username == tenant.default_owner(),
         }, "billing": b, "channels": channels, "staff": staff, "conversations": {
             "total": conv_total,
@@ -179,5 +185,63 @@ def register_admin_routes(app):
             "by_day": rev_by_day,
             "recent": recent_orders,
         }})
+
+    def _shop_or_404(username):
+        """Shop hợp lệ để admin thao tác: tồn tại, role owner, KHÔNG phải chủ nền tảng."""
+        from app.core import tenant
+        rows = db.query(
+            "SELECT username FROM users WHERE username=? AND COALESCE(role,'owner')='owner'",
+            (username,))
+        if not rows:
+            return ({"ok": False, "error": "Không tìm thấy shop"}, 404)
+        if username == tenant.default_owner():
+            return ({"ok": False, "error": "Không thể thao tác lên chủ nền tảng"}, 400)
+        return None
+
+    @app.route("/admin/shops/<username>/block", methods=["POST"])
+    def admin_shop_block(username):
+        u, err = _platform_admin_or_403()
+        if err:
+            return err
+        bad = _shop_or_404(username)
+        if bad:
+            return bad
+        data = request.get_json(force=True, silent=True) or {}
+        blocked = 1 if data.get("blocked") else 0
+        db.execute("UPDATE users SET blocked=? WHERE username=?", (blocked, username))
+        if blocked:
+            # Huỷ mọi phiên đăng nhập của shop + nhân viên của shop (đá ra ngay)
+            db.execute(
+                "DELETE FROM auth_tokens WHERE username=? OR username IN "
+                "(SELECT username FROM users WHERE owner_username=?)",
+                (username, username))
+        from app.core import billing
+        billing._invalidate_cache()
+        log.info(f"[admin] {u['username']} {'CHẶN' if blocked else 'BỎ CHẶN'} shop {username}")
+        return jsonify({"ok": True, "blocked": bool(blocked)})
+
+    @app.route("/admin/shops/<username>/plan", methods=["POST"])
+    def admin_shop_plan(username):
+        u, err = _platform_admin_or_403()
+        if err:
+            return err
+        bad = _shop_or_404(username)
+        if bad:
+            return bad
+        data = request.get_json(force=True, silent=True) or {}
+        action = (data.get("action") or "").strip()
+        from app.core import billing
+        try:
+            if action == "grant":
+                st = billing.admin_grant(username, (data.get("tier") or "").strip(),
+                                         (data.get("duration") or "").strip())
+            elif action == "revoke":
+                st = billing.admin_revoke(username)
+            else:
+                return {"ok": False, "error": "action phải là grant hoặc revoke"}, 400
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        log.info(f"[admin] {u['username']} {action} gói shop {username}")
+        return jsonify({"ok": True, "billing": st})
 
     return app

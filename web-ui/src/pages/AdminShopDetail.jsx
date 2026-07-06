@@ -62,20 +62,57 @@ export default function AdminShopDetail() {
   const { username } = useParams();
   const user = currentUser();
   const [data, setData] = useState(null); // null=tải | object | "denied" | "offline" | "notfound"
+  const [busy, setBusy] = useState("");   // "block" | "plan" | ""
+  const [tier, setTier] = useState("pro");
+  const [duration, setDuration] = useState("month");
+  const [msg, setMsg] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch(HOST.bridge + "/admin/shops/" + encodeURIComponent(username), {
-          headers: { Authorization: `Bearer ${getToken()}` },
-        });
-        if (r.status === 403 || r.status === 401) { setData("denied"); return; }
-        if (r.status === 404) { setData("notfound"); return; }
-        const b = await r.json();
-        setData(b?.ok ? b : "offline");
-      } catch { setData("offline"); }
-    })();
-  }, [username]);
+  async function load() {
+    try {
+      const r = await fetch(HOST.bridge + "/admin/shops/" + encodeURIComponent(username), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (r.status === 403 || r.status === 401) { setData("denied"); return; }
+      if (r.status === 404) { setData("notfound"); return; }
+      const b = await r.json();
+      setData(b?.ok ? b : "offline");
+    } catch { setData("offline"); }
+  }
+  useEffect(() => { load(); }, [username]);
+
+  async function post(path, body) {
+    const r = await fetch(HOST.bridge + `/admin/shops/${encodeURIComponent(username)}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify(body),
+    });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok || !b.ok) throw new Error(b.error || `Lỗi ${r.status}`);
+    return b;
+  }
+
+  async function doBlock(blocked) {
+    const q = blocked
+      ? `CHẶN shop này? Shop + nhân viên bị đăng xuất ngay, không đăng nhập được và bot ngừng trả lời khách.`
+      : `Bỏ chặn shop này? Shop đăng nhập và dùng lại bình thường.`;
+    if (!window.confirm(q)) return;
+    setBusy("block"); setMsg("");
+    try { await post("block", { blocked }); await load(); }
+    catch (e) { setMsg("⚠️ " + e.message); }
+    finally { setBusy(""); }
+  }
+
+  async function doPlan(action) {
+    if (action === "revoke" &&
+        !window.confirm("THU HỒI gói của shop? Gói hết hạn ngay lập tức, bot ngừng trả lời.")) return;
+    setBusy("plan"); setMsg("");
+    try {
+      await post("plan", action === "grant" ? { action, tier, duration } : { action });
+      await load();
+      setMsg(action === "grant" ? "✅ Đã cấp gói." : "✅ Đã thu hồi gói.");
+    } catch (e) { setMsg("⚠️ " + e.message); }
+    finally { setBusy(""); }
+  }
 
   useEffect(() => { if (data === "denied") nav("/", { replace: true }); }, [data, nav]);
 
@@ -115,6 +152,7 @@ export default function AdminShopDetail() {
                 <div className="hint">{d.shop.username} · đăng ký {fmtDate(d.shop.created_at)}</div>
               </div>
               <div className="adm-shop-plan">
+                {d.shop.blocked && <span className="adm-st blk">⛔ Bị chặn</span>}
                 {active
                   ? <span className="adm-st ok">● Hoạt động</span>
                   : <span className="adm-st off">● Hết hạn</span>}
@@ -132,6 +170,48 @@ export default function AdminShopDetail() {
               <Kpi label="Hội thoại" value={d.conversations.total} accent="#4C6EF5" icon="💬" />
               <Kpi label="Lượt AI kỳ này" value={d.billing?.ai_used || 0} accent="#cf9536" icon="🤖" />
             </div>
+
+            {/* Hành động quản trị: cấp/thu hồi gói + chặn shop */}
+            {!d.shop.is_platform_admin && (
+              <div className="panel adm-panel adm-actions">
+                <h3 style={{ marginTop: 0 }}>Quản trị shop</h3>
+                <div className="adm-act-row">
+                  <label>Cấp gói (không trừ ví):</label>
+                  <select value={tier} onChange={(e) => setTier(e.target.value)}>
+                    <option value="starter">Khởi đầu</option>
+                    <option value="pro">Pro</option>
+                    <option value="business">Chuỗi</option>
+                  </select>
+                  <select value={duration} onChange={(e) => setDuration(e.target.value)}>
+                    <option value="month">1 tháng</option>
+                    <option value="quarter">1 quý</option>
+                    <option value="year">1 năm</option>
+                    <option value="lifetime">Vĩnh viễn</option>
+                  </select>
+                  <button className="btn-mini" disabled={busy === "plan"}
+                          onClick={() => doPlan("grant")}>
+                    {busy === "plan" ? "Đang xử lý…" : "🎁 Cấp gói"}
+                  </button>
+                  <button className="btn-mini adm-danger" disabled={busy === "plan"}
+                          onClick={() => doPlan("revoke")}>
+                    ✂️ Thu hồi gói
+                  </button>
+                  <span style={{ flex: 1 }} />
+                  {d.shop.blocked ? (
+                    <button className="btn-mini" disabled={busy === "block"}
+                            onClick={() => doBlock(false)}>
+                      {busy === "block" ? "Đang xử lý…" : "✅ Bỏ chặn shop"}
+                    </button>
+                  ) : (
+                    <button className="btn-mini adm-danger" disabled={busy === "block"}
+                            onClick={() => doBlock(true)}>
+                      {busy === "block" ? "Đang xử lý…" : "⛔ Chặn shop"}
+                    </button>
+                  )}
+                </div>
+                {msg && <div className="hint" style={{ marginTop: 8 }}>{msg}</div>}
+              </div>
+            )}
 
             {/* Doanh thu 30 ngày + hoạt động 14 ngày */}
             <div className="adm-2col">

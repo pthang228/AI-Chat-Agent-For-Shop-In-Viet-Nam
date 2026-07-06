@@ -61,6 +61,21 @@ def _issue_token(db, username: str) -> str:
                (token, username, datetime.now().isoformat()))
     return token
 
+def _blocked(db, row) -> bool:
+    """Shop bị QUẢN TRỊ NỀN TẢNG chặn? Staff bị chặn theo CHỦ workspace.
+    DB cũ chưa có cột blocked → coi như không chặn."""
+    try:
+        if ("blocked" in row.keys()) and row["blocked"]:
+            return True
+        own = (row["owner_username"] if "owner_username" in row.keys() else "") or ""
+        if own and role_of(row) == "staff":
+            r = db.query("SELECT blocked FROM users WHERE username=?", (own,))
+            return bool(r) and bool(r[0]["blocked"])
+    except Exception:
+        pass
+    return False
+
+
 def _user_for_token(db, token: str):
     if not token:
         return None
@@ -72,6 +87,8 @@ def _user_for_token(db, token: str):
         db.execute("DELETE FROM auth_tokens WHERE token=?", (token,))
         return None
     u = db.query("SELECT * FROM users WHERE username=?", (rows[0]["username"],))
+    if u and _blocked(db, u[0]):
+        return None   # shop bị chặn → token đang sống cũng vô hiệu
     return u[0] if u else None
 
 def _bearer():
@@ -186,6 +203,9 @@ def register_auth_routes(app):
         u = rows[0]
         if not u["password_hash"] or not verify_password(password, u["password_hash"]):
             return {"ok": False, "error": "Sai email hoặc mật khẩu"}, 401
+        if _blocked(db, u):
+            return {"ok": False, "error": "Tài khoản đã bị khoá bởi quản trị nền tảng — "
+                    "liên hệ hỗ trợ để mở lại", "code": "blocked"}, 403
         token = _issue_token(db, username)
         return {"ok": True, "token": token, "user": _public_user(u)}
 
@@ -220,8 +240,11 @@ def register_auth_routes(app):
                        "WHERE username=?", (picture, email))
         from app.core import billing
         billing.ensure_billing(email)   # user mới → dùng thử 3 ngày (nhập mã sau ở trang Gói dịch vụ)
-        token = _issue_token(db, email)
         u = db.query("SELECT * FROM users WHERE username=?", (email,))[0]
+        if _blocked(db, u):
+            return {"ok": False, "error": "Tài khoản đã bị khoá bởi quản trị nền tảng — "
+                    "liên hệ hỗ trợ để mở lại", "code": "blocked"}, 403
+        token = _issue_token(db, email)
         log.info(f"[auth] Google login {email}")
         return {"ok": True, "token": token, "user": _public_user(u)}
 

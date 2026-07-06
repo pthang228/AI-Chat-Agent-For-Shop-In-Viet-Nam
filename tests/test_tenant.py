@@ -297,6 +297,33 @@ r = ax.get("/admin/shops/shopb@x.vn", headers=HB)
 check(r.status_code == 403, "O8 shop thường xem chi tiết → 403")
 r = ax.get("/admin/shops/khongton@x.vn", headers=HA)
 check(r.status_code == 404, "O9 shop không tồn tại → 404")
+# Cấp / thu hồi gói (không trừ ví)
+from app.core import billing as _bl
+r = ax.post("/admin/shops/shopb@x.vn/plan", headers=HA,
+            json={"action": "grant", "tier": "pro", "duration": "month"})
+check(r.status_code == 200 and r.json["billing"]["tier"] == "pro"
+      and r.json["billing"]["active"], "O10 admin cấp gói Pro/tháng cho B", r.text[:100])
+r = ax.post("/admin/shops/shopb@x.vn/plan", headers=HB,
+            json={"action": "grant", "tier": "pro", "duration": "month"})
+check(r.status_code == 403, "O11 shop thường cấp gói → 403")
+r = ax.post("/admin/shops/shopb@x.vn/plan", headers=HA, json={"action": "revoke"})
+check(r.status_code == 200 and not r.json["billing"]["active"],
+      "O12 admin thu hồi gói → hết hạn ngay", r.text[:100])
+# Chặn / bỏ chặn shop
+r = ax.post("/admin/shops/shopa@x.vn/block", headers=HA, json={"blocked": True})
+check(r.status_code == 400, "O13 không chặn được chủ nền tảng")
+r = ax.post("/admin/shops/shopb@x.vn/block", headers=HA, json={"blocked": True})
+check(r.status_code == 200 and r.json["blocked"], "O14 chặn shop B")
+check(_bl.is_blocked("shopb@x.vn") and not _bl.can_reply("shopb@x.vn"),
+      "O15 shop bị chặn → bot ngừng trả lời")
+r = ac.post("/auth/login", json={"username": "shopb@x.vn", "password": "1234"})
+check(r.status_code == 403, "O16 shop bị chặn không đăng nhập được", r.status_code)
+r = ax.get("/admin/shops", headers=HB)
+check(r.status_code == 401, "O17 token cũ của shop bị chặn vô hiệu")
+r = ax.post("/admin/shops/shopb@x.vn/block", headers=HA, json={"blocked": False})
+check(r.status_code == 200 and not r.json["blocked"], "O18 bỏ chặn shop B")
+r = ac.post("/auth/login", json={"username": "shopb@x.vn", "password": "1234"})
+check(r.status_code == 200 and r.json["ok"], "O19 bỏ chặn → đăng nhập lại OK")
 
 # dọn file persona + ảnh test + file tạm
 try:

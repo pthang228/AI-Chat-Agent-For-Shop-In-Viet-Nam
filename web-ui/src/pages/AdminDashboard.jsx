@@ -131,9 +131,11 @@ export default function AdminDashboard() {
                         </td>
                         <td>{TIER_LABEL[s.tier] || s.tier || "—"}</td>
                         <td>
-                          {s.active
-                            ? <span className="adm-st ok">● Hoạt động</span>
-                            : <span className="adm-st off">● Hết hạn</span>}
+                          {s.blocked
+                            ? <span className="adm-st blk">⛔ Bị chặn</span>
+                            : s.active
+                              ? <span className="adm-st ok">● Hoạt động</span>
+                              : <span className="adm-st off">● Hết hạn</span>}
                         </td>
                         <td>{s.lifetime ? "Vĩnh viễn" : fmtDate(s.expires_at)}</td>
                         <td>{vnd(s.balance)}</td>

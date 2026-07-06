@@ -311,8 +311,19 @@ def durations_catalog() -> list:
 
 # ── Quota lượt AI ───────────────────────────────────────────────────
 
+def is_blocked(username: str) -> bool:
+    """Shop bị QUẢN TRỊ NỀN TẢNG chặn? (users.blocked — khoá đăng nhập + tắt bot)."""
+    try:
+        r = get_db().query("SELECT blocked FROM users WHERE username=?", (username,))
+        return bool(r) and bool(r[0]["blocked"])
+    except Exception:
+        return False
+
+
 def can_reply(username: str) -> bool:
-    """User này còn quyền cho bot trả lời? (gói còn hạn + chưa vượt quota tháng)."""
+    """User này còn quyền cho bot trả lời? (không bị chặn + gói còn hạn + chưa vượt quota)."""
+    if is_blocked(username):
+        return False
     st = status(username)
     return st["active"] and st["ai_left"] > 0
 
@@ -365,6 +376,55 @@ def has_active_subscription() -> bool:
         v = True
     _active_cache.update(t=now, v=v)
     return v
+
+
+# ── Quản trị nền tảng: cấp / thu hồi gói (không trừ ví) ─────────────
+
+def admin_grant(username: str, tier: str, duration: str) -> dict:
+    """CẤP gói cho shop (quản trị nền tảng tặng/kích hoạt tay — KHÔNG trừ ví).
+    Cùng hạng & còn hạn → gia hạn nối tiếp; khác hạng → tính từ hôm nay."""
+    if tier not in TIERS:
+        raise ValueError("Hạng gói không hợp lệ")
+    if duration not in DURATIONS:
+        raise ValueError("Thời hạn không hợp lệ")
+    db = get_db()
+    ensure_billing(username)
+    with db.lock:
+        b = db.conn.execute("SELECT * FROM billing WHERE username=?", (username,)).fetchone()
+        now = _now()
+        label = f"{TIERS[tier]['label']} · {DURATIONS[duration]['label']}"
+        if duration == "lifetime":
+            db.conn.execute(
+                "UPDATE billing SET plan='lifetime', tier=?, lifetime=1, expires_at=NULL "
+                "WHERE username=?", (tier, username))
+        else:
+            days = DURATIONS[duration]["days"]
+            cur = datetime.fromisoformat(b["expires_at"]) if b["expires_at"] else now
+            same = (_tier_of(b) == tier and b["tier"] != "trial")
+            base = cur if (cur > now and same) else now
+            db.conn.execute(
+                "UPDATE billing SET plan=?, tier=?, lifetime=0, expires_at=? WHERE username=?",
+                (duration, tier, (base + timedelta(days=days)).isoformat(), username))
+        _tx(db, username, "promo", 0, f"Quản trị cấp gói {label}")
+        db.conn.commit()
+    _invalidate_cache()
+    log.info(f"[Billing] ADMIN cấp {label} cho {username}")
+    return status(username)
+
+
+def admin_revoke(username: str) -> dict:
+    """THU HỒI gói của shop: hết hạn ngay lập tức (bot ngừng, dữ liệu giữ nguyên)."""
+    db = get_db()
+    ensure_billing(username)
+    with db.lock:
+        db.conn.execute(
+            "UPDATE billing SET lifetime=0, expires_at=? WHERE username=?",
+            (_now().isoformat(), username))
+        _tx(db, username, "promo", 0, "Quản trị thu hồi gói (hết hạn ngay)")
+        db.conn.commit()
+    _invalidate_cache()
+    log.info(f"[Billing] ADMIN thu hồi gói của {username}")
+    return status(username)
 
 
 def channel_gate(owner_username: str) -> bool:
