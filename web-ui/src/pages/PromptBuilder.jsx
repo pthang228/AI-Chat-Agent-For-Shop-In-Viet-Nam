@@ -160,9 +160,10 @@ export default function PromptBuilder() {
   const [showCur, setShowCur] = useState(false);
   const [tpl, setTpl] = useState("");          // prompt mẫu chuẩn
   const [showTpl, setShowTpl] = useState(false);
-  // Link dữ liệu: purpose "data" = AI đọc nội dung · "booking" = Google Sheet
-  // lịch đặt chỗ (tự nối vào /sheets để bot tra trực tiếp, KHÔNG đưa vào generate)
-  const [links, setLinks] = useState([{ url: "", note: "", purpose: "data" }]);
+  // Link dữ liệu: mỗi dòng = {url, note}. note = shop TỰ GHI mục đích/nội dung link
+  // → đưa cho AI đọc. Link Google Sheets tự nhận ra qua URL → nối /sheets cho bot
+  // tra lịch trực tiếp (KHÔNG đưa vào generate).
+  const [links, setLinks] = useState([{ url: "", note: "" }]);
   const [guide, setGuide] = useState({});      // câu trả lời form gợi ý
   const [extra, setExtra] = useState("");      // hướng dẫn thêm tự do
   const [models, setModels] = useState([]);    // catalog model (từ /billing/me)
@@ -200,8 +201,10 @@ export default function PromptBuilder() {
   }
 
   function setLink(i, k, v) { setLinks((ls) => ls.map((x, j) => (j === i ? { ...x, [k]: v } : x))); }
-  function addLink() { setLinks((ls) => [...ls, { url: "", note: "", purpose: "data" }]); }
-  function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ url: "", note: "", purpose: "data" }])); }
+  function addLink() { setLinks((ls) => [...ls, { url: "", note: "" }]); }
+  function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ url: "", note: "" }])); }
+  // Google Sheets nhận ra qua URL → nối lịch đặt chỗ (không cần shop chọn mục đích)
+  const isSheetUrl = (u) => /docs\.google\.com\/spreadsheets/i.test(u || "");
 
   function setG(key, v) { setGuide((g) => ({ ...g, [key]: v })); }
   function fillSample(name) {
@@ -251,10 +254,11 @@ export default function PromptBuilder() {
   async function doGenerate() {
     let instructions = buildInstructions();
     const filled = links.filter((l) => l.url.trim());
+    // Google Sheets → nối lịch đặt chỗ (bot tra trực tiếp); link khác → AI đọc nội dung
     const linkList = filled
-      .filter((l) => (l.purpose || "data") !== "booking")
+      .filter((l) => !isSheetUrl(l.url))
       .map((l) => ({ url: l.url.trim(), note: (l.note || "").trim() }));
-    const bookings = filled.filter((l) => (l.purpose || "data") === "booking");
+    const bookings = filled.filter((l) => isSheetUrl(l.url));
     if (!instructions && linkList.length === 0 && bookings.length === 0) {
       setMsg("❌ Điền ít nhất một ô (hoặc dán 1 link) rồi hãy tạo nhé.");
       return;
@@ -437,24 +441,24 @@ export default function PromptBuilder() {
         <div className="panel set-card" style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>2️⃣ Link dữ liệu <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn — có link thì AI đọc thêm)</span></h3>
           <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets đã "Xuất bản lên web"… Link phải mở được công khai.
-            Chọn <b>Mục đích</b>: lịch đặt chỗ (Google Sheet) sẽ được nối để bot <b>tra lịch trực tiếp</b> khi khách hỏi.</p>
+            Ô bên cạnh: <b>tự ghi mục đích / nội dung link</b> để AI hiểu link đó dùng làm gì (vd "bảng giá phòng", "menu"). Nếu là <b>Google Sheet lịch đặt chỗ</b>, hệ thống tự nhận ra và nối để bot <b>tra lịch trực tiếp</b>.</p>
           {links.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-              <input style={{ flex: "1 1 260px" }} placeholder="https://…" value={l.url}
+              <input style={{ flex: "1 1 240px" }} placeholder="https://…" value={l.url}
                      onChange={(e) => setLink(i, "url", e.target.value)} />
-              <input style={{ flex: "1 1 200px" }}
-                     placeholder={(l.purpose || "data") === "booking"
-                       ? "Tên chi nhánh (vd: Cơ sở 1)"
-                       : "Mô tả link này (tuỳ chọn) — vd: bảng giá phòng, menu món…"}
+              <input style={{ flex: "2 1 320px" }}
+                     placeholder={isSheetUrl(l.url)
+                       ? "Mục đích (vd: lịch đặt phòng cơ sở 1) — dùng làm tên chi nhánh"
+                       : "Mục đích / nội dung link — vd: bảng giá phòng, menu món, chính sách…"}
                      value={l.note} onChange={(e) => setLink(i, "note", e.target.value)} />
-              <select style={{ flex: "0 1 300px" }} value={l.purpose || "data"}
-                      onChange={(e) => setLink(i, "purpose", e.target.value)} title="Mục đích của link này">
-                <option value="data">📄 Dữ liệu cho AI đọc</option>
-                <option value="booking">📅 Lịch đặt chỗ — Google Sheet (bot tra lịch trực tiếp)</option>
-              </select>
               <button className="btn-mini danger" onClick={() => rmLink(i)} title="Xoá link này">✕</button>
             </div>
           ))}
+          {links.some((l) => isSheetUrl(l.url)) && (
+            <p className="hint" style={{ marginTop: 8, color: "var(--brand, #7C3AED)" }}>
+              📅 Có link Google Sheet — sẽ tự nối làm lịch đặt chỗ khi bấm tạo bộ não.
+            </p>
+          )}
           <button className="btn-mini" style={{ marginTop: 10 }} onClick={addLink}>＋ Thêm link</button>
         </div>
 
