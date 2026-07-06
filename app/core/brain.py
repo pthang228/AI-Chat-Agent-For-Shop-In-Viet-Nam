@@ -60,6 +60,18 @@ FIRST_MESSAGE_GREETING = (
 )
 
 
+def _default_shop(conv) -> bool:
+    """Hội thoại thuộc SHOP GỐC (chủ nền tảng)? Chỉ shop gốc mới dùng kho media
+    LEGACY (ảnh bảng giá/phòng trong media/) và map phòng cứng theo tên homestay.
+    Shop thường dùng Thư viện ảnh + Google Sheet tự khai — tránh rò dữ liệu shop gốc."""
+    try:
+        from app.core import tenant as _tenant
+        t = getattr(conv, "tenant", "") or ""
+        return (not t) or t == _tenant.default_owner()
+    except Exception:
+        return True
+
+
 def _infer_date_from_text(text: str):
     """
     Python fallback: suy ra ngày từ các từ chỉ thời gian tương đối trong tiếng Việt.
@@ -139,8 +151,9 @@ class Brain:
             greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting", getattr(conv, "tenant", ""))
             self.channel.send_text(user_id, greeting)
             conv.add_assistant_message(greeting)
-            time.sleep(0.5)
-            self.channel.send_price_photos(user_id)
+            if _default_shop(conv):   # ảnh bảng giá legacy CHỈ của shop gốc
+                time.sleep(0.5)
+                self.channel.send_price_photos(user_id)
             return
 
         conv.add_user_message(text)
@@ -366,11 +379,17 @@ class Brain:
             greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting", getattr(conv, "tenant", ""))
             self.channel.send_text(user_id, greeting)
             conv.add_assistant_message(greeting)
-            time.sleep(0.5)
-            self.channel.send_price_photos(user_id)
-            time.sleep(0.5)
-            if intent in ("other", "price_list_request"):
-                return  # Greeting + bảng giá là đủ (bảng giá đã gửi rồi, không gửi lại)
+            if _default_shop(conv):
+                # Shop gốc: kèm ảnh bảng giá legacy như trước
+                time.sleep(0.5)
+                self.channel.send_price_photos(user_id)
+                time.sleep(0.5)
+                if intent in ("other", "price_list_request"):
+                    return  # Greeting + bảng giá là đủ (bảng giá đã gửi rồi, không gửi lại)
+            else:
+                # Shop thường: bảng giá lấy từ Thư viện ảnh (block dưới) — không rò media shop gốc
+                if intent == "other":
+                    return  # Greeting là đủ
             # Có intent cụ thể khác → tiếp tục xử lý bên dưới (gửi thêm câu trả lời thực)
 
         # ── Thư viện ảnh: khách hỏi trúng TÊN/keywords bộ ảnh shop tự đặt ──
@@ -397,6 +416,14 @@ class Brain:
 
         # Khi khách xin bảng giá
         if intent == "price_list_request":
+            if not _default_shop(conv):
+                # Shop thường chưa có bộ ảnh "bảng giá" match ở trên → trả lời bằng AI
+                # (giá nằm trong não đã train), tuyệt đối không gửi bảng giá shop gốc
+                fallback = reply or ("Bạn chờ mình chút nha, mình gửi thông tin giá ngay! "
+                                     "Bạn muốn xem giá dịch vụ nào ạ? 😊")
+                self.channel.send_text(user_id, fallback)
+                conv.add_assistant_message(fallback)
+                return
             if reply:
                 self.channel.send_text(user_id, reply)
                 conv.add_assistant_message(reply)
@@ -406,6 +433,14 @@ class Brain:
 
         # Khi khách xin ảnh phòng
         if intent == "photo_request":
+            if not _default_shop(conv):
+                # Shop thường: ảnh lấy từ Thư viện ảnh (đã thử match ở trên, không trúng)
+                # → không đụng kho media/map phòng legacy của shop gốc
+                fallback = reply or ("Bạn muốn xem ảnh phần nào để mình gửi đúng bộ ạ? 📸 "
+                                     "(shop sẽ bổ sung thêm ảnh nếu chưa có nha)")
+                self.channel.send_text(user_id, fallback)
+                conv.add_assistant_message(fallback)
+                return
             # ── Bước 1: Regex tìm TẤT CẢ số phòng trong tin nhắn (nguồn chính) ──
             rooms_from_text = list(dict.fromkeys(re.findall(r'\b([123]\d{2})\b', text)))
 
@@ -496,8 +531,27 @@ class Brain:
         if intent == "availability_check" and conv.checkin and conv.checkout:
             conv.stage = "checking"
             log.info(f"[Sheets] Kiểm tra lịch: {conv.checkin} → {conv.checkout}")
-            context = format_availability_for_ai(conv.checkin, conv.checkout)
+            context = format_availability_for_ai(conv.checkin, conv.checkout,
+                                                 tenant=getattr(conv, "tenant", "") or None)
             log.info(f"[Sheets] Kết quả:\n{context}")
+
+            # Shop chưa nối Google Sheet nào → không bịa lịch: ghi nhận + báo chủ
+            if "[KHONG_CO_SHEET]" in context:
+                conv.stage = "offering"
+                fixed = (
+                    f"Mình đã ghi nhận bạn muốn ngày {conv.checkin} rồi nha! 📅\n"
+                    f"Chủ shop sẽ kiểm tra lịch trống và xác nhận lại với bạn sớm nhất 😊"
+                )
+                self.channel.send_text(user_id, fixed)
+                conv.add_assistant_message(fixed)
+                self.channel.notify_owner(
+                    f"📅 KHÁCH HỎI LỊCH {conv.checkin}\n\n"
+                    f"👤 ID khách: {user_id}\n💬 Tin nhắn: \"{text[:200]}\"\n\n"
+                    f"Shop chưa kết nối Google Sheet lịch — vào Cài đặt ▸ Lịch đặt chỗ "
+                    f"để bot tự tra lịch cho khách nhé!"
+                )
+                self.conv_manager.save()
+                return
 
             # Gửi thẳng dữ liệu sheet — không qua AI để tránh hallucination
             conv.stage = "offering"
@@ -611,8 +665,11 @@ class Brain:
 
             if effective_checkin:
                 # Luôn verify sheets trước khi xác nhận — tránh confirm phòng đã đặt
+                # ([KHONG_CO_SHEET] không chứa marker từ chối → shop chưa nối sheet
+                #  thì bỏ qua bước verify, đơn vẫn ghi nhận để chủ tự xác nhận)
                 log.info(f"[Booking] Xác minh lịch trước khi confirm: {effective_checkin}")
-                context = format_availability_for_ai(effective_checkin, effective_checkout)
+                context = format_availability_for_ai(effective_checkin, effective_checkout,
+                                                     tenant=getattr(conv, "tenant", "") or None)
 
                 if "KHÔNG có ca trống" in context or "NGHIÊM CẤM" in context:
                     # Hết phòng → không confirm, báo khách

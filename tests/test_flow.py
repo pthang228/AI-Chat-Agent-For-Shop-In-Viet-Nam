@@ -268,7 +268,7 @@ def test_avail_no_date_ask():
     bot.handle(uid, "x", ai_result={"intent":"other","reply":""})
     bot.reset()
     sheets_called = []
-    with patch('app.core.brain.format_availability_for_ai', side_effect=lambda *a: sheets_called.append(a) or "") as msh, \
+    with patch('app.core.brain.format_availability_for_ai', side_effect=lambda *a, **k: sheets_called.append(a) or "") as msh, \
          patch('app.core.brain.analyze_message', return_value={"intent":"availability_check","checkin":None,"reply":""}), \
          patch('app.core.brain.time') as pt:
         pt.sleep = lambda *a: None
@@ -607,7 +607,7 @@ def test_context_followup_in_offering():
     conv.checkin = today; conv.checkout = today; conv.stage = "offering"
     sheets_called = []
     with patch('app.core.brain.format_availability_for_ai',
-               side_effect=lambda *a: sheets_called.append(a) or "📅 Lịch trống") as ms, \
+               side_effect=lambda *a, **k: sheets_called.append(a) or "📅 Lịch trống") as ms, \
          patch('app.core.brain.analyze_message',
                return_value={"intent":"other","checkin":None,"reply":""}), \
          patch('app.core.brain.time') as pt:
@@ -729,7 +729,7 @@ def test_avail_no_repeat_check_when_offering():
     # Mock booking scenario
     sheets_calls = []
     with patch('app.core.brain.format_availability_for_ai',
-               side_effect=lambda *a: sheets_calls.append(1) or "📅 Lịch trống\n  ✅ Phòng 201"),\
+               side_effect=lambda *a, **k: sheets_calls.append(1) or "📅 Lịch trống\n  ✅ Phòng 201"),\
          patch('app.core.brain.analyze_message',
                return_value={"intent":"booking_confirm","booking_confirmed":True,"reply":"OK"}),\
          patch('app.core.brain.time') as pt:

@@ -539,6 +539,10 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.web_api.admin_api import register_admin_routes
     register_admin_routes(app)
 
+    # Lịch đặt chỗ per-shop (Google Sheets) — shop dán link, bot tra lịch riêng
+    from app.web_api.sheets_api import register_sheets_routes
+    register_sheets_routes(app)
+
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm + câu trả lời mẫu
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "", conv_manager, getattr(brain, "channel", None),
@@ -562,7 +566,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         # Nhân viên (role=staff) chỉ làm hộp thư/khách/đơn — cấm phần quản trị
         staff_deny=(
             "/billing", "/prompt", "/team", "/broadcasts", "/copilot", "/notify",
-            "/admin", "/zalo", "/orders/bank", "/bot-toggle",
+            "/admin", "/zalo", "/sheets", "/orders/bank", "/bot-toggle",
             "POST /photos/sets", "DELETE /photos/sets",
             "DELETE /conversations",     # xoá hội thoại: chỉ chủ
         ),

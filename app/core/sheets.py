@@ -34,7 +34,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
-# Danh sách 2 homestay
+# Danh sách sheet LEGACY của SHOP GỐC (chủ nền tảng) — cấu hình qua .env.
+# Shop khác tự khai sheet riêng trong web (bảng shop_sheets) — xem homestays_for().
 HOMESTAYS = [
     {
         "name":     "Haru Staycation",
@@ -45,6 +46,44 @@ HOMESTAYS = [
         "sheet_id": Config.MOCHI_SHEET_ID,
     },
 ]
+
+
+def extract_sheet_id(link_or_id: str) -> str | None:
+    """Bóc sheet ID từ link Google Sheets (hoặc nhận thẳng ID).
+    VD: https://docs.google.com/spreadsheets/d/1AbC.../edit#gid=0 → 1AbC..."""
+    s = (link_or_id or "").strip()
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})", s)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{20,}", s):
+        return s
+    return None
+
+
+def homestays_for(tenant: str | None) -> list:
+    """Danh sách sheet lịch của SHOP sở hữu hội thoại (multi-tenant).
+    - Shop gốc (tenant rỗng / chủ nền tảng) → sheet .env legacy + sheet tự khai.
+    - Shop khác → CHỈ sheet shop đó tự khai trong web (bảng shop_sheets)."""
+    from app.core import tenant as _t
+    from app.core.db import get_db
+    default = _t.default_owner()
+    is_default = (not tenant) or tenant == default
+    out = []
+    if is_default:
+        out += [h for h in HOMESTAYS if h["sheet_id"]]
+    try:
+        if is_default:
+            rows = get_db().query(
+                "SELECT name, sheet_id FROM shop_sheets WHERE tenant=? OR tenant='' ORDER BY id",
+                (default,))
+        else:
+            rows = get_db().query(
+                "SELECT name, sheet_id FROM shop_sheets WHERE tenant=? ORDER BY id",
+                (tenant,))
+        out += [{"name": r["name"] or "Chi nhánh", "sheet_id": r["sheet_id"]} for r in rows]
+    except Exception as e:
+        print(f"[Sheets] lỗi đọc shop_sheets: {e}")
+    return out
 
 
 def _get_client():
@@ -223,13 +262,15 @@ def _dates_in_range(checkin_str: str, checkout_str: str) -> list[date]:
     return result
 
 
-def get_available_slots(checkin_str: str, checkout_str: str) -> tuple[dict, set]:
+def get_available_slots(checkin_str: str, checkout_str: str,
+                        homestays: list | None = None) -> tuple[dict, set]:
     """
     Trả về (summary_dict, dates_found_in_sheet).
 
     summary_dict: ca trống theo homestay → phòng → ngày → list ca
     dates_found_in_sheet: tập hợp date object của các ngày tìm thấy trong sheet
         (dùng để phân biệt "ngày chưa có trong sheet" vs "ngày có nhưng hết phòng")
+    homestays: danh sách sheet của SHOP (None = legacy shop gốc — tương thích cũ)
     """
     try:
         dates = _dates_in_range(checkin_str, checkout_str)
@@ -239,7 +280,7 @@ def get_available_slots(checkin_str: str, checkout_str: str) -> tuple[dict, set]
     summary: dict = {}
     dates_found: set = set()
 
-    for hs in HOMESTAYS:
+    for hs in (homestays if homestays is not None else HOMESTAYS):
         slots = _query_sheet(hs["sheet_id"], hs["name"], dates, dates_found)
         if not slots:
             continue
@@ -257,21 +298,30 @@ def get_available_slots(checkin_str: str, checkout_str: str) -> tuple[dict, set]
     return summary, dates_found
 
 
-def format_availability_for_ai(checkin: str, checkout: str) -> str:
+def format_availability_for_ai(checkin: str, checkout: str,
+                               tenant: str | None = None) -> str:
     """
     Tạo đoạn văn bản mô tả lịch trống để bot gửi cho khách.
 
-    Phân biệt 3 trường hợp:
+    Phân biệt 4 trường hợp:
+    - [KHONG_CO_SHEET] : SHOP này chưa nối Google Sheet nào → bot không tra được,
+                         brain sẽ ghi nhận yêu cầu + báo chủ shop (không bịa lịch)
     - [CHUA_CO_LICH]   : ngày không có trong sheet → chưa có booking, có thể đặt
     - KHÔNG có ca trống: ngày có trong sheet nhưng tất cả đã được đặt
     - Bình thường      : có ca trống cụ thể
+
+    tenant: SHOP sở hữu hội thoại (multi-tenant) — None = legacy shop gốc.
     """
+    homestays = homestays_for(tenant)
+    if not homestays:
+        return "[KHONG_CO_SHEET]\nShop chưa kết nối Google Sheet lịch đặt chỗ nào."
+
     try:
         queried_dates = set(_dates_in_range(checkin, checkout))
     except ValueError:
         queried_dates = set()
 
-    data, dates_found = get_available_slots(checkin, checkout)
+    data, dates_found = get_available_slots(checkin, checkout, homestays=homestays)
 
     if not data:
         # Không có ca trống nào — phân biệt nguyên nhân

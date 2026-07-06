@@ -156,6 +156,17 @@ CREATE TABLE IF NOT EXISTS photo_sets (
     created_at TEXT NOT NULL
 );
 
+-- LỊCH ĐẶT CHỖ per-shop: mỗi shop tự dán link Google Sheet (hệ thống bóc ID),
+-- bot tra lịch trống theo sheet CỦA SHOP đó (shop gốc dùng .env legacy + bảng này)
+CREATE TABLE IF NOT EXISTS shop_sheets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant     TEXT NOT NULL,                -- username chủ shop
+    name       TEXT NOT NULL DEFAULT '',     -- tên chi nhánh hiển thị với khách
+    sheet_id   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shop_sheets_tenant ON shop_sheets(tenant);
+
 -- Lịch sử giao dịch (nạp/mua gói/khuyến mãi)
 CREATE TABLE IF NOT EXISTS transactions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

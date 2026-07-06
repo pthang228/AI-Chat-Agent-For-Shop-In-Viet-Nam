@@ -58,7 +58,7 @@
 	# ── API dashboard (bridge sở hữu namespace gốc) ──
 	# LƯU Ý: /admin/shops* là API (→ bridge); còn /admin và /admin/shop/* là route
 	# trang React (SPA) nên KHÔNG match ở đây — "shops" (số nhiều) tách khỏi "shop".
-	@bridge path /auth/* /conversations /conversations/* /billing/* /orders /orders/* /prompt/* /notify/* /broadcasts /broadcasts/* /team /team/* /teammates /customers /customers/* /copilot/* /canned /canned/* /support/* /incoming /bot-status /bot-toggle /stats /stats/* /health /photos/* /admin/shops /admin/shops/* /zalo/*
+	@bridge path /auth/* /conversations /conversations/* /billing/* /orders /orders/* /prompt/* /notify/* /broadcasts /broadcasts/* /team /team/* /teammates /customers /customers/* /copilot/* /canned /canned/* /support/* /incoming /bot-status /bot-toggle /stats /stats/* /health /photos/* /admin/shops /admin/shops/* /zalo/* /sheets /sheets/*
 	handle @bridge {
 		reverse_proxy bridge:5005
 	}

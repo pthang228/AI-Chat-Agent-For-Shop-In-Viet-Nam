@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { currentUser, isStaff, updateProfile, changePassword } from "../auth.js";
+import { currentUser, isStaff, updateProfile, changePassword, getToken } from "../auth.js";
+import { HOST } from "../apiConfig.js";
 import { logoutAndStopBots } from "../session.js";
 import { ordersApi } from "../ordersApi.js";
 import { teamApi } from "../teamApi.js";
@@ -185,6 +186,9 @@ export default function Settings() {
         </form>
         )}
 
+        {/* Lịch đặt chỗ Google Sheets — bot tra lịch trống theo sheet CỦA SHOP */}
+        {!staff && <SheetsCard />}
+
         {/* Câu trả lời mẫu */}
         <CannedCard />
 
@@ -210,6 +214,112 @@ export default function Settings() {
           </button>
         </div>
       </main>
+    </div>
+  );
+}
+
+/* 📅 Lịch đặt chỗ (Google Sheets) — shop dán LINK sheet lịch phòng của mình,
+   hệ thống tự bóc sheet ID; bot tra lịch trống theo sheet CỦA SHOP khi khách hỏi
+   "ngày X còn phòng không". Cần share sheet (Viewer) cho email service account. */
+function SheetsCard() {
+  const [data, setData] = useState(null);   // null=tải | {sheets,...} | "offline"
+  const [name, setName] = useState("");
+  const [link, setLink] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const H = { Authorization: `Bearer ${getToken()}` };
+  async function load() {
+    try {
+      const r = await fetch(HOST.bridge + "/sheets", { headers: H });
+      const b = await r.json();
+      setData(b?.ok ? b : "offline");
+    } catch { setData("offline"); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function add(e) {
+    e.preventDefault();
+    setMsg(""); setBusy(true);
+    try {
+      const r = await fetch(HOST.bridge + "/sheets", {
+        method: "POST",
+        headers: { ...H, "Content-Type": "application/json" },
+        body: JSON.stringify({ name, link }),
+      });
+      const b = await r.json();
+      if (!b.ok) { setMsg("❌ " + (b.error || "Thêm thất bại")); return; }
+      setName(""); setLink("");
+      setMsg("✅ Đã thêm! Nhớ share sheet (quyền Người xem) cho email bên trên nha.");
+      await load();
+    } catch { setMsg("❌ Chưa kết nối máy chủ (5005)"); }
+    finally { setBusy(false); }
+  }
+
+  async function del(id) {
+    if (!confirm("Xoá sheet này? Bot sẽ không tra lịch từ sheet này nữa.")) return;
+    await fetch(HOST.bridge + `/sheets/${id}`, { method: "DELETE", headers: H });
+    await load();
+  }
+
+  const d = data && typeof data === "object" ? data : null;
+  return (
+    <div className="panel set-card" style={{ marginTop: 16 }}>
+      <h3 style={{ fontSize: 17, marginBottom: 4 }}>📅 Lịch đặt chỗ (Google Sheets)</h3>
+      <p className="hint" style={{ marginBottom: 10 }}>
+        Dán link Google Sheet lịch phòng của shop → khách hỏi <b>"ngày X còn phòng không"</b> là
+        bot tự tra sheet và trả lời. Cấu trúc sheet: <b>hàng 1</b> tên phòng (gộp ô), <b>hàng 2</b> ca
+        giờ (vd 12h-16h), <b>hàng 3+</b> mỗi dòng 1 ngày (cột B ngày dd/mm/yyyy, các ô ghi
+        "Trống" hoặc "Đã đặt"); mỗi tháng 1 tab tên "Lịch tháng 7/2026".
+      </p>
+      {data === null && <p className="hint">Đang tải…</p>}
+      {data === "offline" && <p className="hint">⚠️ Chưa kết nối máy chủ (5005) — hoặc server cần restart bản mới.</p>}
+      {d && (
+        <>
+          {d.service_email ? (
+            <p className="hint" style={{ marginBottom: 10 }}>
+              <b>Bước 1:</b> trong Google Sheet bấm <b>Share</b> → thêm email này (quyền <b>Người xem</b>):{" "}
+              <code style={{ wordBreak: "break-all" }}>{d.service_email}</code>{" "}
+              <button type="button" className="btn-mini"
+                      onClick={() => { navigator.clipboard?.writeText(d.service_email); setMsg("✅ Đã copy email."); }}>
+                📋 Copy
+              </button>
+            </p>
+          ) : (
+            <p className="hint" style={{ marginBottom: 10 }}>
+              ⚠️ Máy chủ chưa cấu hình Google service account — tính năng tra lịch chưa hoạt động, liên hệ quản trị NovaChat.
+            </p>
+          )}
+          <form onSubmit={add} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input style={{ flex: "0 0 160px" }} placeholder="Tên chi nhánh (vd: Cơ sở 1)"
+                   value={name} onChange={(e) => setName(e.target.value)} />
+            <input style={{ flex: 1, minWidth: 220 }}
+                   placeholder="Dán link Google Sheet (https://docs.google.com/spreadsheets/d/…)"
+                   value={link} onChange={(e) => setLink(e.target.value)} />
+            <button className="btn-primary sm" type="submit" disabled={busy || !link.trim()}>
+              {busy ? "Đang thêm…" : "＋ Thêm"}
+            </button>
+          </form>
+          {d.sheets.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              {d.sheets.map((s) => (
+                <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: "1px solid var(--line)" }}>
+                  <b style={{ fontSize: 14 }}>{s.name}</b>
+                  <span className="hint" style={{ flex: 1, wordBreak: "break-all" }}>ID: {s.sheet_id}</span>
+                  <button type="button" className="btn-mini" style={{ color: "var(--danger)" }}
+                          onClick={() => del(s.id)}>Xoá</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {d.sheets.length === 0 && (
+            <p className="hint" style={{ marginTop: 10 }}>
+              Chưa có sheet nào — khách hỏi lịch bot sẽ ghi nhận và báo bạn tự xác nhận.
+            </p>
+          )}
+        </>
+      )}
+      {msg && <div className="savemsg" style={{ marginTop: 8 }}>{msg}</div>}
     </div>
   );
 }
