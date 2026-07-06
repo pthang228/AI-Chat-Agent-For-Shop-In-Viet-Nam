@@ -1,18 +1,25 @@
 /**
- * Zalo Node service — dùng zca-js để đăng nhập QR + nhận/gửi tin Zalo,
- * làm cầu nối tới "não bộ" Python (brain.py) qua HTTP.
+ * Zalo Node service — MULTI-ACCOUNT: quản lý NHIỀU tài khoản Zalo cá nhân
+ * (mỗi SHOP 1 acc riêng, quét QR riêng) trong 1 tiến trình, dùng zca-js.
  *
  * Luồng:
- *   Khách nhắn Zalo → listener nhận → POST sang Python bridge (/incoming)
- *   Python brain xử lý → gọi ngược POST /send ở đây → zca-js gửi lại Zalo
+ *   Khách nhắn Zalo (acc X) → listener của acc X → POST Python bridge (/incoming)
+ *     kèm accId → brain xử lý → gọi ngược POST /send {acc: X} → gửi bằng đúng acc X.
+ *
+ * Multi-account:
+ *   - Mỗi acc = 1 instance zca-js + 1 file session riêng + echo-filter riêng.
+ *   - Acc "default" = tài khoản CHỦ NỀN TẢNG (tương thích 100% bản cũ: session
+ *     ở ZALO_SESSION_FILE, user_id gửi bridge là uid TRẦN, tự mở QR khi boot).
+ *   - Acc khác (shop thuê): session ở SESSIONS_DIR/<id>.json; chỉ mở QR khi
+ *     shop bấm kết nối trong web; mọi endpoint nhận ?acc=<id> hoặc body.acc.
  *
  * Chạy:  npm start    (mặc định cổng 4000)
- * Trang QR cơ bản:  http://localhost:4000
  */
 
 import express from "express";
 import cors from "cors";
 import fs from "fs";
+import path from "path";
 import crypto from "crypto";
 import { Zalo, ThreadType } from "zca-js";
 import { imageSize } from "image-size";
@@ -33,520 +40,537 @@ async function imageMetadataGetter(filePath) {
 
 const PORT = process.env.ZALO_NODE_PORT || 4000;
 const BRIDGE_URL = process.env.PY_BRIDGE_URL || "http://127.0.0.1:5005/incoming";
-// Đường dẫn session cấu hình qua env (Docker: trỏ vào volume /data để GIỮ phiên
-// qua restart mà không che code container). Mặc định thư mục hiện tại (Windows dev).
+// Acc default (chủ nền tảng) giữ NGUYÊN đường dẫn session cũ; acc shop thuê nằm
+// trong SESSIONS_DIR (Docker: cả hai trỏ vào volume /data để giữ phiên qua restart).
 const SESSION_FILE = process.env.ZALO_SESSION_FILE || "./zalo-session.json";
-const SESSION_BAK  = SESSION_FILE + ".bak";   // bản sao lưu — khôi phục khi lỡ đăng xuất
+const SESSIONS_DIR = process.env.ZALO_SESSIONS_DIR ||
+  path.join(path.dirname(SESSION_FILE), "zalo-sessions");
+const CONFIG_FILE = process.env.ZALO_NODE_CONFIG || "./node-config.json";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // selfListen BẬT để nhận cả tin do tài khoản này gửi (cần cho owner-takeover).
-// Tin bot tự gửi sẽ được lọc bằng msgId (xem sentMsgIds), tin còn lại = chủ gõ tay.
 const ZALO_OPTS = { selfListen: true, imageMetadataGetter };
+
+const SELF_WINDOW_MS = 15000;
+const MEDIA_SELF_WINDOW_MS = 120000;
+const TEXT_ECHO_WINDOW_MS = 120000;
+const MAX_QR_REGEN = 20;
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
-let zalo = new Zalo(ZALO_OPTS);
-let api = null;
-
-// ── Lọc echo: nhớ msgId các tin bot vừa gửi (giữ 2 phút) ──
-const sentMsgIds = new Map(); // msgId(string) -> timestamp
-function trackMsgId(id) {
-  if (id !== undefined && id !== null) sentMsgIds.set(String(id), Date.now());
-}
-function isOwnEcho(id) {
-  const now = Date.now();
-  for (const [k, t] of sentMsgIds) if (now - t > 120000) sentMsgIds.delete(k);
-  return id !== undefined && id !== null && sentMsgIds.has(String(id));
-}
-function trackSendResult(r) {
-  const seen = new Set();
-  function walk(v) {
-    if (!v || typeof v !== "object" || seen.has(v)) return;
-    seen.add(v);
-    if (v.msgId !== undefined) trackMsgId(v.msgId);
-    if (v.messageId !== undefined) trackMsgId(v.messageId);
-    if (Array.isArray(v)) v.forEach(walk);
-    else Object.values(v).forEach(walk);
-  }
-  walk(r);
-}
-
-// Cửa sổ "bot vừa gửi" theo từng thread — chống echo chắc chắn (không bị race như msgId).
-// Đánh dấu NGAY TRƯỚC khi gọi api.sendMessage; mọi tin self tới thread đó trong
-// SELF_WINDOW_MS coi là echo của bot, không phải chủ gõ tay.
-const SELF_WINDOW_MS = 15000;
-const MEDIA_SELF_WINDOW_MS = 120000;
-const TEXT_ECHO_WINDOW_MS = 120000;
-const lastBotSendAt = new Map(); // threadId(string) -> expiry timestamp
-const sentTextFingerprints = new Map(); // `${threadId}:${sha1(text)}` -> timestamp
-
-function markBotSend(threadId, windowMs = SELF_WINDOW_MS) {
-  if (threadId === undefined || threadId === null) return;
-  const key = String(threadId);
-  const expiry = Date.now() + windowMs;
-  lastBotSendAt.set(key, Math.max(lastBotSendAt.get(key) || 0, expiry));
-}
-function inBotSendWindow(threadId) {
-  const key = String(threadId);
-  const expiry = lastBotSendAt.get(key);
-  if (expiry === undefined) return false;
-  if (Date.now() < expiry) return true;
-  lastBotSendAt.delete(key);
-  return false;
-}
-
-function normalizeText(text) {
-  return String(text || "").trim().replace(/\s+/g, " ");
-}
-
-function textFingerprint(text) {
-  return crypto.createHash("sha1").update(normalizeText(text)).digest("hex");
-}
-
-function cleanupBotTextFingerprints() {
-  const now = Date.now();
-  for (const [k, t] of sentTextFingerprints) {
-    if (now - t > TEXT_ECHO_WINDOW_MS) sentTextFingerprints.delete(k);
-  }
-}
-
-function trackBotText(threadId, text) {
-  const normalized = normalizeText(text);
-  if (!normalized || threadId === undefined || threadId === null) return;
-  cleanupBotTextFingerprints();
-  sentTextFingerprints.set(`${String(threadId)}:${textFingerprint(normalized)}`, Date.now());
-}
-
-function isBotTextEcho(threadId, text) {
-  const normalized = normalizeText(text);
-  if (!normalized || threadId === undefined || threadId === null) return false;
-  cleanupBotTextFingerprints();
-  return sentTextFingerprints.has(`${String(threadId)}:${textFingerprint(normalized)}`);
-}
-
-// ── Cấu hình do người dùng chọn trong UI (nhóm/chủ nhận thông báo) ──
-const CONFIG_FILE = "./node-config.json";
-let config = { ownerGroupId: "", ownerUserId: "" };
+// ── Config per-acc (nhóm/chủ nhận thông báo) ──
+// Định dạng mới {accounts: {id: {ownerGroupId, ownerUserId}}}; file CŨ phẳng
+// {ownerGroupId, ownerUserId} tự migrate thành accounts.default.
+let configAll = { accounts: {} };
 function loadConfig() {
   try {
-    if (fs.existsSync(CONFIG_FILE))
-      config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) };
+    if (!fs.existsSync(CONFIG_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) || {};
+    if (raw.accounts) configAll = { accounts: {}, ...raw };
+    else configAll = { accounts: { default: { ownerGroupId: raw.ownerGroupId || "", ownerUserId: raw.ownerUserId || "" } } };
   } catch (e) {
     console.error("[config] load lỗi:", e.message);
   }
 }
 function saveConfig() {
   try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(configAll, null, 2), "utf-8");
   } catch (e) {
     console.error("[config] save lỗi:", e.message);
   }
 }
-// status: idle | waiting_scan | scanned | logged_in | qr_expired | declined | error
-let state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
-
-// ── Avatar THẬT của khách: tin nhắn 1-1 không phải lúc nào cũng kèm avt →
-// gọi api.getUserInfo 1 LẦN/khách (cache), lấy đúng URL avatar tài khoản Zalo ──
-const avatarCache = new Map(); // uid → url ("" = đã hỏi nhưng không có)
-async function getAvatar(uid) {
-  if (!uid || !api) return "";
-  if (avatarCache.has(uid)) return avatarCache.get(uid);
-  let url = "";
-  try {
-    const info = await api.getUserInfo(uid);
-    // zca-js trả { changed_profiles: {uid: {...}} } hoặc { unchanged_profiles };
-    // key có thể là "uid" hoặc "uid_0" tuỳ phiên bản → quét mọi profile khớp uid
-    const buckets = [info?.changed_profiles, info?.unchanged_profiles, info?.profiles];
-    for (const b of buckets) {
-      if (!b) continue;
-      for (const [k, p] of Object.entries(b)) {
-        if (k === uid || k.startsWith(uid + "_") || String(p?.userId) === uid) {
-          url = p?.avatar || p?.avt || "";
-          if (url) break;
-        }
-      }
-      if (url) break;
-    }
-    if (!url)
-      console.log("[avatar] không thấy avatar cho", uid, "— raw keys:",
-        JSON.stringify({
-          top: Object.keys(info || {}),
-          changed: Object.keys(info?.changed_profiles || {}),
-          unchanged: Object.keys(info?.unchanged_profiles || {}),
-        }));
-  } catch (e) {
-    console.error("[avatar] getUserInfo lỗi:", e.message);
-  }
-  avatarCache.set(uid, url); // cache cả khi rỗng — không hỏi lại mỗi tin
-  return url;
+function accConfig(id) {
+  return (configAll.accounts[id] = configAll.accounts[id] || { ownerGroupId: "", ownerUserId: "" });
 }
 
-// ── Sau khi đăng nhập: gắn listener, chuyển tiếp tin khách sang Python ──
-function attachListener(a) {
-  api = a;
-  state.status = "logged_in";
-  try { state.ownId = a.getOwnId(); } catch { state.ownId = null; }
-  state.qrImage = null;
+function normalizeText(text) {
+  return String(text || "").trim().replace(/\s+/g, " ");
+}
+function textFingerprint(text) {
+  return crypto.createHash("sha1").update(normalizeText(text)).digest("hex");
+}
+const SAFE_ID = /^[A-Za-z0-9_-]{1,40}$/;
 
-  a.listener.on("message", async (message) => {
+// ═════════════════════════════════════════════════════════════════════
+//  ZaloAccount — toàn bộ trạng thái của 1 tài khoản Zalo (1 shop)
+// ═════════════════════════════════════════════════════════════════════
+class ZaloAccount {
+  constructor(id) {
+    this.id = id;
+    this.zalo = null;
+    this.api = null;
+    // status: idle | waiting_scan | scanned | logged_in | qr_expired |
+    //         declined | disconnected | error
+    this.state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
+    // echo filter riêng từng acc
+    this.sentMsgIds = new Map();
+    this.lastBotSendAt = new Map();
+    this.sentTextFingerprints = new Map();
+    this.avatarCache = new Map();
+    // QR loop
+    this.qrLoopActive = false;
+    this.qrRegenCount = 0;
+    this.qrLoopStartAt = 0;
+  }
+
+  sessionFile() {
+    return this.id === "default" ? SESSION_FILE : path.join(SESSIONS_DIR, `${this.id}.json`);
+  }
+  sessionBak() { return this.sessionFile() + ".bak"; }
+
+  // ── Echo filter ──
+  trackMsgId(id) { if (id !== undefined && id !== null) this.sentMsgIds.set(String(id), Date.now()); }
+  isOwnEcho(id) {
+    const now = Date.now();
+    for (const [k, t] of this.sentMsgIds) if (now - t > 120000) this.sentMsgIds.delete(k);
+    return id !== undefined && id !== null && this.sentMsgIds.has(String(id));
+  }
+  trackSendResult(r) {
+    const seen = new Set();
+    const walk = (v) => {
+      if (!v || typeof v !== "object" || seen.has(v)) return;
+      seen.add(v);
+      if (v.msgId !== undefined) this.trackMsgId(v.msgId);
+      if (v.messageId !== undefined) this.trackMsgId(v.messageId);
+      if (Array.isArray(v)) v.forEach(walk);
+      else Object.values(v).forEach(walk);
+    };
+    walk(r);
+  }
+  markBotSend(threadId, windowMs = SELF_WINDOW_MS) {
+    if (threadId === undefined || threadId === null) return;
+    const key = String(threadId);
+    this.lastBotSendAt.set(key, Math.max(this.lastBotSendAt.get(key) || 0, Date.now() + windowMs));
+  }
+  inBotSendWindow(threadId) {
+    const key = String(threadId);
+    const expiry = this.lastBotSendAt.get(key);
+    if (expiry === undefined) return false;
+    if (Date.now() < expiry) return true;
+    this.lastBotSendAt.delete(key);
+    return false;
+  }
+  _cleanFingerprints() {
+    const now = Date.now();
+    for (const [k, t] of this.sentTextFingerprints)
+      if (now - t > TEXT_ECHO_WINDOW_MS) this.sentTextFingerprints.delete(k);
+  }
+  trackBotText(threadId, text) {
+    const n = normalizeText(text);
+    if (!n || threadId === undefined || threadId === null) return;
+    this._cleanFingerprints();
+    this.sentTextFingerprints.set(`${String(threadId)}:${textFingerprint(n)}`, Date.now());
+  }
+  isBotTextEcho(threadId, text) {
+    const n = normalizeText(text);
+    if (!n || threadId === undefined || threadId === null) return false;
+    this._cleanFingerprints();
+    return this.sentTextFingerprints.has(`${String(threadId)}:${textFingerprint(n)}`);
+  }
+
+  // ── Avatar (cache 1 lần/khách) ──
+  async getAvatar(uid) {
+    if (!uid || !this.api) return "";
+    if (this.avatarCache.has(uid)) return this.avatarCache.get(uid);
+    let url = "";
     try {
-      const isGroup = message.type === ThreadType.Group;
-      const content =
-        typeof message.data.content === "string" ? message.data.content : "";
-
-      let ownerTyped = false;
-      if (message.isSelf) {
-        // Tin từ chính tài khoản này:
-        //  - trùng msgId bot vừa gửi  → echo của bot → BỎ QUA
-        //  - không trùng              → chủ nhà tự gõ tay → owner-takeover
-        if (isGroup) return;                       // tin nhóm: bỏ qua
-        // bot tự gửi (khớp msgId HOẶC vừa gửi tới thread này trong cửa sổ): bỏ qua
-        if (
-          isOwnEcho(message.data.msgId) ||
-          isBotTextEcho(message.threadId, content) ||
-          inBotSendWindow(message.threadId)
-        ) return;
-        ownerTyped = true;
+      const info = await this.api.getUserInfo(uid);
+      const buckets = [info?.changed_profiles, info?.unchanged_profiles, info?.profiles];
+      for (const b of buckets) {
+        if (!b) continue;
+        for (const [k, p] of Object.entries(b)) {
+          if (k === uid || k.startsWith(uid + "_") || String(p?.userId) === uid) {
+            url = p?.avatar || p?.avt || "";
+            if (url) break;
+          }
+        }
+        if (url) break;
       }
-
-      const payload = {
-        userId: message.threadId,            // khoá hội thoại (= id khách)
-        uidFrom: message.data.uidFrom,
-        text: content,
-        isSelf: message.isSelf,
-        ownerTyped,                          // true = chủ nhà tự nhắn khách
-        isGroup,
-        dName: message.data.dName,
-        // Avatar THẬT của khách: avt kèm tin (nếu có) → fallback getUserInfo (cache).
-        // Tin isSelf = avatar CHỦ, không phải khách → để rỗng.
-        avatar: message.isSelf
-          ? ""
-          : message.data.avt || (await getAvatar(message.threadId)) || "",
-        ownId: state.ownId,
-      };
-      const r = await fetch(BRIDGE_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) console.error("[bridge] HTTP", r.status);
     } catch (e) {
-      console.error("[bridge] gửi thất bại:", e.message);
+      console.error(`[${this.id}][avatar] getUserInfo lỗi:`, e.message);
     }
-  });
-
-  a.listener.on("error", (e) => console.error("[listener] error:", e));
-  a.listener.start();
-  console.log("[zalo] ✅ đăng nhập xong, ownId =", state.ownId);
-}
-
-function saveSession(cred) {
-  try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(cred, null, 2), "utf-8");
-    // Luôn giữ 1 bản sao lưu → lỡ mất/hỏng file chính vẫn khôi phục được
-    try { fs.copyFileSync(SESSION_FILE, SESSION_BAK); } catch {}
-    console.log("[zalo] đã lưu session →", SESSION_FILE);
-  } catch (e) {
-    console.error("[zalo] lưu session lỗi:", e.message);
+    this.avatarCache.set(uid, url);
+    return url;
   }
-}
 
-async function tryResumeSession() {
-  if (!fs.existsSync(SESSION_FILE)) {
-    console.log("[zalo] chưa có session — tự mở luồng QR để đăng nhập");
-    startQrLogin(false);   // chưa có phiên → hiện QR ngay, khỏi bấm nút
-    return;
-  }
-  try {
-    const cred = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-    const a = await zalo.login(cred);
-    attachListener(a);
-    console.log("[zalo] khôi phục session thành công");
-  } catch (e) {
-    // Resume lỗi (có thể chỉ do mạng thoáng qua) → KHÔNG xoá session (giữ để lần
-    // boot sau thử lại), chỉ mở QR để user đăng nhập lại nếu muốn. Khi user quét
-    // thành công, saveSession sẽ tự ghi đè phiên mới.
-    console.error("[zalo] không khôi phục được session:", e.message, "→ mở QR (giữ session cũ)");
-    state.status = "idle";
-    startQrLogin(false);
-  }
-}
+  // ── Đăng nhập xong: gắn listener, chuyển tin sang Python kèm accId ──
+  attachListener(a) {
+    this.api = a;
+    this.state.status = "logged_in";
+    try { this.state.ownId = a.getOwnId(); } catch { this.state.ownId = null; }
+    this.state.qrImage = null;
 
-// ── API ───────────────────────────────────────────────────────────
+    a.listener.on("message", async (message) => {
+      try {
+        const isGroup = message.type === ThreadType.Group;
+        const content = typeof message.data.content === "string" ? message.data.content : "";
 
-// Đăng nhập QR với TỰ LÀM MỚI khi mã hết hạn (zca-js không tự tái sinh QR):
-// mã Zalo hết hạn ~vài chục giây → trước đây user phải bấm "tạo lại" thủ công.
-// Giờ khi hết hạn/lỗi tạm mà chưa đăng nhập & chưa bị từ chối → tự sinh mã mới,
-// tối đa MAX_QR_REGEN lần (chống chạy nền vô tận nếu không ai quét).
-let qrLoopActive = false;   // chống chạy chồng nhiều vòng loginQR cùng lúc
-let qrRegenCount = 0;
-let qrLoopStartAt = 0;      // mốc thời gian vòng QR hiện tại bắt đầu (để tính backoff)
-const MAX_QR_REGEN = 20;    // ~ vài phút liên tục có mã sống; hết thì dừng, user bấm lại
+        let ownerTyped = false;
+        if (message.isSelf) {
+          if (isGroup) return;
+          if (
+            this.isOwnEcho(message.data.msgId) ||
+            this.isBotTextEcho(message.threadId, content) ||
+            this.inBotSendWindow(message.threadId)
+          ) return;
+          ownerTyped = true;   // chủ shop tự gõ tay trên điện thoại
+        }
 
-async function startQrLogin(isRetry = false) {
-  if (state.status === "logged_in") return;
-  if (qrLoopActive) return;               // đã có 1 vòng đang chạy → thôi
-  if (!isRetry) qrRegenCount = 0;         // user chủ động bắt đầu → reset bộ đếm
-  qrLoopActive = true;
-  qrLoopStartAt = Date.now();
-  state.status = "waiting_scan";
-  state.qrImage = null;
-  state.userInfo = null;
-
-  try {
-    zalo = new Zalo(ZALO_OPTS);
-    const a = await zalo.loginQR({ userAgent: USER_AGENT }, (ev) => {
-      switch (ev.type) {
-        case 0: // QRCodeGenerated
-          state.qrImage = ev.data.image; // base64 PNG
-          state.status = "waiting_scan";
-          console.log("[qr] đã sinh mã QR");
-          break;
-        case 1: // QRCodeExpired — sẽ tự tạo lại ở nhánh catch/finally
-          state.status = "qr_expired";
-          console.log("[qr] mã hết hạn → sẽ tự làm mới");
-          break;
-        case 2: // QRCodeScanned
-          state.status = "scanned";
-          state.userInfo = ev.data; // { display_name, avatar }
-          console.log("[qr] đã quét bởi", ev.data.display_name);
-          break;
-        case 3: // QRCodeDeclined
-          state.status = "declined";
-          break;
-        case 4: // GotLoginInfo
-          saveSession({
-            imei: ev.data.imei,
-            cookie: ev.data.cookie,
-            userAgent: ev.data.userAgent,
-          });
-          break;
+        const payload = {
+          acc: this.id,                        // ← MULTI-ACC: shop nào
+          userId: message.threadId,
+          uidFrom: message.data.uidFrom,
+          text: content,
+          isSelf: message.isSelf,
+          ownerTyped,
+          isGroup,
+          dName: message.data.dName,
+          avatar: message.isSelf
+            ? ""
+            : message.data.avt || (await this.getAvatar(message.threadId)) || "",
+          ownId: this.state.ownId,
+        };
+        const r = await fetch(BRIDGE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) console.error(`[${this.id}][bridge] HTTP`, r.status);
+      } catch (e) {
+        console.error(`[${this.id}][bridge] gửi thất bại:`, e.message);
       }
     });
-    qrLoopActive = false;
-    if (a) { attachListener(a); return; }
-    // loginQR kết thúc mà không có API (hết hạn) → tự làm mới
-    _maybeRegenQr();
-  } catch (e) {
-    qrLoopActive = false;
-    // Đã đăng nhập ở nơi khác / user từ chối → dừng, không tái sinh
-    if (state.status === "logged_in" || state.status === "declined") {
-      if (state.status === "declined") console.log("[qr] user từ chối đăng nhập");
+
+    a.listener.on("error", (e) => console.error(`[${this.id}][listener] error:`, e));
+    a.listener.start();
+    console.log(`[${this.id}][zalo] ✅ đăng nhập xong, ownId =`, this.state.ownId);
+  }
+
+  saveSession(cred) {
+    try {
+      const f = this.sessionFile();
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, JSON.stringify(cred, null, 2), "utf-8");
+      try { fs.copyFileSync(f, this.sessionBak()); } catch {}
+      console.log(`[${this.id}][zalo] đã lưu session →`, f);
+    } catch (e) {
+      console.error(`[${this.id}][zalo] lưu session lỗi:`, e.message);
+    }
+  }
+
+  async tryResumeSession(autoQrIfMissing = false) {
+    if (!fs.existsSync(this.sessionFile())) {
+      if (autoQrIfMissing) {
+        console.log(`[${this.id}][zalo] chưa có session — tự mở luồng QR`);
+        this.startQrLogin(false);
+      }
       return;
     }
-    console.log("[qr] vòng QR kết thúc (", e.message, ") → làm mới");
-    _maybeRegenQr();
+    try {
+      const cred = JSON.parse(fs.readFileSync(this.sessionFile(), "utf-8"));
+      this.zalo = new Zalo(ZALO_OPTS);
+      const a = await this.zalo.login(cred);
+      this.attachListener(a);
+      console.log(`[${this.id}][zalo] khôi phục session thành công`);
+    } catch (e) {
+      // Resume lỗi (có thể do mạng) → GIỮ session, mở QR để đăng nhập lại nếu muốn
+      console.error(`[${this.id}][zalo] không khôi phục được session:`, e.message, "→ mở QR (giữ session cũ)");
+      this.state.status = "idle";
+      this.startQrLogin(false);
+    }
+  }
+
+  // ── QR login với tự làm mới + backoff (chống Zalo throttle) ──
+  async startQrLogin(isRetry = false) {
+    if (this.state.status === "logged_in") return;
+    if (this.qrLoopActive) return;
+    if (!isRetry) this.qrRegenCount = 0;
+    this.qrLoopActive = true;
+    this.qrLoopStartAt = Date.now();
+    this.state.status = "waiting_scan";
+    this.state.qrImage = null;
+    this.state.userInfo = null;
+
+    try {
+      this.zalo = new Zalo(ZALO_OPTS);
+      const a = await this.zalo.loginQR({ userAgent: USER_AGENT }, (ev) => {
+        switch (ev.type) {
+          case 0:
+            this.state.qrImage = ev.data.image;
+            this.state.status = "waiting_scan";
+            console.log(`[${this.id}][qr] đã sinh mã QR`);
+            break;
+          case 1:
+            this.state.status = "qr_expired";
+            console.log(`[${this.id}][qr] mã hết hạn → sẽ tự làm mới`);
+            break;
+          case 2:
+            this.state.status = "scanned";
+            this.state.userInfo = ev.data;
+            console.log(`[${this.id}][qr] đã quét bởi`, ev.data.display_name);
+            break;
+          case 3:
+            this.state.status = "declined";
+            break;
+          case 4:
+            this.saveSession({ imei: ev.data.imei, cookie: ev.data.cookie, userAgent: ev.data.userAgent });
+            break;
+        }
+      });
+      this.qrLoopActive = false;
+      if (a) { this.attachListener(a); return; }
+      this._maybeRegenQr();
+    } catch (e) {
+      this.qrLoopActive = false;
+      if (this.state.status === "logged_in" || this.state.status === "declined") return;
+      console.log(`[${this.id}][qr] vòng QR kết thúc (`, e.message, ") → làm mới");
+      this._maybeRegenQr();
+    }
+  }
+
+  _maybeRegenQr() {
+    if (this.state.status === "logged_in" || this.state.status === "declined") return;
+    if (this.qrRegenCount >= MAX_QR_REGEN) {
+      this.state.status = "qr_expired";
+      console.log(`[${this.id}][qr] đã làm mới ${MAX_QR_REGEN} lần chưa ai quét → tạm dừng`);
+      return;
+    }
+    this.qrRegenCount++;
+    const lived = Date.now() - this.qrLoopStartAt;
+    const delay = lived < 5000 ? 8000 : 1500;
+    setTimeout(() => this.startQrLogin(true), delay);
+  }
+
+  statusPayload() {
+    return {
+      acc: this.id,
+      status: this.state.status,
+      qr: this.state.qrImage,
+      ownId: this.state.ownId,
+      userInfo: this.state.userInfo,
+      hasSession: fs.existsSync(this.sessionFile()),
+      hasBackup: fs.existsSync(this.sessionBak()),
+    };
   }
 }
 
-function _maybeRegenQr() {
-  if (state.status === "logged_in" || state.status === "declined") return;
-  if (qrRegenCount >= MAX_QR_REGEN) {
-    state.status = "qr_expired";   // dừng chuỗi tự làm mới, chờ user bấm lại
-    console.log("[qr] đã làm mới", MAX_QR_REGEN, "lần chưa ai quét → tạm dừng");
-    return;
-  }
-  qrRegenCount++;
-  // BACKOFF chống dồn dập (Zalo throttle nếu xin QR liên tục): mã QR bình thường
-  // sống ~40s. Nếu vòng vừa rồi kết thúc QUÁ NHANH (<5s) → khả năng lỗi/bị chặn →
-  // chờ lâu (8s) trước khi thử lại; kết thúc do hết hạn bình thường → làm mới nhanh (1.5s).
-  const lived = Date.now() - qrLoopStartAt;
-  const delay = lived < 5000 ? 8000 : 1500;
-  setTimeout(() => startQrLogin(true), delay);
+// ── Registry account ──
+const accounts = new Map();   // id → ZaloAccount
+function getAccount(id) {
+  id = String(id || "default");
+  if (!SAFE_ID.test(id)) id = "default";
+  if (!accounts.has(id)) accounts.set(id, new ZaloAccount(id));
+  return accounts.get(id);
+}
+// acc từ request: ?acc= (GET) hoặc body.acc (POST); mặc định "default"
+function reqAcc(req) {
+  return getAccount((req.query && req.query.acc) || (req.body && req.body.acc) || "default");
 }
 
-// Bắt đầu đăng nhập QR (chạy nền, trả về ngay; QR lấy qua /status)
+// ═════════════════════════════════════════════════════════════════════
+//  API — mọi endpoint nhận acc (mặc định "default" — tương thích bản cũ)
+// ═════════════════════════════════════════════════════════════════════
+
+// Danh sách account đang quản lý (debug/quản trị)
+app.get("/accounts", (req, res) => {
+  const out = [];
+  for (const [id, acct] of accounts) {
+    out.push({ acc: id, status: acct.state.status, ownId: acct.state.ownId,
+               hasSession: fs.existsSync(acct.sessionFile()) });
+  }
+  res.json({ accounts: out });
+});
+
+// Bắt đầu đăng nhập QR (chạy nền; QR lấy qua /status)
 app.post("/login/qr", (req, res) => {
-  if (state.status === "logged_in") {
-    return res.json({ status: "logged_in", ownId: state.ownId });
+  const acct = reqAcc(req);
+  if (acct.state.status === "logged_in") {
+    return res.json({ status: "logged_in", ownId: acct.state.ownId });
   }
-  startQrLogin(false);
-  res.json({ status: "starting" });
+  acct.startQrLogin(false);
+  res.json({ status: "starting", acc: acct.id });
 });
 
 // Trạng thái đăng nhập + ảnh QR hiện tại
-app.get("/status", (req, res) => {
-  res.json({
-    status: state.status,
-    qr: state.qrImage,
-    ownId: state.ownId,
-    userInfo: state.userInfo,
-    hasSession: fs.existsSync(SESSION_FILE),   // có thể /reconnect không cần QR
-    hasBackup: fs.existsSync(SESSION_BAK),      // có thể /restore-session (tài khoản trước)
-  });
-});
+app.get("/status", (req, res) => res.json(reqAcc(req).statusPayload()));
 
-// Gửi text (Python brain gọi vào đây). type: "user" (mặc định) | "group"
+// Gửi text (Python brain gọi). body: {acc?, userId, text, type}
 app.post("/send", async (req, res) => {
+  const acct = reqAcc(req);
   const { userId, text, type } = req.body || {};
-  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  if (!acct.api) return res.status(409).json({ error: "chưa đăng nhập Zalo", acc: acct.id });
   const tt = type === "group" ? ThreadType.Group : ThreadType.User;
-  markBotSend(userId); // đánh dấu TRƯỚC khi gửi để echo không bị hiểu nhầm là chủ gõ
-  trackBotText(userId, text);
+  acct.markBotSend(userId);
+  acct.trackBotText(userId, text);
   try {
-    const r = await api.sendMessage(String(text), String(userId), tt);
-    trackSendResult(r);
+    const r = await acct.api.sendMessage(String(text), String(userId), tt);
+    acct.trackSendResult(r);
     res.json({ ok: true, result: r });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Gửi ảnh theo đường dẫn file (Python brain gọi vào đây)
+// Gửi ảnh theo đường dẫn file
 app.post("/send-image", async (req, res) => {
+  const acct = reqAcc(req);
   const { userId, paths, type } = req.body || {};
-  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  if (!acct.api) return res.status(409).json({ error: "chưa đăng nhập Zalo", acc: acct.id });
   const tt = type === "group" ? ThreadType.Group : ThreadType.User;
-  markBotSend(userId, MEDIA_SELF_WINDOW_MS); // chống echo ảnh bot tự gửi
+  acct.markBotSend(userId, MEDIA_SELF_WINDOW_MS);
   try {
-    const r = await api.sendMessage(
+    const r = await acct.api.sendMessage(
       { msg: "", attachments: Array.isArray(paths) ? paths : [paths] },
-      String(userId),
-      tt,
-    );
-    trackSendResult(r);
+      String(userId), tt);
+    acct.trackSendResult(r);
     res.json({ ok: true, result: r });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Liệt kê các NHÓM acc đang ở (để lấy OWNER_GROUP_ID hợp lệ cho acc này)
+// Liệt kê nhóm của acc (chọn nhóm nhận thông báo)
 app.get("/groups", async (req, res) => {
-  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  const acct = reqAcc(req);
+  if (!acct.api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
   try {
-    const all = await api.getAllGroups();
+    const all = await acct.api.getAllGroups();
     const ids = Object.keys(all.gridVerMap || {});
     const names = {};
     if (ids.length) {
       try {
-        const info = await api.getGroupInfo(ids);
+        const info = await acct.api.getGroupInfo(ids);
         const m = info.gridInfoMap || {};
         for (const id of ids) names[id] = (m[id] && (m[id].name || m[id].groupName)) || "";
       } catch { /* vẫn trả id dù không lấy được tên */ }
     }
-    res.json({ ownId: state.ownId, groups: ids.map((id) => ({ groupId: id, name: names[id] || "" })) });
+    res.json({ ownId: acct.state.ownId, groups: ids.map((id) => ({ groupId: id, name: names[id] || "" })) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Avatar THẬT của 1 khách (bridge backfill cho khách cũ chưa nhắn lại)
+// Avatar THẬT của 1 khách (bridge backfill)
 app.get("/avatar/:uid", async (req, res) => {
-  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  const acct = reqAcc(req);
+  if (!acct.api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
   try {
-    const url = await getAvatar(String(req.params.uid));
+    const url = await acct.getAvatar(String(req.params.uid));
     res.json({ uid: req.params.uid, avatar: url });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Liệt kê BẠN BÈ (để lấy OWNER_ZALO_ID hợp lệ nếu muốn báo qua DM)
+// Bạn bè của acc
 app.get("/friends", async (req, res) => {
-  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  const acct = reqAcc(req);
+  if (!acct.api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
   try {
-    const fr = await api.getAllFriends();
+    const fr = await acct.api.getAllFriends();
     const list = (fr || []).map((u) => ({
       userId: u.userId || u.uid || u.id,
       name: u.displayName || u.zaloName || u.dName || "",
     }));
-    res.json({ ownId: state.ownId, count: list.length, friends: list });
+    res.json({ ownId: acct.state.ownId, count: list.length, friends: list });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Lấy / lưu cấu hình nhóm-chủ (UI gọi vào đây)
-app.get("/config", (req, res) => res.json(config));
+// Cấu hình nhóm/chủ nhận thông báo — PER ACC
+app.get("/config", (req, res) => res.json(accConfig(reqAcc(req).id)));
 app.post("/config", (req, res) => {
+  const acct = reqAcc(req);
+  const cfg = accConfig(acct.id);
   const { ownerGroupId, ownerUserId } = req.body || {};
-  if (ownerGroupId !== undefined) config.ownerGroupId = String(ownerGroupId || "");
-  if (ownerUserId !== undefined) config.ownerUserId = String(ownerUserId || "");
+  if (ownerGroupId !== undefined) cfg.ownerGroupId = String(ownerGroupId || "");
+  if (ownerUserId !== undefined) cfg.ownerUserId = String(ownerUserId || "");
   saveConfig();
-  console.log("[config] cập nhật:", config);
-  res.json({ ok: true, config });
+  console.log(`[${acct.id}][config] cập nhật:`, cfg);
+  res.json({ ok: true, config: cfg });
 });
 
-// Thông báo cho chủ nhà — gửi tới nhóm/chủ đã chọn trong UI (Python brain gọi vào đây)
+// Báo chủ shop — gửi tới nhóm/DM đã chọn CỦA ACC ĐÓ
 app.post("/notify-owner", async (req, res) => {
+  const acct = reqAcc(req);
+  const cfg = accConfig(acct.id);
   const { text } = req.body || {};
-  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  if (!acct.api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
   try {
-    if (config.ownerGroupId) {
-      const r = await api.sendMessage(String(text), String(config.ownerGroupId), ThreadType.Group);
-      trackSendResult(r);
+    if (cfg.ownerGroupId) {
+      const r = await acct.api.sendMessage(String(text), String(cfg.ownerGroupId), ThreadType.Group);
+      acct.trackSendResult(r);
       return res.json({ ok: true, target: "group", result: r });
     }
-    if (config.ownerUserId) {
-      markBotSend(config.ownerUserId); // chống echo khi báo chủ qua DM
-      trackBotText(config.ownerUserId, text);
-      const r = await api.sendMessage(String(text), String(config.ownerUserId), ThreadType.User);
-      trackSendResult(r);
+    if (cfg.ownerUserId) {
+      acct.markBotSend(cfg.ownerUserId);
+      acct.trackBotText(cfg.ownerUserId, text);
+      const r = await acct.api.sendMessage(String(text), String(cfg.ownerUserId), ThreadType.User);
+      acct.trackSendResult(r);
       return res.json({ ok: true, target: "dm", result: r });
     }
-    console.warn("[notify-owner] chưa chọn nhóm/chủ nhận thông báo");
     return res.status(400).json({ error: "chưa chọn nhóm/chủ nhận thông báo" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// TẠM NGẮT — dừng bot nhưng GIỮ đăng nhập (không xoá session). Kết nối lại
-// sau này KHÔNG cần quét QR (dùng /reconnect). Dùng khi chỉ muốn tạm dừng.
+// TẠM NGẮT — dừng bot nhưng GIỮ đăng nhập (kết nối lại không cần QR)
 app.post("/disconnect", (req, res) => {
-  try { if (api) api.listener.stop(); } catch {}
-  api = null;
-  qrLoopActive = false;
-  state = { status: "disconnected", qrImage: null, ownId: null, userInfo: null };
-  console.log("[zalo] tạm ngắt (giữ session)");
+  const acct = reqAcc(req);
+  try { if (acct.api) acct.api.listener.stop(); } catch {}
+  acct.api = null;
+  acct.qrLoopActive = false;
+  acct.state = { status: "disconnected", qrImage: null, ownId: null, userInfo: null };
+  console.log(`[${acct.id}][zalo] tạm ngắt (giữ session)`);
   res.json({ ok: true });
 });
 
-// KẾT NỐI LẠI từ session đã lưu — KHÔNG cần QR.
+// KẾT NỐI LẠI từ session đã lưu — KHÔNG cần QR
 app.post("/reconnect", (req, res) => {
-  if (state.status === "logged_in") return res.json({ ok: true, status: "logged_in" });
-  if (!fs.existsSync(SESSION_FILE)) {
+  const acct = reqAcc(req);
+  if (acct.state.status === "logged_in") return res.json({ ok: true, status: "logged_in" });
+  if (!fs.existsSync(acct.sessionFile())) {
     return res.status(409).json({ error: "chưa có phiên đã lưu — cần quét QR" });
   }
-  qrLoopActive = false;
+  acct.qrLoopActive = false;
   res.json({ ok: true, status: "reconnecting" });
-  tryResumeSession();   // resume; nếu phiên hỏng sẽ tự mở QR
+  acct.tryResumeSession();
 });
 
-// ĐĂNG XUẤT / ĐỔI TÀI KHOẢN — SAO LƯU session (khôi phục được) rồi xoá + mở QR
-// cho tài khoản mới. Khác /disconnect: đây là ĐỔI người, cần quét lại.
+// ĐĂNG XUẤT / ĐỔI TÀI KHOẢN — sao lưu session rồi xoá + mở QR mới
 app.post("/logout", (req, res) => {
-  try { if (api) api.listener.stop(); } catch {}
-  api = null;
-  qrLoopActive = false;
-  // Sao lưu TRƯỚC khi xoá → lỡ bấm nhầm vẫn "Dùng lại tài khoản trước" được
-  try { if (fs.existsSync(SESSION_FILE)) fs.copyFileSync(SESSION_FILE, SESSION_BAK); } catch {}
-  state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
-  if (fs.existsSync(SESSION_FILE)) { try { fs.unlinkSync(SESSION_FILE); } catch {} }
+  const acct = reqAcc(req);
+  try { if (acct.api) acct.api.listener.stop(); } catch {}
+  acct.api = null;
+  acct.qrLoopActive = false;
+  try { if (fs.existsSync(acct.sessionFile())) fs.copyFileSync(acct.sessionFile(), acct.sessionBak()); } catch {}
+  acct.state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
+  try { if (fs.existsSync(acct.sessionFile())) fs.unlinkSync(acct.sessionFile()); } catch {}
   res.json({ ok: true });
-  startQrLogin(false);   // sinh QR mới luôn cho lần đăng nhập kế tiếp
+  acct.startQrLogin(false);
 });
 
-// KHÔI PHỤC tài khoản vừa đăng xuất (dùng bản .bak) — KHÔNG cần quét lại.
+// KHÔI PHỤC tài khoản vừa đăng xuất (bản .bak) — không cần quét lại
 app.post("/restore-session", (req, res) => {
-  if (!fs.existsSync(SESSION_BAK)) {
+  const acct = reqAcc(req);
+  if (!fs.existsSync(acct.sessionBak())) {
     return res.status(409).json({ error: "không có bản sao lưu để khôi phục" });
   }
-  try { fs.copyFileSync(SESSION_BAK, SESSION_FILE); }
+  try { fs.copyFileSync(acct.sessionBak(), acct.sessionFile()); }
   catch (e) { return res.status(500).json({ error: e.message }); }
-  qrLoopActive = false;
-  state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
-  console.log("[zalo] khôi phục session từ bản sao lưu");
+  acct.qrLoopActive = false;
+  acct.state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
   res.json({ ok: true, status: "reconnecting" });
-  tryResumeSession();
+  acct.tryResumeSession();
 });
 
-// ── Trang web cơ bản hiển thị QR (bản tạm, sẽ thay bằng React) ──
+// Trang QR cơ bản (acc default — bản dự phòng khi không dùng web React)
 app.get("/", (req, res) => {
   res.type("html").send(`<!doctype html><html lang="vi"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -556,7 +580,6 @@ app.get("/", (req, res) => {
   .wrap{max-width:420px;margin:40px auto;padding:0 16px}
   .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.08);text-align:center}
   h1{font-size:20px;color:#0068ff;margin:0 0 4px}
-  p.sub{color:#666;font-size:13px;margin:0 0 20px}
   .qr{width:240px;height:240px;margin:8px auto;display:flex;align-items:center;justify-content:center;
       border:2px dashed #d0d7de;border-radius:12px;background:#fafbfc}
   .qr img{width:100%;height:100%;border-radius:8px}
@@ -564,90 +587,46 @@ app.get("/", (req, res) => {
   .muted{color:#8b95a1}.ok{color:#1a7f37}.warn{color:#c0392b}
   button{background:#0068ff;color:#fff;border:0;border-radius:10px;padding:11px 20px;
          font-size:15px;font-weight:600;cursor:pointer;margin-top:18px}
-  button:hover{opacity:.9}  button:disabled{opacity:.5;cursor:default}
-  .settings{margin-top:22px;text-align:left;border-top:1px solid #eee;padding-top:18px;display:none}
-  .settings h2{font-size:15px;margin:0 0 4px}
-  .settings p{font-size:12px;color:#666;margin:0 0 10px}
-  select{width:100%;padding:10px;border:1px solid #d0d7de;border-radius:8px;font-size:14px;background:#fff}
-  .savemsg{font-size:12px;margin-top:8px;min-height:16px}
 </style></head><body>
 <div class="wrap"><div class="card">
-  <h1>🏠 Kết nối Zalo</h1>
-  <p class="sub">Quét mã QR bằng app Zalo trên điện thoại để bot tự trả lời khách</p>
-  <div class="qr" id="qrBox"><span class="muted">Nhấn nút bên dưới để tạo mã QR</span></div>
+  <h1>🏠 Kết nối Zalo (acc default)</h1>
+  <div class="qr" id="qrBox"><span class="muted">Đang tải…</span></div>
   <div class="status muted" id="status">Chưa kết nối</div>
-  <button onclick="startQR()" id="btn">Tạo mã QR đăng nhập</button>
-
-  <div class="settings" id="settings">
-    <h2>📢 Nhóm nhận thông báo</h2>
-    <p>Chọn nhóm Zalo để bot báo khi có khách đặt phòng / cần gặp chủ.</p>
-    <select id="grpSel"><option value="">— Đang tải danh sách nhóm… —</option></select>
-    <button onclick="saveGroup()" id="saveBtn" style="margin-top:12px">Lưu nhóm</button>
-    <div class="savemsg muted" id="saveMsg"></div>
-    <div style="margin-top:18px;border-top:1px solid #eee;padding-top:12px">
-      <a href="#" onclick="logout();return false" style="color:#c0392b;font-size:13px;text-decoration:none">↩ Đăng xuất / đổi tài khoản</a>
-    </div>
-  </div>
+  <button onclick="startQR()" id="btn">Làm mới mã QR</button>
 </div></div>
 <script>
 const labels={idle:["Chưa kết nối","muted"],waiting_scan:["Đang chờ quét mã…","muted"],
   scanned:["Đã quét! Xác nhận trên điện thoại…","ok"],logged_in:["✅ Đã kết nối Zalo","ok"],
-  qr_expired:["Mã QR hết hạn, tạo lại nhé","warn"],declined:["Bạn đã từ chối đăng nhập","warn"],
-  error:["Có lỗi xảy ra, thử lại","warn"]};
-let timer=null, groupsLoaded=false;
-async function startQR(){
-  document.getElementById('btn').disabled=true;
-  await fetch('/login/qr',{method:'POST'});
-  if(timer)clearInterval(timer);
-  timer=setInterval(poll,1500); poll();
-}
+  qr_expired:["Đang làm mới mã…","muted"],declined:["Bạn đã từ chối đăng nhập","warn"],
+  disconnected:["Đã tạm ngắt","muted"],error:["Có lỗi xảy ra, thử lại","warn"]};
+async function startQR(){await fetch('/login/qr',{method:'POST'});}
 async function poll(){
   const s=await (await fetch('/status')).json();
   const [txt,cls]=labels[s.status]||["…","muted"];
   const st=document.getElementById('status'); st.textContent=txt; st.className='status '+cls;
   const box=document.getElementById('qrBox');
-  if(s.status==='logged_in'){
-    box.innerHTML='<span class="ok">🎉 Đã kết nối</span>';
-    if(timer)clearInterval(timer);
-    document.getElementById('btn').style.display='none';
-    document.getElementById('settings').style.display='block';
-    if(!groupsLoaded){groupsLoaded=true; loadGroups();}
-    return;
-  }
+  if(s.status==='logged_in'){box.innerHTML='<span class="ok">🎉 Đã kết nối</span>';return;}
   if(s.qr){const src=s.qr.startsWith('data:')?s.qr:'data:image/png;base64,'+s.qr;
     box.innerHTML='<img src="'+src+'" alt="QR">';}
-  document.getElementById('btn').disabled=false;
 }
-async function loadGroups(){
-  const sel=document.getElementById('grpSel');
-  try{
-    const [g,cfg]=await Promise.all([
-      (await fetch('/groups')).json(), (await fetch('/config')).json()]);
-    const groups=g.groups||[];
-    if(!groups.length){sel.innerHTML='<option value="">(Tài khoản chưa ở nhóm nào — tạo 1 nhóm trên Zalo trước)</option>';return;}
-    sel.innerHTML='<option value="">— Chọn nhóm —</option>'+
-      groups.map(x=>'<option value="'+x.groupId+'">'+(x.name||x.groupId)+'</option>').join('');
-    if(cfg.ownerGroupId)sel.value=cfg.ownerGroupId;
-  }catch(e){sel.innerHTML='<option value="">(Lỗi tải nhóm: '+e+')</option>';}
-}
-async function saveGroup(){
-  const sel=document.getElementById('grpSel'), msg=document.getElementById('saveMsg');
-  const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ownerGroupId:sel.value})});
-  if(r.ok){msg.textContent='✅ Đã lưu nhóm nhận thông báo';msg.className='savemsg ok';}
-  else{msg.textContent='❌ Lưu thất bại';msg.className='savemsg warn';}
-}
-async function logout(){
-  if(!confirm('Đăng xuất tài khoản Zalo hiện tại để đăng nhập lại?'))return;
-  await fetch('/logout',{method:'POST'});
-  location.reload();
-}
-poll();
+setInterval(poll,2000); poll();
 </script></body></html>`);
 });
 
+// ── Boot: resume acc default (auto-QR như bản cũ) + mọi acc có session ──
 app.listen(PORT, () => {
-  console.log(`🌐 Zalo Node service: http://localhost:${PORT}`);
+  console.log(`🌐 Zalo Node service (multi-account): http://localhost:${PORT}`);
   loadConfig();
-  tryResumeSession();
+  getAccount("default").tryResumeSession(true);
+  try {
+    if (fs.existsSync(SESSIONS_DIR)) {
+      for (const f of fs.readdirSync(SESSIONS_DIR)) {
+        if (!f.endsWith(".json") || f.endsWith(".bak")) continue;
+        const id = f.replace(/\.json$/, "");
+        if (SAFE_ID.test(id)) getAccount(id).tryResumeSession(false);
+      }
+    }
+  } catch (e) {
+    console.error("[boot] quét sessions dir lỗi:", e.message);
+  }
 });

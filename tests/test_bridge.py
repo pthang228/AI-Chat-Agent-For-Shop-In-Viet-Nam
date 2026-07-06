@@ -153,9 +153,11 @@ with patch.object(httputil.requests, 'post') as mreq:
     mreq.side_effect = fake_post
     ch = znc_mod.ZaloNodeChannel(node_url="http://127.0.0.1:4000", conv_manager=cm)
 
-    # B1: send_text → POST /send
+    # B1: send_text → POST /send (MULTI-ACC 2026-07-07: payload kèm acc,
+    # uid trần → acc "default")
     ch.send_text("cust1", "hello")
-    check(calls and calls[-1][0].endswith("/send") and calls[-1][1]=={"userId":"cust1","text":"hello"},
+    check(calls and calls[-1][0].endswith("/send")
+          and calls[-1][1]=={"acc":"default","userId":"cust1","text":"hello"},
           "B1 send_text_posts", f"calls={calls}")
 
     # B2: text > 2000 ký tự → chia 2 lần
@@ -164,7 +166,8 @@ with patch.object(httputil.requests, 'post') as mreq:
 
     # B3: notify_owner gọi /notify-owner (Node tự quyết nhóm/chủ theo cấu hình UI)
     calls.clear(); ch.notify_owner("báo chủ")
-    check(len(calls)==1 and calls[-1][0].endswith("/notify-owner") and calls[-1][1]=={"text":"báo chủ"},
+    check(len(calls)==1 and calls[-1][0].endswith("/notify-owner")
+          and calls[-1][1]=={"acc":"default","text":"báo chủ"},
           "B3 notify_owner_endpoint", f"calls={calls}")
 
 print(f"\n{'='*40}\n  KẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")

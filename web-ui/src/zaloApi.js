@@ -1,6 +1,9 @@
-// Gọi trực tiếp Node service (zca-js) — đã bật CORS nên fetch từ React được.
-// Sau này multi-tenant sẽ đổi URL theo từng app/tenant.
+// Gọi Node service Zalo (zca-js) — MULTI-ACCOUNT: mỗi shop 1 acc riêng.
+// Mọi hàm nhận acc (mặc định "default" = acc chủ nền tảng, tương thích cũ).
+// Acc của shop lấy từ bridge /zalo/my-account (myAccount() bên dưới).
 import { HOST } from "./apiConfig.js";
+import { withAuth } from "./apiAuth.js";
+
 const NODE_URL = HOST.node;
 
 async function j(path, opts) {
@@ -11,19 +14,31 @@ async function j(path, opts) {
   return { ok: r.ok, status: r.status, body };
 }
 
+const q = (acc) => "?acc=" + encodeURIComponent(acc || "default");
+const json = (body) => ({
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
 export const zalo = {
-  status: () => j("/status"),
-  startQR: () => j("/login/qr", { method: "POST" }),
-  groups: () => j("/groups"),
-  getConfig: () => j("/config"),
-  saveGroup: (ownerGroupId) =>
-    j("/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ownerGroupId }),
-    }),
-  logout: () => j("/logout", { method: "POST" }),          // đổi tài khoản (cần quét lại)
-  disconnect: () => j("/disconnect", { method: "POST" }),  // tạm ngắt, GIỮ đăng nhập
-  reconnect: () => j("/reconnect", { method: "POST" }),    // kết nối lại, KHÔNG cần QR
-  restoreSession: () => j("/restore-session", { method: "POST" }),  // khôi phục tài khoản trước
+  // Acc Zalo của shop đang đăng nhập (bridge cấp; chủ nền tảng = "default")
+  myAccount: async () => {
+    try {
+      const r = await fetch(HOST.bridge + "/zalo/my-account", withAuth());
+      let body = {};
+      try { body = await r.json(); } catch { /* ignore */ }
+      return { ok: r.ok, status: r.status, body };
+    } catch { return { ok: false, status: 0, body: {} }; }
+  },
+
+  status: (acc) => j("/status" + q(acc)),
+  startQR: (acc) => j("/login/qr", json({ acc: acc || "default" })),
+  groups: (acc) => j("/groups" + q(acc)),
+  getConfig: (acc) => j("/config" + q(acc)),
+  saveGroup: (ownerGroupId, acc) =>
+    j("/config", json({ acc: acc || "default", ownerGroupId })),
+  logout: (acc) => j("/logout", json({ acc: acc || "default" })),          // đổi tài khoản (cần quét lại)
+  disconnect: (acc) => j("/disconnect", json({ acc: acc || "default" })),  // tạm ngắt, GIỮ đăng nhập
+  reconnect: (acc) => j("/reconnect", json({ acc: acc || "default" })),    // kết nối lại, KHÔNG cần QR
+  restoreSession: (acc) => j("/restore-session", json({ acc: acc || "default" })),
 };

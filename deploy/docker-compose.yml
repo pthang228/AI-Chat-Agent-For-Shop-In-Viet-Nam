@@ -57,7 +57,9 @@ services:
     environment:
       PY_BRIDGE_URL: "http://bridge:5005/incoming"
       ZALO_NODE_PORT: "4000"
-      ZALO_SESSION_FILE: "/data/zalo-session.json"   # giữ phiên qua restart
+      ZALO_SESSION_FILE: "/data/zalo-session.json"      # phiên acc default
+      ZALO_SESSIONS_DIR: "/data/zalo-sessions"          # phiên acc từng shop (multi-account)
+      ZALO_NODE_CONFIG: "/data/node-config.json"        # nhóm nhận thông báo per acc
     restart: unless-stopped
     volumes:
       - zalosession:/data

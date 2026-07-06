@@ -25,13 +25,22 @@ export default function ZaloConnect() {
   const [hasBackup, setHasBackup] = useState(false);   // có tài khoản trước để khôi phục
   const timer = useRef(null);
   const autoRef = useRef("");   // trạng thái đã tự-khởi-động QR (chống gọi lặp mỗi 2s)
+  // MULTI-ACCOUNT: acc Zalo RIÊNG của shop (bridge cấp; chủ nền tảng = "default").
+  // null = đang hỏi bridge — mọi call Node chờ tới khi có acc.
+  const accRef = useRef(null);
 
   function stopPoll() { if (timer.current) clearInterval(timer.current); timer.current = null; }
   function startPoll() { stopPoll(); timer.current = setInterval(poll, 2000); }
 
   async function poll() {
+    if (!accRef.current) {   // chưa biết acc của shop → hỏi bridge trước
+      const r = await zalo.myAccount();
+      if (r.ok && r.body?.acc) accRef.current = r.body.acc;
+      else if (r.status === 0) { setStatus("offline"); return; }
+      else { accRef.current = "default"; }   // bridge cũ chưa có route → dùng default
+    }
     try {
-      const { ok, body } = await zalo.status();
+      const { ok, body } = await zalo.status(accRef.current);
       // Lỗi mạng / Node chưa chạy → giữ trạng thái offline NHƯNG tiếp tục dò lại,
       // để khi Node bật lên thì tự động kết nối, không cần bấm "Thử lại".
       if (!ok) { setStatus("offline"); return; }
@@ -47,7 +56,7 @@ export default function ZaloConnect() {
       // bắt user bấm nút. Chỉ gọi 1 lần cho mỗi lần rơi vào trạng thái đó.
       if ((body.status === "idle" || body.status === "qr_expired") && autoRef.current !== body.status) {
         autoRef.current = body.status;
-        zalo.startQR().catch(() => {});
+        zalo.startQR(accRef.current).catch(() => {});
       }
       if (body.status === "waiting_scan" || body.status === "scanned") autoRef.current = "";
     } catch {
@@ -57,7 +66,7 @@ export default function ZaloConnect() {
 
   async function loadGroups() {
     try {
-      const [g, cfg] = await Promise.all([zalo.groups(), zalo.getConfig()]);
+      const [g, cfg] = await Promise.all([zalo.groups(accRef.current), zalo.getConfig(accRef.current)]);
       setGroups(g.body.groups || []);
       setSelGroup(cfg.body.ownerGroupId || "");
     } catch { /* ignore */ }
@@ -65,36 +74,36 @@ export default function ZaloConnect() {
 
   async function onStartQR() {
     setSaveMsg("");
-    try { await zalo.startQR(); startPoll(); poll(); }
+    try { await zalo.startQR(accRef.current); startPoll(); poll(); }
     catch { setStatus("offline"); }
   }
 
   async function onSaveGroup() {
-    const { ok } = await zalo.saveGroup(selGroup);
+    const { ok } = await zalo.saveGroup(selGroup, accRef.current);
     setSaveMsg(ok ? "✅ Đã lưu nhóm nhận thông báo" : "❌ Lưu thất bại");
   }
 
   async function onDisconnect() {
     // Tạm ngắt: GIỮ đăng nhập, không xoá session → kết nối lại không cần QR
-    try { await zalo.disconnect(); } catch { /* ignore */ }
+    try { await zalo.disconnect(accRef.current); } catch { /* ignore */ }
     setGroups([]); setSelGroup(""); setStatus("disconnected");
     startPoll(); poll();
   }
 
   async function onReconnect() {
-    try { await zalo.reconnect(); } catch { /* ignore */ }
+    try { await zalo.reconnect(accRef.current); } catch { /* ignore */ }
     setStatus("checking"); startPoll(); poll();
   }
 
   async function onRestore() {
-    try { await zalo.restoreSession(); } catch { /* ignore */ }
+    try { await zalo.restoreSession(accRef.current); } catch { /* ignore */ }
     autoRef.current = ""; setStatus("checking"); startPoll(); poll();
   }
 
   async function onLogout() {
     if (!confirm("ĐỔI TÀI KHOẢN: đăng xuất tài khoản Zalo hiện tại và đăng nhập tài khoản KHÁC?\n\n" +
                  "Việc này cần QUÉT LẠI QR. Nếu chỉ muốn tạm dừng bot mà giữ đăng nhập, hãy dùng \"Tạm ngắt\".")) return;
-    try { await zalo.logout(); } catch { /* ignore */ }
+    try { await zalo.logout(accRef.current); } catch { /* ignore */ }
     autoRef.current = "";   // cho phép tự mở lại QR ngay sau đăng xuất
     setStatus("idle"); setQr(null); setOwnId(null); setGroups([]); setSelGroup("");
     startPoll(); poll();

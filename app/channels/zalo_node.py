@@ -24,12 +24,35 @@ MAX_PHOTOS_PER_ROOM = 5
 
 
 class ZaloNodeChannel(Channel):
+    """MULTI-ACCOUNT: mỗi shop 1 acc Zalo riêng trên Node service.
+    user_id 2 dạng: uid TRẦN (số — acc 'default' của chủ nền tảng, tương thích
+    dữ liệu cũ) hoặc 'zl:<accId>:<uid>' (acc của shop thuê)."""
 
     def __init__(self, node_url: str = "http://127.0.0.1:4000", conv_manager=None):
         self.node_url = node_url.rstrip("/")
         self.conv_manager = conv_manager
         self.brain = None   # main_node.py gán Brain sau
         self._recent_bot_sends: dict[str, list[tuple[float, str]]] = {}
+        import threading as _th
+        self._ctx = _th.local()   # accId đang xử lý — notify_owner báo đúng shop
+
+    # ── Multi-account helpers ─────────────────────────────────────
+
+    @staticmethod
+    def _parse(user_id: str):
+        """'zl:<acc>:<uid>' → (acc, uid); uid trần → ('default', uid)."""
+        s = str(user_id or "")
+        if s.startswith("zl:"):
+            parts = s.split(":", 2)
+            if len(parts) == 3 and parts[1]:
+                return parts[1], parts[2]
+        return "default", s
+
+    def set_ctx(self, acc):
+        self._ctx.acc = acc or None
+
+    def get_ctx(self):
+        return getattr(self._ctx, "acc", None)
 
     # ── Gọi Node ──────────────────────────────────────────────────
 
@@ -75,10 +98,11 @@ class ZaloNodeChannel(Channel):
 
     def send_text(self, user_id: str, text: str) -> None:
         MAX_LEN = 2000
+        acc, zuid = self._parse(user_id)
         for i in range(0, len(text), MAX_LEN):
             chunk = text[i:i + MAX_LEN]
             self._mark_bot_send(user_id, chunk)
-            self._post("/send", {"userId": user_id, "text": chunk})
+            self._post("/send", {"acc": acc, "userId": zuid, "text": chunk})
 
     def _send_dir(self, user_id: str, folder: Path, caption: str) -> bool:
         if not folder.is_dir():
@@ -89,9 +113,10 @@ class ZaloNodeChannel(Channel):
         )[:MAX_PHOTOS_PER_ROOM]
         if not photos:
             return False
+        acc, zuid = self._parse(user_id)
         self.send_text(user_id, caption)
         self._mark_bot_send(user_id)
-        self._post("/send-image", {"userId": user_id, "paths": photos})
+        self._post("/send-image", {"acc": acc, "userId": zuid, "paths": photos})
         return True
 
     def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
@@ -103,10 +128,12 @@ class ZaloNodeChannel(Channel):
         zca-js/Node chưa hỗ trợ gửi file → trả False (chat_tools báo rõ)."""
         if kind == "image":
             try:
+                acc, zuid = self._parse(user_id)
                 if caption:
                     self.send_text(user_id, caption)
                 self._mark_bot_send(user_id)
-                self._post("/send-image", {"userId": user_id, "paths": [str(Path(path).resolve())]})
+                self._post("/send-image", {"acc": acc, "userId": zuid,
+                                           "paths": [str(Path(path).resolve())]})
                 return True
             except Exception as e:
                 log.error(f"[ZaloNode] send_file ảnh lỗi: {e}")
@@ -124,10 +151,11 @@ class ZaloNodeChannel(Channel):
             tmp_dir.mkdir(exist_ok=True)
             f = tmp_dir / f"img_{abs(hash(url)) % 10**8}.png"
             f.write_bytes(r.content)
+            acc, zuid = self._parse(user_id)
             if caption:
                 self.send_text(user_id, caption)
             self._mark_bot_send(user_id)
-            self._post("/send-image", {"userId": user_id, "paths": [str(f.resolve())]})
+            self._post("/send-image", {"acc": acc, "userId": zuid, "paths": [str(f.resolve())]})
         except Exception as e:
             log.error(f"[ZaloNode] send_image_url lỗi ({e}) → gửi link")
             self.send_text(user_id, (caption + "\n" if caption else "") + url)
@@ -159,13 +187,17 @@ class ZaloNodeChannel(Channel):
 
     def notify_owner(self, text: str) -> None:
         """
-        Báo chủ nhà. Node tự gửi tới nhóm/chủ mà người dùng đã CHỌN TRONG GIAO DIỆN
-        (lưu ở node-config.json). Nếu chưa chọn, Node trả 400 và bỏ qua (không chặn
-        việc trả lời khách).
+        Báo chủ SHOP đang xử lý (ctx acc — bridge set trước brain.handle). Node
+        gửi tới nhóm/chủ mà shop đã CHỌN TRONG GIAO DIỆN (node-config per acc).
+        Chưa chọn → Node trả 400, bỏ qua (không chặn việc trả lời khách).
         """
-        r = self._post("/notify-owner", {"text": text})
+        acc = self.get_ctx() or "default"
+        r = self._post("/notify-owner", {"acc": acc, "text": text})
         if r is not None and r.status_code == 400:
-            log.warning("[Node] Chưa chọn nhóm nhận thông báo trong giao diện → bỏ qua báo chủ")
+            log.warning(f"[Node][{acc}] Chưa chọn nhóm nhận thông báo → bỏ qua báo chủ")
 
     def call_owner(self) -> None:
-        owner_call.alert()
+        # Telethon gọi điện là session GLOBAL của CHỦ NỀN TẢNG — chỉ gọi khi hội
+        # thoại thuộc acc default; shop thuê dùng notify (nhắn nhóm) là chính.
+        if (self.get_ctx() or "default") == "default":
+            owner_call.alert()

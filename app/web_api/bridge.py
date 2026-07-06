@@ -174,6 +174,10 @@ def install_tenant_conv_guard(app, conv_manager):
 def create_bridge(brain, conv_manager) -> Flask:
     app = Flask(__name__)
 
+    # MULTI-ACCOUNT Zalo cá nhân: mapping accId → chủ shop (phiên thật ở Node)
+    from app.core.zalo_node_store import ZaloNodeStore
+    zalo_store = ZaloNodeStore()
+
     # (bot_state đọc TƯƠI trong từng route qua _load_bot_state() — không giữ
     # snapshot lúc boot để tránh trạng thái lỗi thời khi copilot/kênh khác ghi file.)
 
@@ -276,13 +280,16 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     def _backfill_zalo_avatars(missing):
         """Khách CŨ chưa có avatar (chưa nhắn tin mới) → hỏi Node /avatar/<uid>
-        (Node gọi zca-js getUserInfo, có cache). Chạy nền, best-effort."""
+        (Node gọi zca-js getUserInfo, có cache). Chạy nền, best-effort.
+        Multi-acc: uid 'zl:<acc>:<zuid>' → hỏi đúng acc."""
         import requests as _rq
         node_url = getattr(brain.channel, "node_url", "") or "http://127.0.0.1:4000"
+        _parse = getattr(brain.channel, "_parse", lambda u: ("default", str(u)))
         changed = False
         for uid in missing:
             try:
-                r = _rq.get(f"{node_url}/avatar/{uid}", timeout=10)
+                _acc, _zuid = _parse(uid)
+                r = _rq.get(f"{node_url}/avatar/{_zuid}", params={"acc": _acc}, timeout=10)
                 av = (r.json() or {}).get("avatar") if r.status_code == 200 else ""
                 if av:
                     conv_manager.get(uid).avatar = av
@@ -391,6 +398,21 @@ def create_bridge(brain, conv_manager) -> Flask:
             conv_manager, request.args.get("from"), request.args.get("to"),
             tenant_ws=_ws()))
 
+    # ── MULTI-ACCOUNT Zalo: acc riêng của shop đang đăng nhập ───────────
+    @app.route("/zalo/my-account")
+    def zalo_my_account():
+        """Acc Zalo của shop (mỗi shop 1 acc; chưa có → cấp mới). Chủ NỀN TẢNG
+        dùng acc 'default' (tương thích bản cũ). UI dùng acc này gọi Node
+        (?acc=) để quét QR / xem trạng thái / chọn nhóm."""
+        from app.core import tenant as _tenant
+        ws = _ws()
+        if not ws:
+            return {"ok": False, "error": "Cần đăng nhập"}, 401
+        if ws == _tenant.default_owner():
+            return {"ok": True, "acc": "default", "platform_admin": True}
+        return {"ok": True, "acc": zalo_store.ensure_for_owner(ws),
+                "platform_admin": False}
+
     @app.route("/incoming", methods=["POST"])
     def incoming():
         data = request.get_json(force=True, silent=True) or {}
@@ -399,9 +421,13 @@ def create_bridge(brain, conv_manager) -> Flask:
         if data.get("isGroup"):
             return {"ok": True, "skipped": "group"}
 
-        user_id = str(data.get("userId") or "").strip()
+        # MULTI-ACCOUNT: Node gửi kèm acc (mỗi shop 1 acc Zalo). Acc 'default'
+        # (chủ nền tảng) giữ user_id uid TRẦN như cũ; acc shop → 'zl:<acc>:<uid>'.
+        zuid = str(data.get("userId") or "").strip()
+        acc = str(data.get("acc") or "default").strip() or "default"
+        user_id = zuid if acc == "default" else f"zl:{acc}:{zuid}"
         text = (data.get("text") or "").strip()
-        if not user_id:
+        if not zuid:
             return {"ok": False, "error": "missing userId"}, 400
 
         # Tin do chính tài khoản này gửi:
@@ -431,23 +457,28 @@ def create_bridge(brain, conv_manager) -> Flask:
                 return {"ok": True, "owner_takeover": True}
             return {"ok": True, "skipped": "self-echo"}
 
-        # Bot kênh Zalo bị tắt → không auto-reply khách
-        if not _channel_enabled(_load_bot_state(), "zalo"):
-            log.info(f"[Skip] bot_disabled {user_id}")
+        # Bot kênh Zalo bị tắt → không auto-reply khách (per-acc: 'zalo:<acc>'
+        # fallback lên 'zalo' — _channel_enabled đã hỗ trợ key kênh:id sẵn)
+        _zl_key = "zalo" if acc == "default" else f"zalo:{acc}"
+        if not _channel_enabled(_load_bot_state(), _zl_key):
+            log.info(f"[Skip] bot_disabled ({_zl_key}) {user_id}")
             return {"ok": True, "skipped": "bot_disabled"}
 
-        # Gói dịch vụ hết hạn → bot ngừng tự trả lời (gia hạn trong web → chạy lại)
+        # Gói/quota AI: acc shop → theo gói CHỦ SHOP đó (channel_gate như mọi
+        # kênh); acc default → gate toàn cục (chủ nền tảng) như cũ.
         from app.core import billing
-        if not billing.has_active_subscription():
-            log.info(f"[Skip] billing_expired {user_id}")
+        owner = zalo_store.get_owner_username(acc)
+        if not billing.channel_gate(owner):
+            log.info(f"[Skip] gói/quota chủ ({owner or 'nền tảng'}) → bỏ qua {user_id}")
             return {"ok": True, "skipped": "billing_expired"}
 
         conv = conv_manager.get(user_id)
 
-        # MULTI-TENANT: Zalo cá nhân hiện 1 instance = 1 shop → hội thoại thuộc
-        # CHỦ NỀN TẢNG (owner=None → tenant.default_owner). Node per-tenant làm sau.
+        # MULTI-TENANT: đóng dấu shop sở hữu (acc default → chủ nền tảng)
         from app.core import tenant as _tenant
-        _tenant.assign(conv_manager, user_id, None)
+        _tenant.assign(conv_manager, user_id, owner)
+
+        # (ctx acc set TRONG _run — thread-local không kế thừa sang thread pool)
 
         # Cập nhật tên + avatar hiển thị nếu Node truyền (zca-js kèm dName/avt)
         d_name = (data.get("dName") or "").strip()
@@ -472,6 +503,8 @@ def create_bridge(brain, conv_manager) -> Flask:
         def _run():
             try:
                 time.sleep(Config.REPLY_DELAY)
+                if hasattr(brain.channel, "set_ctx"):
+                    brain.channel.set_ctx(acc if acc != "default" else None)
                 brain.handle(user_id, text)
             except Exception as e:
                 log.error(f"[Brain] lỗi xử lý {user_id}: {e}", exc_info=True)
@@ -529,7 +562,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         # Nhân viên (role=staff) chỉ làm hộp thư/khách/đơn — cấm phần quản trị
         staff_deny=(
             "/billing", "/prompt", "/team", "/broadcasts", "/copilot", "/notify",
-            "/admin", "/orders/bank", "/bot-toggle",
+            "/admin", "/zalo", "/orders/bank", "/bot-toggle",
             "POST /photos/sets", "DELETE /photos/sets",
             "DELETE /conversations",     # xoá hội thoại: chỉ chủ
         ),
