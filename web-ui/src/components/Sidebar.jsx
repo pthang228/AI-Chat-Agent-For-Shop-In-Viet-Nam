@@ -42,16 +42,20 @@ const SECTIONS = [
   { key: "posts",     label: "Bài viết & bình luận", icon: IcPost, note: "FB + TikTok" },
   { key: "stats",     label: "Thống kê",          icon: IcStats },
 ];
+function IcShield() { return svg(<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />); }
+
 // Mục điều hướng route thật
 const LINKS = [
   { to: "/billing",  label: "Gói dịch vụ", icon: IcBox, ownerOnly: true },
   { to: "/settings", label: "Cài đặt",     icon: IcGear },
+  // Khu quản trị NỀN TẢNG — chỉ chủ nền tảng (user.platform_admin) thấy
+  { to: "/admin",    label: "Quản trị",    icon: IcShield, platformOnly: true },
 ];
 
 // staff (nhân viên) chỉ thấy mục vận hành hộp thư — mục quản trị ẩn đi
-export default function Sidebar({ active = "overview", onSelect, collapsed = false, onToggle, staff = false }) {
+export default function Sidebar({ active = "overview", onSelect, collapsed = false, onToggle, staff = false, platformAdmin = false }) {
   const sections = SECTIONS.filter((s) => !(staff && s.ownerOnly));
-  const links = LINKS.filter((l) => !(staff && l.ownerOnly));
+  const links = LINKS.filter((l) => !(staff && l.ownerOnly) && !(l.platformOnly && !platformAdmin));
   return (
     <aside className={"sb" + (collapsed ? " collapsed" : "")}>
       <div className="sb-head">

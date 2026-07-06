@@ -116,6 +116,13 @@ def current_workspace(db=None):
 
 
 def _public_user(row) -> dict:
+    # platform_admin: CHỦ NỀN TẢNG (user đầu tiên) — frontend hiện link /admin.
+    # Import trễ tránh vòng import; lỗi → False (không chặn đăng nhập).
+    try:
+        from app.core import tenant
+        is_platform = row["username"] == tenant.default_owner()
+    except Exception:
+        is_platform = False
     return {
         "username": row["username"],
         "homestay": row["homestay"],
@@ -126,6 +133,7 @@ def _public_user(row) -> dict:
         "has_password": bool(row["password_hash"]),
         "role": role_of(row),
         "workspace": workspace_of(row),
+        "platform_admin": is_platform,
     }
 
 

@@ -58,7 +58,19 @@ def register_admin_routes(app):
                 conv_n += conv_by[""][0]
                 last = max(x for x in (last, conv_by[""][1]) if x) if (last or conv_by[""][1]) else None
             b = billing_by.get(uname)
+            # Gói còn hiệu lực? (lifetime hoặc expires_at trong tương lai)
+            active = False
+            if b:
+                if b["lifetime"]:
+                    active = True
+                elif b["expires_at"]:
+                    from datetime import datetime as _dt
+                    try:
+                        active = _dt.fromisoformat(b["expires_at"]) > _dt.now()
+                    except Exception:
+                        active = False
             out.append({
+                "active": active,
                 "username": uname,
                 "shop_name": r["homestay"] or uname,
                 "created_at": r["created_at"],

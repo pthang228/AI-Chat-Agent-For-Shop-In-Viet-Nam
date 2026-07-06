@@ -99,6 +99,7 @@ export default function Overview() {
         collapsed={collapsed}
         onToggle={() => setCollapsed((v) => !v)}
         staff={staff}
+        platformAdmin={!!user?.platform_admin}
       />
 
       <div className="shell-main">

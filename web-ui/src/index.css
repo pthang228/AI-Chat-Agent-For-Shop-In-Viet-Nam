@@ -1655,3 +1655,25 @@ a.stats-icon-btn { text-decoration: none; }
   border-bottom: 1.5px solid var(--line); white-space: nowrap; }
 .ad-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .ad-table tr:last-child td { border-bottom: none; }
+
+/* ── DASHBOARD QUẢN TRỊ NỀN TẢNG (/admin) ─────────────────────── */
+.adm { min-height: 100vh; background: #f6f4fb; }
+.adm-top { display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 26px; background: #1c1038; color: #fff; position: sticky; top: 0; z-index: 20; }
+.adm-brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-head);
+  font-size: 18px; font-weight: 700; }
+.adm-brand b { color: #c4b5fd; }
+.adm-badge { margin-left: 10px; font-size: 12.5px; font-weight: 600; padding: 4px 12px;
+  border-radius: 999px; background: rgba(196,181,253,.16); color: #d8ccff;
+  border: 1px solid rgba(196,181,253,.35); }
+.adm-top-right { display: flex; align-items: center; gap: 14px; }
+.adm-user { font-size: 13.5px; color: #cfc6ec; }
+.adm-back { color: #fff !important; border-color: rgba(255,255,255,.3) !important; }
+.adm-body { max-width: 1180px; margin: 0 auto; padding: 24px 26px 60px; }
+.adm-panel { margin-top: 18px; }
+.adm-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.adm-toolbar h3 { font-size: 16px; margin: 0; flex: 1; }
+.adm-search { width: 260px; padding: 9px 12px; }
+.adm-st { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.adm-st.ok { color: #1a7f37; }
+.adm-st.off { color: #c0392b; }

@@ -7,6 +7,7 @@ import Settings from "./pages/Settings.jsx";
 import Billing from "./pages/Billing.jsx";
 import PromptBuilder from "./pages/PromptBuilder.jsx";
 import Overview from "./pages/Overview.jsx";
+import AdminDashboard from "./pages/AdminDashboard.jsx";
 import ChatWidget from "./components/ChatWidget.jsx";
 import AdminCopilot from "./components/AdminCopilot.jsx";
 import { currentUser, isStaff } from "./auth.js";
@@ -37,6 +38,8 @@ export default function App() {
         <Route path="/settings" element={<Protected><Settings /></Protected>} />
         <Route path="/billing" element={<OwnerOnly><Billing /></OwnerOnly>} />
         <Route path="/prompt" element={<OwnerOnly><PromptBuilder /></OwnerOnly>} />
+        {/* Khu quản trị NỀN TẢNG — trang tự đẩy về "/" nếu backend trả 403 */}
+        <Route path="/admin" element={<OwnerOnly><AdminDashboard /></OwnerOnly>} />
         <Route path="/overview" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
