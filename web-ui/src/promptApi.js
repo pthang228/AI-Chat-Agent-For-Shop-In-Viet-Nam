@@ -34,9 +34,10 @@ export const promptApi = {
   apply: (prompt, chunks = null) =>
     j("/prompt/apply", { method: "POST", body: JSON.stringify({ prompt, chunks }) }),
   knowledge: () => j("/prompt/knowledge"),
-  // Chat THỬ với bot (AI thật + chẩn đoán) — không lưu, không gửi khách nào
-  test: (message, history = []) =>
-    j("/prompt/test", { method: "POST", body: JSON.stringify({ message, history }) }),
+  // Chat THỬ với bot (AI thật + chẩn đoán) — không lưu, không gửi khách nào.
+  // model: chỉ định model để thử ("" = model shop đang dùng)
+  test: (message, history = [], model = "") =>
+    j("/prompt/test", { method: "POST", body: JSON.stringify({ message, history, model }) }),
   restoreDefault: () => j("/prompt/restore-default", { method: "POST" }),
 
   // Bot học từ hội thoại — hàng chờ duyệt mẩu tri thức AI bóc từ câu chủ trả lời tay

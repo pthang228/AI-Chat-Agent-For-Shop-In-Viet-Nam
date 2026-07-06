@@ -179,7 +179,17 @@ def _build_system_prompt(user_message: str, history: list,
     return _compose_system(user_message, history, user_id, account)[0]
 
 
-def _call_ai(messages: list, owner: str | None = None, account: str | None = None) -> str:
+def _call_ai(messages: list, owner: str | None = None, account: str | None = None,
+             model_key: str | None = None) -> str:
+    # Model CHỈ ĐỊNH (vd trang Test bot chọn model) → gọi thẳng model đó, lỗi mới fallback.
+    if model_key:
+        try:
+            from app.core import ai_models
+            return ai_models.chat(messages, owner=owner, model_key=model_key,
+                                  timeout=Config.AI_TIMEOUT)
+        except Exception as e:
+            print(f"[AI] Model chỉ định {model_key} lỗi ({e}) → dùng mặc định")
+
     # MULTI-MODEL: shop chọn model (billing.ai_model) hoặc PER-APP theo kênh
     # (user_apps.ai_model — tra qua account) → gọi qua ai_models (tự ghi token
     # vào billing để hiển thị usage + trừ ví khi vượt quota).
@@ -220,8 +230,19 @@ def _call_ai(messages: list, owner: str | None = None, account: str | None = Non
         except Exception as e:
             print(f"[AI] DeepSeek lỗi ({e}), chuyển sang Groq...")
 
-    # Fallback: Groq
-    from groq import Groq
+    # Fallback: Groq (nếu máy chủ có cài + có key). Không có → báo lỗi rõ ràng
+    # thay vì "No module named 'groq'" khó hiểu.
+    try:
+        from groq import Groq
+    except ModuleNotFoundError:
+        raise RuntimeError(
+            "Không gọi được AI: model mặc định (DeepSeek) lỗi/thiếu API key và máy chủ "
+            "chưa cài Groq. Hãy đặt DEEPSEEK_API_KEY (hoặc OPENAI_API_KEY) trong .env, "
+            "hoặc chọn một model đã có API key.")
+    if not Config.GROQ_API_KEY:
+        raise RuntimeError(
+            "Không gọi được AI: chưa cấu hình API key nào (DEEPSEEK_API_KEY / "
+            "OPENAI_API_KEY / GROQ_API_KEY). Kiểm tra .env.")
     models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"]
     last_error = None
     for model in models:
@@ -282,14 +303,16 @@ def analyze_message(user_message: str, history: list[dict],
     return _parse_ai_output(_call_ai(messages, owner=owner, account=account))
 
 
-def analyze_with_debug(user_message: str, history: list[dict], shop: str = None) -> dict:
+def analyze_with_debug(user_message: str, history: list[dict], shop: str = None,
+                       model_key: str = None) -> dict:
     """Như analyze_message nhưng kèm 'debug' (mode, mẩu tri thức đã tra, cỡ context)
     — dùng cho trang Test bot của shop, KHÔNG lưu session, không gửi kênh nào.
-    shop: multi-tenant — test bằng NÃO của shop đang đăng nhập."""
+    shop: multi-tenant — test bằng NÃO của shop đang đăng nhập.
+    model_key: model CHỈ ĐỊNH để thử (rỗng = model shop đang dùng)."""
     system, dbg = _compose_system(user_message, history, shop=shop)
     messages = [{"role": "system", "content": system}]
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
-    out = _parse_ai_output(_call_ai(messages, owner=_owner_of_shop(shop)))
+    out = _parse_ai_output(_call_ai(messages, owner=_owner_of_shop(shop), model_key=model_key))
     out["debug"] = dbg
     return out

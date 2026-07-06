@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { promptApi } from "../promptApi.js";
+import { billing } from "../billingApi.js";
 import { PHOTO_BASE } from "../photoApi.js";
 
 /*
@@ -33,9 +34,16 @@ export default function BotTester({ onClose }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [models, setModels] = useState([]);  // catalog model (từ /billing/me)
+  const [model, setModel] = useState("");     // model thử ("" = model shop đang dùng)
   const endRef = useRef(null);
   const inputRef = useRef(null);
 
+  useEffect(() => {
+    billing.me().then((r) => {
+      if (r.ok && Array.isArray(r.body?.ai_models)) setModels(r.body.ai_models);
+    });
+  }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => {
     inputRef.current?.focus();
@@ -51,7 +59,7 @@ export default function BotTester({ onClose }) {
     const history = msgs.map((m) => ({ role: m.role, content: m.content }));
     setMsgs((ms) => [...ms, { role: "user", content: t }]);
     setBusy(true);
-    const r = await promptApi.test(t, history);
+    const r = await promptApi.test(t, history, model);
     setBusy(false);
     if (r.ok && r.body?.reply != null) {
       setMsgs((ms) => [...ms, {
@@ -76,6 +84,15 @@ export default function BotTester({ onClose }) {
         <div className="bt-head-title">
           <b>🧪 Test Bot AI</b>
           <span className="hint">Chat thử với bộ não đang dùng — không gửi tới khách, không lưu.</span>
+          <select className="bt-model" value={model} onChange={(e) => setModel(e.target.value)}
+                  title="Chọn mô hình AI để thử (không đổi model bot đang chạy thật)">
+            <option value="">🧠 Model shop đang dùng</option>
+            {models.map((m) => (
+              <option key={m.key} value={m.key} disabled={!m.available}>
+                {m.label}{m.available ? "" : " — chưa có key"}
+              </option>
+            ))}
+          </select>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           {msgs.length > 0 && (

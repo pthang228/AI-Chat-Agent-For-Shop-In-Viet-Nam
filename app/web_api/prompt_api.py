@@ -270,8 +270,16 @@ def register_prompt_routes(app):
             for m in history
             if isinstance(m, dict) and m.get("role") in ("user", "assistant")
         ][-TEST_HISTORY_MAX:]
+        # Model CHỈ ĐỊNH để thử (rỗng = model shop đang dùng)
+        from app.core import ai_models
+        model_key = (data.get("model") or "").strip()
+        if model_key and model_key not in ai_models.CATALOG:
+            return {"ok": False, "error": "Mô hình không hợp lệ"}, 400
+        if model_key and model_key not in ai_models.available_keys():
+            return {"ok": False, "error": "Mô hình này máy chủ chưa cấu hình API key"}, 400
         try:
-            out = claude_ai.analyze_with_debug(message, history, shop=_shop(u))
+            out = claude_ai.analyze_with_debug(message, history, shop=_shop(u),
+                                               model_key=model_key or None)
         except Exception as e:
             log.error(f"[prompt] test lỗi: {e}", exc_info=True)
             return {"ok": False, "error": f"Gọi AI thất bại: {e}"}, 502
