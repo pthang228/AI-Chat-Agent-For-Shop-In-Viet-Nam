@@ -458,6 +458,19 @@ export default function PromptBuilder() {
           <button className="btn-mini" style={{ marginTop: 10 }} onClick={addLink}>＋ Thêm link</button>
         </div>
 
+        {/* ⚙️ Cấu hình bot — AI ĐỌC các mục này khi tạo bộ não nên đặt TRƯỚC nút tạo.
+            (QR nhận tiền KHÔNG đưa cho AI → để riêng dưới cùng) */}
+        <div style={{ marginTop: 8, marginBottom: 20 }}>
+          <h3 style={{ fontSize: 18, marginBottom: 4 }}>⚙️ Cấu hình bot của shop</h3>
+          <p className="hint">
+            Liên hệ khẩn cấp và câu trả lời mẫu — bot dùng khi trả lời khách, và AI
+            cũng ĐỌC các mục này khi tạo bộ não, nên điền xong rồi hãy bấm tạo. Lịch
+            đặt chỗ (Google Sheets) nối ngay ở Bước 2 — chọn mục đích "📅 Lịch đặt chỗ".
+          </p>
+          <NotifyCard />
+          <CannedCard />
+        </div>
+
         {/* Bước 3: tạo — kèm chọn model AI dùng để dạy */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
           <label className="hint" style={{ margin: 0 }}>Model dùng để dạy:</label>
@@ -544,21 +557,10 @@ export default function PromptBuilder() {
           </div>
         )}
 
-        {/* ⚙️ Cấu hình bot của shop — chuyển từ trang Cài đặt sang đây
-            (PromptBuilder là trang OwnerOnly nên không cần check staff) */}
+        {/* 💳 Tài khoản nhận tiền (QR) — KHÔNG đưa cho AI, chỉ dùng lúc chốt đơn,
+            nên để riêng DƯỚI CÙNG (Notify + Canned đã chuyển lên trên nút tạo) */}
         <div style={{ marginTop: 28 }}>
-          <h3 style={{ fontSize: 18, marginBottom: 4 }}>⚙️ Cấu hình bot của shop</h3>
-          <p className="hint">
-            Liên hệ khẩn cấp, tài khoản nhận tiền và câu trả lời mẫu — bot dùng các
-            cấu hình này khi trả lời khách (đưa số liên hệ, gửi QR chốt đơn…).
-            Lịch đặt chỗ (Google Sheets) giờ nối ngay ở Bước 2 — chọn mục đích
-            "📅 Lịch đặt chỗ" cho link.
-          </p>
-          {/* SheetsCard bỏ khỏi đây — lịch đặt chỗ giờ nối ngay ở Bước 2
-              (link purpose "Lịch đặt chỗ"); component + API /sheets giữ nguyên */}
-          <NotifyCard />
           <BankCard />
-          <CannedCard />
         </div>
       </main>
     </div>
