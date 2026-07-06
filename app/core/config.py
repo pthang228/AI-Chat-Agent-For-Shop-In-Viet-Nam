@@ -45,6 +45,9 @@ class Config:
 
     # Google Sheets
     GOOGLE_CREDENTIALS_FILE = _resolve(os.getenv("GOOGLE_CREDENTIALS_FILE"), "google_credentials.json")
+    # OpenAI (multi-model cho shop chọn — GPT-5/4o/4.1…); trống = chỉ có DeepSeek/Groq
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
     HARU_SHEET_ID           = os.getenv("HARU_SHEET_ID",  "")   # sheet lịch phòng chi nhánh 1 (legacy Zalo gốc)
     MOCHI_SHEET_ID          = os.getenv("MOCHI_SHEET_ID", "")   # sheet lịch phòng chi nhánh 2 (legacy Zalo gốc)
 

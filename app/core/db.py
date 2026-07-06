@@ -333,6 +333,14 @@ class Db:
             ("photo_sets", "tenant",       "TEXT NOT NULL DEFAULT ''"),
             # Quản trị nền tảng CHẶN shop (khoá đăng nhập + tắt bot cả workspace)
             ("users", "blocked",           "INTEGER NOT NULL DEFAULT 0"),
+            # MULTI-MODEL AI + tính theo usage khi vượt quota (kiểu Claude):
+            # ai_model = model shop chọn; usage_* = bật/tắt, giới hạn đ/tháng,
+            # đã tiêu bao nhiêu trong kỳ (usage_period = YYYY-MM)
+            ("billing", "ai_model",      "TEXT NOT NULL DEFAULT ''"),
+            ("billing", "usage_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("billing", "usage_limit",   "INTEGER NOT NULL DEFAULT 0"),
+            ("billing", "usage_spent",   "INTEGER NOT NULL DEFAULT 0"),
+            ("billing", "usage_period",  "TEXT NOT NULL DEFAULT ''"),
         ]
         for table, col, decl in adds:
             try:

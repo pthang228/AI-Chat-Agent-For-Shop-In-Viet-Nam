@@ -105,6 +105,16 @@ def _memory_block(user_id: str, account: str) -> str:
         return ""
 
 
+def _owner_of_shop(shop: str) -> str | None:
+    """Username CHỦ SHOP từ khoá não ('default' → chủ nền tảng) — dùng cho billing
+    model AI + usage. Lỗi → None (không ghi usage)."""
+    try:
+        from app.core import tenant as _tenant
+        return _tenant.default_owner() if (not shop or shop == "default") else shop
+    except Exception:
+        return None
+
+
 def _resolve_shop(user_id: str = None, account: str = None, shop: str = None) -> str:
     """Khoá não bot theo SHOP: shop truyền thẳng (trang Test bot theo workspace)
     thắng; không có → tra tenant của hội thoại (multi-tenant). Lỗi → 'default'."""
@@ -169,8 +179,27 @@ def _build_system_prompt(user_message: str, history: list,
     return _compose_system(user_message, history, user_id, account)[0]
 
 
-def _call_ai(messages: list) -> str:
-    # Thử DeepSeek trước
+def _call_ai(messages: list, owner: str | None = None) -> str:
+    # MULTI-MODEL: shop đã chọn model (billing.ai_model) → gọi qua ai_models
+    # (tự ghi token vào billing để hiển thị usage + trừ ví khi vượt quota).
+    # Lỗi/không chọn → rơi xuống chuỗi mặc định DeepSeek → Groq như cũ.
+    if owner:
+        try:
+            from app.core import ai_models
+            if ai_models.model_for_owner(owner) != ai_models.DEFAULT_MODEL:
+                return ai_models.chat(messages, owner=owner, timeout=Config.AI_TIMEOUT)
+        except Exception as e:
+            print(f"[AI] Model shop lỗi ({e}) → dùng mặc định")
+
+    # Thử DeepSeek trước (mặc định — vẫn ghi token nếu biết owner)
+    if Config.DEEPSEEK_API_KEY:
+        try:
+            from app.core import ai_models
+            return ai_models.chat(messages, owner=owner,
+                                  model_key=ai_models.DEFAULT_MODEL,
+                                  timeout=Config.AI_TIMEOUT)
+        except Exception as e:
+            print(f"[AI] DeepSeek (ai_models) lỗi ({e}), thử client cũ…")
     if Config.DEEPSEEK_API_KEY:
         try:
             client = OpenAI(
@@ -247,7 +276,8 @@ def analyze_message(user_message: str, history: list[dict],
                  "content": _build_system_prompt(user_message, history, user_id, account)}]
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
-    return _parse_ai_output(_call_ai(messages))
+    owner = _owner_of_shop(_resolve_shop(user_id, account))
+    return _parse_ai_output(_call_ai(messages, owner=owner))
 
 
 def analyze_with_debug(user_message: str, history: list[dict], shop: str = None) -> dict:
@@ -258,6 +288,6 @@ def analyze_with_debug(user_message: str, history: list[dict], shop: str = None)
     messages = [{"role": "system", "content": system}]
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
-    out = _parse_ai_output(_call_ai(messages))
+    out = _parse_ai_output(_call_ai(messages, owner=_owner_of_shop(shop)))
     out["debug"] = dbg
     return out

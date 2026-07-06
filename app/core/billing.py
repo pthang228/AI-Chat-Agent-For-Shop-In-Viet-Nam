@@ -161,6 +161,13 @@ def status(username: str) -> dict:
         "channels_limit": feats["channels"],   # None = không giới hạn
         "feature_call_owner": feats["call_owner"],
         "feature_adv_stats": feats["adv_stats"],
+        # Multi-model + tính theo usage khi vượt quota
+        "ai_model": (b["ai_model"] if "ai_model" in b.keys() else "") or "",
+        "usage_enabled": bool(b["usage_enabled"]) if "usage_enabled" in b.keys() else False,
+        "usage_limit": (b["usage_limit"] if "usage_limit" in b.keys() else 0) or 0,
+        "usage_spent": ((b["usage_spent"] or 0)
+                        if ("usage_spent" in b.keys()
+                            and b["usage_period"] == now.strftime("%Y-%m")) else 0),
     }
 
 
@@ -311,6 +318,36 @@ def durations_catalog() -> list:
 
 # ── Quota lượt AI ───────────────────────────────────────────────────
 
+def record_token_usage(username: str, model_key: str,
+                       tokens_in: int, tokens_out: int) -> None:
+    """Ghi chi phí token của 1 lượt gọi AI (gọi từ ai_models.chat).
+    Đang trong quota → chi phí thuộc gói, không trừ ví. ĐÃ HẾT quota (hoặc
+    kỳ khác) + shop bật 'tính theo usage' → TRỪ VÍ + cộng usage_spent
+    (reset theo tháng usage_period) — giống extra usage của Claude."""
+    from app.core import ai_models
+    cost = ai_models.cost_vnd(model_key, tokens_in, tokens_out)
+    cost_i = max(1, round(cost)) if (tokens_in or tokens_out) else 0
+    if not cost_i:
+        return
+    db = get_db()
+    ensure_billing(username)
+    period = _now().strftime("%Y-%m")
+    with db.lock:
+        b = db.conn.execute("SELECT * FROM billing WHERE username=?", (username,)).fetchone()
+        spent = (b["usage_spent"] or 0) if b["usage_period"] == period else 0
+        used = b["ai_used"] if b["ai_period"] == _period(_tier_of(b)) else 0
+        over_quota = used >= _quota_of(b)
+        if over_quota and b["usage_enabled"]:
+            db.conn.execute(
+                "UPDATE billing SET balance=balance-?, usage_spent=?, usage_period=? "
+                "WHERE username=?", (cost_i, spent + cost_i, period, username))
+        else:
+            db.conn.execute(
+                "UPDATE billing SET usage_spent=?, usage_period=? WHERE username=?",
+                (spent, period, username))
+        db.conn.commit()
+
+
 def is_blocked(username: str) -> bool:
     """Shop bị QUẢN TRỊ NỀN TẢNG chặn? (users.blocked — khoá đăng nhập + tắt bot)."""
     try:
@@ -321,11 +358,17 @@ def is_blocked(username: str) -> bool:
 
 
 def can_reply(username: str) -> bool:
-    """User này còn quyền cho bot trả lời? (không bị chặn + gói còn hạn + chưa vượt quota)."""
+    """User này còn quyền cho bot trả lời? Không bị chặn + gói còn hạn + (còn quota
+    HOẶC đã bật 'tính theo usage' còn hạn mức tháng và ví còn tiền)."""
     if is_blocked(username):
         return False
     st = status(username)
-    return st["active"] and st["ai_left"] > 0
+    if not st["active"]:
+        return False
+    if st["ai_left"] > 0:
+        return True
+    return (st["usage_enabled"] and st["usage_spent"] < st["usage_limit"]
+            and st["balance"] > 0)
 
 
 def record_ai_usage(username: str, n: int = 1) -> None:

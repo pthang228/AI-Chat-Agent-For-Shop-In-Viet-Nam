@@ -31,6 +31,36 @@ export default function Billing() {
   const [newDep, setNewDep] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  // Mô hình AI + tính theo usage khi hết quota (đồng bộ từ /billing/me)
+  const [aiBusy, setAiBusy] = useState(false);
+  const [usageOn, setUsageOn] = useState(false);
+  const [usageLimit, setUsageLimit] = useState(200_000);
+  useEffect(() => {
+    if (me && typeof me === "object") {
+      setUsageOn(!!me.usage_enabled);
+      setUsageLimit(me.usage_limit || 200_000);
+    }
+  }, [me]);
+
+  async function saveAiModel(key) {
+    if (aiBusy) return;
+    setMsg(""); setAiBusy(true);
+    const r = await billing.setAiModel(key);
+    setAiBusy(false);
+    setMsg(r.ok ? "✅ Đã đổi mô hình AI — áp dụng ngay cho bot." : "❌ " + (r.body?.error || "Đổi thất bại"));
+    if (r.ok) load();
+  }
+  async function saveUsage() {
+    if (aiBusy) return;
+    setMsg(""); setAiBusy(true);
+    const r = await billing.setUsage(usageOn, usageLimit);
+    setAiBusy(false);
+    setMsg(r.ok
+      ? (usageOn ? `✅ Đã bật tính theo usage (tối đa ${vnd(usageLimit)}/tháng khi hết quota).` : "✅ Đã tắt — hết quota là bot dừng.")
+      : "❌ " + (r.body?.error || "Lưu thất bại"));
+    if (r.ok) load();
+  }
+
   async function load() {
     const r = await billing.me();
     if (r.status === 0) { setMe("offline"); return; }
@@ -119,10 +149,79 @@ export default function Billing() {
           <b>{me.ai_used.toLocaleString("vi-VN")} / {me.ai_quota.toLocaleString("vi-VN")}</b>
         </div>
         <div className="quota-track"><div className={"quota-fill" + (usePct >= 100 ? " full" : "")} style={{ width: usePct + "%" }} /></div>
-        {me.ai_left === 0 && <div className="hint" style={{ color: "var(--danger)", marginTop: 6 }}>⛔ Đã hết lượt AI tháng này — nâng hạng để mở thêm, hoặc chờ sang tháng.</div>}
+        {me.ai_left === 0 && <div className="hint" style={{ color: "var(--danger)", marginTop: 6 }}>⛔ Đã hết lượt AI tháng này — nâng hạng, chờ sang tháng, hoặc bật "tính theo usage" bên dưới.</div>}
       </div>
 
       {msg && <div className="savemsg" style={{ margin: "14px 0" }}>{msg}</div>}
+
+      {/* Mô hình AI + tính theo usage khi hết quota */}
+      <div className="panel set-card" style={{ margin: "16px 0" }}>
+        <h3 style={{ fontSize: 16, marginBottom: 6 }}>🧠 Mô hình AI của shop</h3>
+        <p className="hint">
+          Chọn "bộ não" cho bot — áp dụng cho <b>mọi chỗ dùng AI</b> của shop (bot trả lời khách,
+          Test bot…). Giá tính trên <b>1 triệu token</b> (khoảng 700.000 chữ tiếng Việt); bấm vào
+          dòng để chọn.
+        </p>
+        <div style={{ overflowX: "auto", marginTop: 8 }}>
+          <table className="ad-table">
+            <thead>
+              <tr><th></th><th>Mô hình</th><th>Input / 1M token</th><th>Output / 1M token</th></tr>
+            </thead>
+            <tbody>
+              {(me.ai_models || []).map((m) => {
+                const cur = me.ai_model ? me.ai_model === m.key : m.default;
+                return (
+                  <tr key={m.key} className="adm-row"
+                      style={{ opacity: m.available ? 1 : 0.45, fontWeight: cur ? 600 : 400 }}
+                      title={m.available ? "Bấm để chọn mô hình này" : "Máy chủ chưa cấu hình API key cho mô hình này"}
+                      onClick={() => m.available && saveAiModel(m.key)}>
+                    <td>{cur ? "✅" : "○"}</td>
+                    <td>{m.label}{m.default && <span className="hint"> · mặc định</span>}</td>
+                    <td>{vnd(m.in_vnd)}</td>
+                    <td>{vnd(m.out_vnd)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style={{ fontSize: 16, margin: "18px 0 6px" }}>⚡ Hết lượt AI tháng → tính theo usage</h3>
+        <p className="hint">
+          Bật lên: khi <b>hết quota tháng</b>, bot vẫn trả lời tiếp và <b>trừ ví theo token</b> (bảng
+          giá trên) cho tới khi chạm <b>giới hạn tháng</b> bạn đặt. Tắt: hết quota là bot dừng tới đầu
+          tháng sau.
+        </p>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+            <input type="checkbox" checked={usageOn} onChange={(e) => setUsageOn(e.target.checked)} />
+            Bật tính theo usage
+          </label>
+          <input type="number" min={0} step={10000} style={{ width: 150 }} value={usageLimit}
+                 onChange={(e) => setUsageLimit(+e.target.value || 0)} disabled={!usageOn} />
+          <span className="hint">đ / tháng (tối đa)</span>
+          <button className="btn-primary sm" onClick={saveUsage} disabled={aiBusy}>
+            {aiBusy ? "Đang lưu…" : "Lưu"}
+          </button>
+        </div>
+        {me.usage_enabled && (
+          <div style={{ marginTop: 10 }}>
+            <div className="quota-head" style={{ fontSize: 13.5 }}>
+              <span>Đã tiêu usage tháng này</span>
+              <b>{vnd(me.usage_spent)} / {vnd(me.usage_limit)}</b>
+            </div>
+            <div className="quota-track" style={{ marginTop: 4 }}>
+              <div className={"quota-fill" + (me.usage_spent >= me.usage_limit ? " full" : "")}
+                   style={{ width: Math.min(100, Math.round((me.usage_spent / Math.max(1, me.usage_limit)) * 100)) + "%" }} />
+            </div>
+            {me.usage_spent >= me.usage_limit && (
+              <div className="hint" style={{ color: "var(--danger)", marginTop: 6 }}>
+                ⛔ Đã chạm giới hạn usage tháng này — bot dừng tới đầu tháng sau (hoặc nâng giới hạn).
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Mã giới thiệu */}
       {me.on_trial && !me.promo_used && me.promo_enabled && (

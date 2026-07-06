@@ -29,6 +29,8 @@ export const billing = {
   deposits: () => j("/billing/deposits"),
   buy: (tier, duration) => j("/billing/buy", { method: "POST", body: JSON.stringify({ tier, duration }) }),
   history: () => j("/billing/history"),
+  setAiModel: (model) => j("/billing/ai-model", { method: "POST", body: JSON.stringify({ model }) }),
+  setUsage: (enabled, limit) => j("/billing/usage", { method: "POST", body: JSON.stringify({ enabled, limit }) }),
 };
 
 export const vnd = (n) => (n ?? 0).toLocaleString("vi-VN") + "₫";
