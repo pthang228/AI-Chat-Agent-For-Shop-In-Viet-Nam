@@ -122,7 +122,9 @@ export default function AdminDashboard() {
                   </thead>
                   <tbody>
                     {shown.map((s) => (
-                      <tr key={s.username}>
+                      <tr key={s.username} className="adm-row"
+                          title="Xem chi tiết shop"
+                          onClick={() => nav(`/admin/shop/${encodeURIComponent(s.username)}`)}>
                         <td>
                           <b>{s.shop_name}</b>{s.is_platform_admin ? " ⭐" : ""}
                           <div className="hint" style={{ fontSize: 12 }}>{s.username}</div>

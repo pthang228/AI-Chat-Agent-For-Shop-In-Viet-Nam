@@ -286,6 +286,17 @@ r = ax.get("/admin/shops", headers=HB)
 check(r.status_code == 403, "O3 shop thường bị 403")
 r = ax.get("/admin/shops")
 check(r.status_code == 401, "O4 không token → 401")
+# Chi tiết 1 shop (read-only, KHÔNG lộ nội dung chat)
+r = ax.get("/admin/shops/shopb@x.vn", headers=HA)
+check(r.status_code == 200 and r.json["ok"], "O5 admin xem chi tiết shop B", r.text[:80])
+check(r.json["conversations"]["total"] == 1 and r.json["orders"]["total"] >= 1,
+      "O6 chi tiết đếm đúng hội thoại + đơn của B", r.json["orders"])
+check("recent" in r.json["orders"] and "messages" not in r.text,
+      "O7 chi tiết KHÔNG kèm nội dung chat")
+r = ax.get("/admin/shops/shopb@x.vn", headers=HB)
+check(r.status_code == 403, "O8 shop thường xem chi tiết → 403")
+r = ax.get("/admin/shops/khongton@x.vn", headers=HA)
+check(r.status_code == 404, "O9 shop không tồn tại → 404")
 
 # dọn file persona + ảnh test + file tạm
 try:
