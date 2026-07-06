@@ -14,6 +14,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy mã nguồn (data/ media/ bị .dockerignore loại — dùng volume lúc chạy)
 COPY app/ ./app/
+# Script quản trị chạy tay trong container (vd: python -m scripts.create_admin)
+COPY scripts/ ./scripts/
 
 # Thư mục dữ liệu + media dùng volume (khai trong compose)
 RUN mkdir -p /app/data /app/media
