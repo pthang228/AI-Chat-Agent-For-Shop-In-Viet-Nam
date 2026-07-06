@@ -243,7 +243,7 @@ export default function Landing() {
         <header className="ld-top">
           <div className="ld-top-in">
             <div className="ld-top-left">
-              <div className="ld-logo"><LogoMark size={36} /> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
+              <div className="ld-logo"><LogoMark color="#FF9A78" size={34} /> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
               <nav className="ld-nav">
                 <a href="#features">Tính năng</a>
                 <a href="#how">Cách hoạt động</a>
@@ -417,7 +417,7 @@ export default function Landing() {
 
       <footer className="ld-footer">
         <div className="ld-wrap ld-footer-in">
-          <div className="ld-logo"><LogoMark size={32} /> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
+          <div className="ld-logo"><LogoMark color="#FF9A78" size={30} /> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
           <div className="ld-footer-links">
             <a href="#features">Tính năng</a>
             <a href="#pricing">Bảng giá</a>
