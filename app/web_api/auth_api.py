@@ -116,11 +116,11 @@ def current_workspace(db=None):
 
 
 def _public_user(row) -> dict:
-    # platform_admin: CHỦ NỀN TẢNG (user đầu tiên) — frontend hiện link /admin.
-    # Import trễ tránh vòng import; lỗi → False (không chặn đăng nhập).
+    # platform_admin: acc role='admin' chính danh HOẶC chủ nền tảng đầu tiên —
+    # frontend hiện link /admin. Import trễ tránh vòng; lỗi → False.
     try:
         from app.core import tenant
-        is_platform = row["username"] == tenant.default_owner()
+        is_platform = tenant.is_platform_admin(row["username"])
     except Exception:
         is_platform = False
     return {

@@ -24,7 +24,7 @@ def register_admin_routes(app):
         if u is None:
             return None, ({"ok": False, "error": "Cần đăng nhập"}, 401)
         from app.core import tenant
-        if u["username"] != tenant.default_owner():
+        if not tenant.is_platform_admin(u["username"]):
             return None, ({"ok": False, "error": "Chỉ quản trị nền tảng"}, 403)
         return u, None
 
@@ -48,9 +48,10 @@ def register_admin_routes(app):
         billing_by = {r["username"]: r for r in db.query("SELECT * FROM billing")}
 
         out = []
+        # Chỉ liệt kê SHOP (role owner) — acc admin chính danh không phải shop
         for r in db.query(
                 "SELECT username, homestay, created_at FROM users "
-                "WHERE COALESCE(role,'owner') != 'staff' ORDER BY created_at"):
+                "WHERE COALESCE(role,'owner') = 'owner' ORDER BY created_at"):
             uname = r["username"]
             # chủ nền tảng gộp cả dữ liệu cũ tenant=''
             conv_n, last = conv_by.get(uname, (0, None))

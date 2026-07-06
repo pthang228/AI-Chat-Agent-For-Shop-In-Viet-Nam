@@ -63,6 +63,22 @@ def visible(row_tenant: str, workspace: str | None) -> bool:
     return row_tenant == workspace
 
 
+def is_platform_admin(username: str | None) -> bool:
+    """QUYỀN QUẢN TRỊ NỀN TẢNG (/admin, bật/tắt bot toàn cục):
+    - user role='admin' (tài khoản admin CHÍNH DANH — tạo bằng scripts/create_admin.py)
+    - HOẶC chủ nền tảng đầu tiên (default_owner — tương thích bản cũ chưa có acc admin).
+    """
+    if not username:
+        return False
+    if username == default_owner():
+        return True
+    try:
+        rows = get_db().query("SELECT role FROM users WHERE username=?", (username,))
+        return bool(rows) and (rows[0]["role"] or "") == "admin"
+    except Exception:
+        return False
+
+
 def shop_key(workspace: str | None) -> str:
     """Khoá 'shop' cho NÃO BOT (knowledge_chunks.shop, file persona, photo...).
     Chủ nền tảng (hoặc không xác định) → 'default' (giữ nguyên não/tri thức cũ

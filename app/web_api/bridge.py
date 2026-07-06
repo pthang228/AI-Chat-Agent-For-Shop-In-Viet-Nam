@@ -243,7 +243,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         if ":" not in channel:
             from app.core import tenant as _t
             ws = _ws()
-            if ws and ws != _t.default_owner():
+            if ws and not _t.is_platform_admin(ws):
                 return {"ok": False,
                         "error": "Chỉ quản trị nền tảng mới bật/tắt bot toàn cục — "
                                  "hãy bật/tắt từng kênh của shop bạn"}, 403
