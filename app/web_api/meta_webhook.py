@@ -29,7 +29,7 @@ from app.core.config import Config
 from app.core import comments
 from app.core.comment_store import CommentStore
 from app.channels import meta_graph
-from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary  # dùng chung helper
+from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary, _tenant_visible  # dùng chung helper
 from app.web_api.stats_util import compute_stats
 from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
@@ -140,6 +140,11 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "/meta", conv_manager, getattr(brain, "channel", None), account="meta")
+
+    # MULTI-TENANT: chốt chặn tập trung — mọi thao tác lên 1 hội thoại phải
+    # thuộc shop của user đăng nhập (cover cả chat_tools send-media/assign...)
+    from app.web_api.bridge import install_tenant_conv_guard
+    install_tenant_conv_guard(app, conv_manager)
 
     # CORS siết theo ALLOWED_ORIGINS + mở header Authorization (client gửi Bearer).
     install_cors(app)
@@ -326,6 +331,8 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
             uid_page = uid_parts[1] if len(uid_parts) >= 3 else ""
             if page_id and uid_page != page_id:
                 continue
+            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
+                continue
             rows.append(_conv_summary(uid, conv))
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
         return jsonify(rows[offset:offset + limit])
@@ -333,7 +340,7 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
     @app.route("/meta/conversations/<user_id>")
     def meta_conversation(user_id):
         conv = conv_manager._sessions.get(user_id)
-        if not conv:
+        if not conv or not _tenant_visible(conv):
             return {"error": "not found"}, 404
         msgs = [
             {"role": m.get("role"), "content": m.get("content", "")}
@@ -519,6 +526,10 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
         if not billing.channel_gate(owner):
             log.info(f"[Meta] gói/quota chủ ({owner}) không cho phép → bỏ qua {user_id}")
             return
+
+        # MULTI-TENANT: đóng dấu shop sở hữu hội thoại (chủ Page này)
+        from app.core import tenant
+        tenant.assign(conv_manager, user_id, owner)
 
         log.info(f"[Meta][{platform}] page={page_id} {sender} | {text[:80]!r}")
 

@@ -114,6 +114,63 @@ def _conv_summary(uid, conv):
     }
 
 
+def _ws():
+    """Workspace (shop) của request hiện tại — None khi không token (test).
+    Cache theo request (flask.g): guard đã xác thực và gắn g.auth_user nên
+    thường KHÔNG tốn thêm query DB."""
+    from flask import g, has_request_context
+    if not has_request_context():
+        return None
+    ws = getattr(g, "_ws_cache", "__unset__")
+    if ws != "__unset__":
+        return ws
+    u = getattr(g, "auth_user", None)
+    if u is not None:
+        from app.web_api.auth_api import workspace_of
+        ws = workspace_of(u)
+    else:
+        from app.core import tenant
+        ws = tenant.current_workspace_or_none()
+    g._ws_cache = ws
+    return ws
+
+
+def _tenant_visible(conv) -> bool:
+    """MULTI-TENANT: user đăng nhập có được thấy/đụng hội thoại này không.
+    Dùng cho CẢ list (lọc hàng loạt) lẫn detail/send/toggle/delete (chống đoán
+    user_id của shop khác). Import được từ mọi server kênh."""
+    from app.core import tenant
+    return tenant.visible(getattr(conv, "tenant", "") or "", _ws())
+
+
+_can_see = _tenant_visible   # alias dùng nội bộ bridge
+
+
+def install_tenant_conv_guard(app, conv_manager):
+    """MULTI-TENANT chốt chặn TẬP TRUNG: mọi request đụng 1 hội thoại cụ thể
+    ({prefix}/conversations/<user_id>[/send|toggle-bot|send-media|assign|
+    make-order|broadcast-send|DELETE...]) đều bị kiểm tra quyền sở hữu tenant
+    TRƯỚC khi vào handler — 1 chỗ cover mọi endpoint hiện tại + tương lai của
+    server đó (kể cả chat_tools). Hội thoại CHƯA tồn tại → cho qua (handler tự
+    xử lý 404/tạo mới)."""
+    from urllib.parse import unquote
+
+    @app.before_request
+    def _tenant_conv_guard():
+        if request.method == "OPTIONS":
+            return None
+        path = request.path
+        if "/conversations/" not in path:
+            return None
+        uid = unquote(path.split("/conversations/", 1)[1].split("/", 1)[0])
+        if not uid:
+            return None
+        conv = conv_manager._sessions.get(uid)
+        if conv is not None and not _tenant_visible(conv):
+            return {"ok": False, "error": "not found"}, 404
+        return None
+
+
 def create_bridge(brain, conv_manager) -> Flask:
     app = Flask(__name__)
 
@@ -234,9 +291,12 @@ def create_bridge(brain, conv_manager) -> Flask:
             offset = max(int(request.args.get("offset", 0)), 0)
         except ValueError:
             limit, offset = 200, 0
+        from app.core import tenant as _t
+        ws = _ws()
         rows = [
             _conv_summary(uid, conv)
             for uid, conv in list(conv_manager._sessions.items())
+            if _t.visible(getattr(conv, "tenant", "") or "", ws)   # chỉ shop của mình
         ]
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
         # Khách thiếu avatar → backfill nền qua Node (mỗi uid chỉ hỏi 1 lần).
@@ -250,7 +310,7 @@ def create_bridge(brain, conv_manager) -> Flask:
     @app.route("/conversations/<user_id>")
     def get_conversation(user_id):
         conv = conv_manager._sessions.get(user_id)
-        if not conv:
+        if not conv or not _can_see(conv):
             return {"error": "not found"}, 404
         msgs = [
             {"role": m.get("role"), "content": m.get("content", "")}
@@ -274,6 +334,9 @@ def create_bridge(brain, conv_manager) -> Flask:
         """Bật/tắt bot cho 1 khách. body {bot_on: bool} — bot_on=False nghĩa là chủ tiếp quản."""
         data = request.get_json(force=True, silent=True) or {}
         bot_on = bool(data.get("bot_on", True))
+        exist = conv_manager._sessions.get(user_id)
+        if exist is not None and not _can_see(exist):
+            return {"error": "not found"}, 404
         conv = conv_manager.get(user_id)
         conv.set_owner_active(not bot_on)  # bot bật ↔ owner_active tắt
         conv_manager.save()
@@ -286,6 +349,9 @@ def create_bridge(brain, conv_manager) -> Flask:
         text = (data.get("text") or "").strip()
         if not text:
             return {"ok": False, "error": "tin trống"}, 400
+        exist = conv_manager._sessions.get(user_id)
+        if exist is not None and not _can_see(exist):
+            return {"ok": False, "error": "not found"}, 404
         try:
             brain.channel.send_text(user_id, text)
         except Exception as e:
@@ -302,13 +368,17 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     @app.route("/conversations/<user_id>", methods=["DELETE"])
     def reset_conversation(user_id):
+        exist = conv_manager._sessions.get(user_id)
+        if exist is not None and not _can_see(exist):
+            return {"error": "not found"}, 404
         conv_manager.reset(user_id)
         return {"ok": True}
 
     @app.route("/stats")
     def conv_stats():
         return jsonify(compute_stats(
-            conv_manager, request.args.get("from"), request.args.get("to")))
+            conv_manager, request.args.get("from"), request.args.get("to"),
+            tenant_ws=_ws()))
 
     @app.route("/incoming", methods=["POST"])
     def incoming():
@@ -362,6 +432,11 @@ def create_bridge(brain, conv_manager) -> Flask:
             return {"ok": True, "skipped": "billing_expired"}
 
         conv = conv_manager.get(user_id)
+
+        # MULTI-TENANT: Zalo cá nhân hiện 1 instance = 1 shop → hội thoại thuộc
+        # CHỦ NỀN TẢNG (owner=None → tenant.default_owner). Node per-tenant làm sau.
+        from app.core import tenant as _tenant
+        _tenant.assign(conv_manager, user_id, None)
 
         # Cập nhật tên + avatar hiển thị nếu Node truyền (zca-js kèm dName/avt)
         d_name = (data.get("dName") or "").strip()
@@ -421,6 +496,9 @@ def create_bridge(brain, conv_manager) -> Flask:
     register_chat_tools(app, "", conv_manager, getattr(brain, "channel", None),
                         account=getattr(conv_manager, "_account", "zalo") or "zalo",
                         with_canned=True)
+
+    # MULTI-TENANT: chốt chặn hội thoại theo shop (xem install_tenant_conv_guard)
+    install_tenant_conv_guard(app, conv_manager)
 
     # Bảo vệ API quản trị bridge bằng Bearer token. Công khai: đăng nhập/đăng ký
     # Google, /incoming (Node localhost gọi vào), webhook đối soát tiền /payhook,

@@ -18,7 +18,7 @@ from flask import Flask, request, jsonify
 
 from app.core.config import Config
 from app.core import telegram_owner, telegram_login
-from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
+from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary, _tenant_visible
 from app.web_api.stats_util import compute_stats
 from app.web_api.api_guard import install_cors, install_auth_guard, submit, DedupCache
 
@@ -122,6 +122,10 @@ def handle_update(update, brain, conv_manager, bot_id=None, store=None):
     if not billing.channel_gate(owner):
         log.info(f"[TG] gói/quota chủ ({owner}) không cho phép → bỏ qua {user_id}")
         return
+
+    # MULTI-TENANT: đóng dấu shop sở hữu hội thoại (chủ bot này)
+    from app.core import tenant
+    tenant.assign(conv_manager, user_id, owner)
 
     log.info(f"[TG] bot={bot_id} {chat_id} | {text[:80]!r}")
 
@@ -247,6 +251,11 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "/tg", conv_manager, channel, account="telegram")
+
+    # MULTI-TENANT: chốt chặn tập trung — mọi thao tác lên 1 hội thoại phải
+    # thuộc shop của user đăng nhập (cover cả chat_tools send-media/assign...)
+    from app.web_api.bridge import install_tenant_conv_guard
+    install_tenant_conv_guard(app, conv_manager)
 
     @app.route("/health")
     def health():
@@ -516,6 +525,8 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
             uid_bot = parts[1] if len(parts) >= 3 else ""
             if bot_id and uid_bot != bot_id:
                 continue
+            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
+                continue
             rows.append(_conv_summary(uid, conv))
             if (not conv.name or not getattr(conv, "avatar", "")) and not _av_asked.seen(uid):
                 missing_names.append(uid)
@@ -529,7 +540,7 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
     @app.route("/tg/conversations/<user_id>")
     def tg_conversation(user_id):
         conv = conv_manager._sessions.get(user_id)
-        if not conv:
+        if not conv or not _tenant_visible(conv):
             return {"error": "not found"}, 404
         msgs = [
             {"role": m.get("role"), "content": m.get("content", "")}

@@ -26,10 +26,20 @@ def _bearer():
 
 def register_broadcast_routes(app):
 
+    def _ws():
+        from app.core import tenant
+        return tenant.current_workspace_or_none()
+
+    def _bc_visible(b) -> bool:
+        """Chiến dịch thuộc shop đang đăng nhập (cũ chưa gắn → chủ nền tảng)."""
+        from app.core import tenant as _t
+        return _t.visible(b.get("created_by", "") or "", _ws())
+
     @app.route("/broadcasts/preview", methods=["POST"])
     def bc_preview():
         d = request.get_json(force=True, silent=True) or {}
-        targets = broadcast.audience(d.get("channels") or [], d.get("segment") or {})
+        targets = broadcast.audience(d.get("channels") or [], d.get("segment") or {},
+                                     tenant_ws=_ws())
         by_channel = {}
         for t in targets:
             by_channel[t["channel"]] = by_channel.get(t["channel"], 0) + 1
@@ -39,7 +49,7 @@ def register_broadcast_routes(app):
 
     @app.route("/broadcasts")
     def bc_list():
-        return jsonify(broadcast.list_all())
+        return jsonify(broadcast.list_all(tenant_ws=_ws()))
 
     @app.route("/broadcasts", methods=["POST"])
     def bc_create():
@@ -61,19 +71,25 @@ def register_broadcast_routes(app):
     @app.route("/broadcasts/<int:bid>")
     def bc_get(bid):
         b = broadcast.get(bid)
-        if not b:
+        if not b or not _bc_visible(b):
             return {"ok": False, "error": "Không tìm thấy chiến dịch"}, 404
         b["errors"] = broadcast.logs(bid, limit=50, only_failed=True)
         return {"ok": True, "broadcast": b}
 
     @app.route("/broadcasts/<int:bid>/send", methods=["POST"])
     def bc_send(bid):
+        b = broadcast.get(bid)
+        if not b or not _bc_visible(b):
+            return {"ok": False, "error": "Không tìm thấy chiến dịch"}, 404
         if not broadcast.start(bid, auth_token=_bearer()):
             return {"ok": False, "error": "Chiến dịch không ở trạng thái nháp"}, 400
         return {"ok": True}
 
     @app.route("/broadcasts/<int:bid>/cancel", methods=["POST"])
     def bc_cancel(bid):
+        b = broadcast.get(bid)
+        if not b or not _bc_visible(b):
+            return {"ok": False, "error": "Không tìm thấy chiến dịch"}, 404
         if not broadcast.cancel(bid):
             return {"ok": False, "error": "Chiến dịch không thể dừng"}, 400
         return {"ok": True}

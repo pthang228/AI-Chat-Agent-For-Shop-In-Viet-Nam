@@ -62,14 +62,27 @@ def _order_stats(db, user_id) -> dict:
     return {"order_count": r["n"], "order_value": r["value"]}
 
 
-def list_customers(q: str = "", platform: str = "", limit: int = 200, offset: int = 0) -> dict:
+def _tenant_sql(tenant_ws):
+    """Mảnh WHERE multi-tenant cho bảng sessions (chủ nền tảng thấy cả dòng cũ '')."""
+    from app.core import tenant as _t
+    if not tenant_ws:
+        return "", ()
+    if tenant_ws == _t.default_owner():
+        return " WHERE (tenant=? OR tenant='')", (tenant_ws,)
+    return " WHERE tenant=?", (tenant_ws,)
+
+
+def list_customers(q: str = "", platform: str = "", limit: int = 200, offset: int = 0,
+                   tenant_ws: str = None) -> dict:
     """Danh sách khách gộp mọi kênh, mới nhắn gần nhất trước. Lọc q (tên/SĐT/email)
-    + platform. Trả {total, items:[{account,user_id,platform,name,avatar,phone,
+    + platform. tenant_ws: MULTI-TENANT — chỉ khách của shop này (None = tất cả).
+    Trả {total, items:[{account,user_id,platform,name,avatar,phone,
     email,address,last_updated,...}]}."""
     db = get_db()
+    tw, tp = _tenant_sql(tenant_ws)
     sess = db.query(
         "SELECT account, user_id, name, avatar, last_updated FROM sessions "
-        "ORDER BY last_updated DESC")
+        f"{tw} ORDER BY last_updated DESC", tp)
     profs = {(r["account"], r["user_id"]): r for r in db.query("SELECT * FROM customers")}
 
     items = []
@@ -98,14 +111,20 @@ def list_customers(q: str = "", platform: str = "", limit: int = 200, offset: in
     return {"total": total, "items": items[offset:offset + limit]}
 
 
-def get_customer(account: str, user_id: str) -> dict | None:
-    """Hồ sơ đầy đủ 1 khách: profile + stats + memory + history + tin nhắn."""
+def get_customer(account: str, user_id: str, tenant_ws: str = None) -> dict | None:
+    """Hồ sơ đầy đủ 1 khách: profile + stats + memory + history + tin nhắn.
+    tenant_ws: MULTI-TENANT — khách không thuộc shop này → None (như không tồn tại)."""
     db = get_db()
     rows = db.query("SELECT * FROM sessions WHERE account=? AND user_id=?",
                     (str(account), str(user_id)))
     if not rows:
         return None
     s = rows[0]
+    if tenant_ws:
+        from app.core import tenant as _t
+        row_tenant = (s["tenant"] if "tenant" in s.keys() else "") or ""
+        if not _t.visible(row_tenant, tenant_ws):
+            return None
     p = _profile(db, account, user_id)
     try:
         messages = json.loads(s["messages"] or "[]")

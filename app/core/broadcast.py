@@ -56,11 +56,12 @@ def _channel_of_account(account: str) -> str:
 
 # ── Tập khách (audience) ─────────────────────────────────────────────
 
-def audience(channels: list, segment: dict) -> list[dict]:
+def audience(channels: list, segment: dict, tenant_ws: str = None) -> list[dict]:
     """Danh sách khách sẽ nhận tin: lọc theo kênh + mức hoạt động.
     segment: {type: "all" | "active" | "inactive", days: N}
       - active   : có nhắn trong N ngày gần đây (khách còn ấm)
       - inactive : IM LẶNG hơn N ngày (khách cũ cần đánh thức)
+    tenant_ws: MULTI-TENANT — chỉ khách của shop này (bắt buộc ở production).
     """
     channels = [c for c in (channels or []) if c in CHANNELS]
     if not channels:          # không có kênh hợp lệ nào → không gửi ai cả
@@ -72,10 +73,18 @@ def audience(channels: list, segment: dict) -> list[dict]:
         days = 30
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
+    tw, tp = "", ()
+    if tenant_ws:
+        from app.core import tenant as _t
+        if tenant_ws == _t.default_owner():
+            tw, tp = " WHERE (tenant=? OR tenant='')", (tenant_ws,)
+        else:
+            tw, tp = " WHERE tenant=?", (tenant_ws,)
+
     out = []
     for r in get_db().query(
             "SELECT account, user_id, name, last_updated FROM sessions "
-            "ORDER BY last_updated DESC"):
+            f"{tw} ORDER BY last_updated DESC", tp):
         if not r["user_id"]:
             continue
         ch = _channel_of_account(r["account"])
@@ -121,7 +130,18 @@ def get(bid: int) -> dict | None:
     return _row_dict(rows[0]) if rows else None
 
 
-def list_all(limit: int = 50) -> list[dict]:
+def list_all(limit: int = 50, tenant_ws: str = None) -> list[dict]:
+    """tenant_ws: MULTI-TENANT — chỉ chiến dịch do shop này tạo (created_by).
+    Chủ nền tảng thấy cả chiến dịch cũ chưa gắn người tạo."""
+    if tenant_ws:
+        from app.core import tenant as _t
+        if tenant_ws == _t.default_owner():
+            return [_row_dict(r) for r in get_db().query(
+                "SELECT * FROM broadcasts WHERE created_by=? OR created_by='' "
+                "ORDER BY id DESC LIMIT ?", (tenant_ws, limit))]
+        return [_row_dict(r) for r in get_db().query(
+            "SELECT * FROM broadcasts WHERE created_by=? ORDER BY id DESC LIMIT ?",
+            (tenant_ws, limit))]
     return [_row_dict(r) for r in get_db().query(
         "SELECT * FROM broadcasts ORDER BY id DESC LIMIT ?", (limit,))]
 
@@ -184,7 +204,9 @@ def _run(bid: int, auth_token: str = ""):
     r = get(bid)
     if not r:
         return
-    targets = audience(r["channels"], r["segment"])
+    # MULTI-TENANT: worker chỉ gửi cho khách của SHOP đã tạo chiến dịch
+    # (created_by — /broadcasts chỉ owner dùng được nên đây là chủ shop)
+    targets = audience(r["channels"], r["segment"], tenant_ws=r.get("created_by") or None)
     db.execute("UPDATE broadcasts SET total=? WHERE id=?", (len(targets), bid))
     log.info(f"[broadcast] #{bid} '{r['name']}' bắt đầu — {len(targets)} khách")
 

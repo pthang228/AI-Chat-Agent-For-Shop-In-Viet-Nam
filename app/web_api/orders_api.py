@@ -14,7 +14,7 @@ import logging
 from flask import request
 
 from app.core import orders
-from app.web_api.auth_api import _user_for_token, _bearer
+from app.web_api.auth_api import _user_for_token, _bearer, workspace_of
 from app.core.db import get_db
 
 log = logging.getLogger("orders_api")
@@ -28,6 +28,14 @@ def register_orders_routes(app):
         if u is None:
             return None, ({"ok": False, "error": "Phiên hết hạn — đăng nhập lại"}, 401)
         return u, None
+
+    def _order_visible(o, u) -> bool:
+        """Multi-tenant: đơn thuộc shop của user (đơn cũ tenant rỗng → chủ nền tảng).
+        u=None (guard tắt trong test) → thấy hết."""
+        if u is None:
+            return True
+        from app.core import tenant as _t
+        return _t.visible(o.get("tenant", "") or "", workspace_of(u))
 
     @app.route("/orders")
     def orders_list():
@@ -43,7 +51,8 @@ def register_orders_routes(app):
             status=request.args.get("status", ""),
             channel=request.args.get("channel", ""),
             q=request.args.get("q", ""),
-            limit=limit, offset=offset)
+            limit=limit, offset=offset,
+            tenant_ws=workspace_of(u))       # multi-tenant: chỉ đơn shop mình
         return {"ok": True, **r}
 
     @app.route("/orders/summary")
@@ -51,7 +60,7 @@ def register_orders_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, **orders.summary()}
+        return {"ok": True, **orders.summary(tenant_ws=workspace_of(u))}
 
     @app.route("/orders/<int:order_id>")
     def orders_get(order_id):
@@ -59,7 +68,7 @@ def register_orders_routes(app):
         if err:
             return err
         o = orders.get(order_id)
-        if not o:
+        if not o or not _order_visible(o, u):
             return {"ok": False, "error": "Không tìm thấy đơn"}, 404
         return {"ok": True, "order": o}
 
@@ -79,7 +88,8 @@ def register_orders_routes(app):
             total=d.get("total") or 0,
             status=d.get("status") or "draft",
             due_at=d.get("due_at") or None,
-            note=d.get("note") or "")
+            note=d.get("note") or "",
+            tenant=workspace_of(u))          # multi-tenant: đơn tay thuộc shop tạo
         log.info(f"[orders] {u['username']} tạo tay {o['code']}")
         return {"ok": True, "order": o}
 
@@ -91,6 +101,10 @@ def register_orders_routes(app):
         d = request.get_json(force=True, silent=True) or {}
         if "status" in d and d["status"] not in orders.STATUSES:
             return {"ok": False, "error": "Trạng thái không hợp lệ"}, 400
+        cur = orders.get(order_id)
+        if not cur or not _order_visible(cur, u):
+            return {"ok": False, "error": "Không tìm thấy đơn"}, 404
+        d.pop("tenant", None)               # không cho đổi chủ sở hữu đơn qua PATCH
         o = orders.update(order_id, **d)
         if not o:
             return {"ok": False, "error": "Không tìm thấy đơn"}, 404
@@ -101,6 +115,9 @@ def register_orders_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        cur = orders.get(order_id)
+        if cur and not _order_visible(cur, u):
+            return {"ok": False, "error": "Không tìm thấy đơn"}, 404
         orders.remove(order_id)
         return {"ok": True}
 

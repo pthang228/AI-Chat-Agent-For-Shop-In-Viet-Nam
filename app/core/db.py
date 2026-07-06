@@ -36,8 +36,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     messages           TEXT NOT NULL DEFAULT '[]',
     avatar             TEXT NOT NULL DEFAULT '',   -- URL ảnh đại diện khách (kênh cung cấp)
     assigned_to        TEXT NOT NULL DEFAULT '',   -- nhân viên được phân công (username)
+    tenant             TEXT NOT NULL DEFAULT '',   -- SHOP sở hữu hội thoại (username chủ) — multi-tenant
     PRIMARY KEY (account, user_id)
 );
+-- (index idx_sessions_tenant tạo trong _migrate_tenant — SAU khi ALTER thêm cột
+--  cho DB cũ; đặt ở đây sẽ nổ "no such column" với DB tạo trước multi-tenant)
 CREATE INDEX IF NOT EXISTS idx_sessions_acc_lu ON sessions(account, last_updated);
 
 CREATE TABLE IF NOT EXISTS stats_archive (
@@ -288,6 +291,7 @@ class Db:
         with self.lock:
             self.conn.executescript(_SCHEMA)
             self._migrate_columns()
+            self._migrate_tenant()
             self.conn.commit()
 
     def _migrate_columns(self):
@@ -310,6 +314,12 @@ class Db:
             ("users", "owner_username", "TEXT NOT NULL DEFAULT ''"),
             # Hội thoại được PHÂN CÔNG cho nhân viên nào (username, rỗng = chưa gán)
             ("sessions", "assigned_to", "TEXT NOT NULL DEFAULT ''"),
+            # MULTI-TENANT: shop nào sở hữu dòng dữ liệu này (username chủ shop).
+            # Dữ liệu cũ (rỗng) được gán về CHỦ ĐẦU TIÊN ở _migrate_tenant().
+            ("sessions", "tenant",         "TEXT NOT NULL DEFAULT ''"),
+            ("orders", "tenant",           "TEXT NOT NULL DEFAULT ''"),
+            ("canned_replies", "tenant",   "TEXT NOT NULL DEFAULT ''"),
+            ("photo_sets", "tenant",       "TEXT NOT NULL DEFAULT ''"),
         ]
         for table, col, decl in adds:
             try:
@@ -318,6 +328,33 @@ class Db:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
             except Exception:
                 pass
+
+    def _migrate_tenant(self):
+        """MULTI-TENANT migrate 1 lần: dữ liệu cũ (tenant='') gán về CHỦ ĐẦU TIÊN
+        (user không phải nhân viên, tạo sớm nhất) — trước đây app single-tenant nên
+        toàn bộ dữ liệu thuộc về chủ đó. DB mới/trống → không làm gì."""
+        try:
+            # Index tạo ở đây (sau ALTER của _migrate_columns) — không đặt trong
+            # _SCHEMA vì DB cũ chưa có cột lúc executescript chạy.
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant)")
+        except Exception:
+            pass
+        try:
+            rows = self.conn.execute(
+                "SELECT username FROM users WHERE COALESCE(role,'owner') != 'staff' "
+                "ORDER BY created_at LIMIT 1").fetchall()
+            if not rows:
+                return
+            first = rows[0][0]
+            for table in ("sessions", "orders", "canned_replies", "photo_sets"):
+                try:
+                    self.conn.execute(
+                        f"UPDATE {table} SET tenant=? WHERE tenant=''", (first,))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def execute(self, sql, params=()):
         with self.lock:

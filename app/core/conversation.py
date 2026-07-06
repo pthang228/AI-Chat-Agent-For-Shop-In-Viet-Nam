@@ -35,6 +35,7 @@ class ConversationState:
     selected_room: Optional[str] = None
     stage: str = "greeting"  # greeting | checking | offering | confirmed | owner_notified
     assigned_to: str = ""               # nhân viên được phân công (username, rỗng = chưa gán)
+    tenant: str = ""                    # SHOP sở hữu hội thoại (username chủ) — multi-tenant
     owner_active: bool = False          # True khi chủ nhà đang tự xử lý
     owner_active_since: Optional[datetime] = None   # Thời điểm bật owner_active
     last_updated: datetime = field(default_factory=datetime.now)
@@ -121,6 +122,7 @@ class ConversationManager:
                         json.dumps(s.get("messages", []), ensure_ascii=False),
                         "",   # avatar — JSON cũ không có
                         "",   # assigned_to — JSON cũ không có
+                        "",   # tenant — JSON cũ không có (migrate_tenant sẽ gán chủ đầu tiên)
                     ))
                 if rows:
                     self._db.executemany(self._INSERT_SQL, rows)
@@ -164,6 +166,7 @@ class ConversationManager:
                     selected_room = r["selected_room"],
                     stage         = r["stage"] or "greeting",
                     assigned_to   = (r["assigned_to"] if "assigned_to" in r.keys() else "") or "",
+                    tenant        = (r["tenant"] if "tenant" in r.keys() else "") or "",
                     owner_active  = bool(r["owner_active"]),
                     owner_active_since = datetime.fromisoformat(oas) if oas else None,
                     last_updated  = datetime.fromisoformat(lu) if lu else datetime.now(),
@@ -177,7 +180,7 @@ class ConversationManager:
     _INSERT_SQL = (
         "INSERT OR REPLACE INTO sessions (account, user_id, name, checkin, checkout,"
         " selected_room, stage, owner_active, owner_active_since, last_updated,"
-        " messages, avatar, assigned_to) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        " messages, avatar, assigned_to, tenant) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
     def _row(self, s: ConversationState):
         return (
@@ -189,6 +192,7 @@ class ConversationManager:
             json.dumps(s.messages, ensure_ascii=False),
             s.avatar or "",
             s.assigned_to or "",
+            s.tenant or "",
         )
 
     def save(self):

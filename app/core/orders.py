@@ -50,7 +50,7 @@ def _row_to_order(r) -> dict:
 # ── CRUD ─────────────────────────────────────────────────────────────
 
 def create(channel="", user_id="", customer_name="", phone="", order_type="booking",
-           items=None, total=0, status="draft", due_at=None, note="") -> dict:
+           items=None, total=0, status="draft", due_at=None, note="", tenant="") -> dict:
     if order_type not in ORDER_TYPES:
         order_type = "booking"
     if status not in STATUSES:
@@ -62,11 +62,11 @@ def create(channel="", user_id="", customer_name="", phone="", order_type="booki
         timeline = [{"at": now, "event": f"Tạo đơn ({status})"}]
         cur = db.conn.execute(
             "INSERT INTO orders (code, channel, user_id, customer_name, phone, order_type,"
-            " items, total, status, due_at, note, timeline, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " items, total, status, due_at, note, timeline, created_at, updated_at, tenant)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             ("", channel, user_id, customer_name, phone, order_type,
              json.dumps(items, ensure_ascii=False), int(total or 0), status, due_at,
-             note, json.dumps(timeline, ensure_ascii=False), now, now))
+             note, json.dumps(timeline, ensure_ascii=False), now, now, tenant or ""))
         code = f"DH{cur.lastrowid:04d}"
         db.conn.execute("UPDATE orders SET code=? WHERE id=?", (code, cur.lastrowid))
         db.conn.commit()
@@ -84,8 +84,21 @@ def get_by_code(code) -> dict | None:
     return _row_to_order(rows[0]) if rows else None
 
 
-def list_orders(status="", channel="", q="", limit=100, offset=0) -> dict:
+def _tenant_where(tenant_ws):
+    """Mảnh WHERE multi-tenant: chủ nền tảng thấy cả đơn cũ chưa gắn tenant."""
+    from app.core import tenant as _t
+    if not tenant_ws:
+        return None, []
+    if tenant_ws == _t.default_owner():
+        return "(tenant=? OR tenant='')", [tenant_ws]
+    return "tenant=?", [tenant_ws]
+
+
+def list_orders(status="", channel="", q="", limit=100, offset=0, tenant_ws=None) -> dict:
     where, params = [], []
+    tw, tp = _tenant_where(tenant_ws)
+    if tw:
+        where.append(tw); params += tp
     if status:
         where.append("status=?"); params.append(status)
     if channel:
@@ -151,15 +164,20 @@ def remove(order_id):
     get_db().execute("DELETE FROM orders WHERE id=?", (order_id,))
 
 
-def summary() -> dict:
-    """Đếm theo trạng thái + doanh thu (đơn đã thanh toán trở lên, trừ huỷ)."""
+def summary(tenant_ws=None) -> dict:
+    """Đếm theo trạng thái + doanh thu (đơn đã thanh toán trở lên, trừ huỷ).
+    tenant_ws: multi-tenant — chỉ đếm đơn của shop này."""
     db = get_db()
+    tw, tp = _tenant_where(tenant_ws)
+    wh = f" WHERE {tw}" if tw else ""
+    and_wh = f" AND {tw}" if tw else ""
     by_status = {s: 0 for s in STATUSES}
-    for r in db.query("SELECT status, COUNT(*) AS n FROM orders GROUP BY status"):
+    for r in db.query(f"SELECT status, COUNT(*) AS n FROM orders{wh} GROUP BY status", tuple(tp)):
         if r["status"] in by_status:
             by_status[r["status"]] = r["n"]
     rev = db.query(
-        "SELECT COALESCE(SUM(total),0) AS s FROM orders WHERE status IN ('paid','fulfilled','done')")
+        "SELECT COALESCE(SUM(total),0) AS s FROM orders WHERE status IN ('paid','fulfilled','done')"
+        + and_wh, tuple(tp))
     return {"by_status": by_status, "revenue": rev[0]["s"],
             "total": sum(by_status.values())}
 
@@ -250,6 +268,7 @@ def create_from_conversation(user_id: str, conv, channel: str) -> dict | None:
             status="draft",
             due_at=due,
             note=data.get("note") or "",
+            tenant=getattr(conv, "tenant", "") or "",   # multi-tenant: đơn thuộc shop của hội thoại
         )
     except Exception as e:
         log.error(f"[Orders] create_from_conversation lỗi: {e}", exc_info=True)

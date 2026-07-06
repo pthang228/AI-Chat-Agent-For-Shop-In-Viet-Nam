@@ -29,7 +29,7 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 
 from app.core.config import Config
-from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
+from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary, _tenant_visible
 from app.web_api.stats_util import compute_stats
 from app.web_api.api_guard import install_cors, install_auth_guard, submit
 
@@ -92,6 +92,11 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "/webchat", conv_manager, channel, account="webchat")
+
+    # MULTI-TENANT: chốt chặn tập trung — mọi thao tác lên 1 hội thoại phải
+    # thuộc shop của user đăng nhập (cover cả chat_tools send-media/assign...)
+    from app.web_api.bridge import install_tenant_conv_guard
+    install_tenant_conv_guard(app, conv_manager)
 
     @app.route("/health")
     def health():
@@ -159,6 +164,11 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
         # Gate bật/tắt + owner-takeover + gói/quota — NHƯNG webchat là hộp thư
         # của CHÍNH MÌNH: tin khách phải được LƯU kể cả khi bot im (chủ trả lời
         # tay từ dashboard), khác các kênh webhook (nền tảng giữ hộ inbox).
+        # MULTI-TENANT: đóng dấu shop sở hữu hội thoại (chủ site này) — làm cả
+        # khi gated vì tin vẫn được LƯU vào hộp thư
+        from app.core import tenant as _tenant
+        _tenant.assign(conv_manager, user_id, store.get_owner_username(site))
+
         gated = None
         if not _channel_enabled(_load_bot_state(), f"webchat:{site}"):
             gated = "bot tắt"
@@ -311,6 +321,8 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
             uid_site = parts[1] if len(parts) >= 3 else ""
             if site_id and uid_site != site_id:
                 continue
+            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
+                continue
             rows.append(_conv_summary(uid, conv))
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
         total = len(rows)
@@ -320,7 +332,7 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
     @app.route("/webchat/conversations/<user_id>")
     def wc_conversation(user_id):
         conv = conv_manager._sessions.get(user_id)
-        if not conv:
+        if not conv or not _tenant_visible(conv):
             return {"error": "not found"}, 404
         msgs = [
             {"role": m.get("role"), "content": m.get("content", "")}

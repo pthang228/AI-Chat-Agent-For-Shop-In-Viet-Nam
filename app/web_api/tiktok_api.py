@@ -19,7 +19,7 @@ import requests
 from flask import Flask, request, jsonify
 
 from app.core.config import Config
-from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
+from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary, _tenant_visible
 from app.web_api.stats_util import compute_stats
 from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
@@ -99,6 +99,10 @@ def handle_event(business_id, sender, text, name, brain, conv_manager, store=Non
         log.info(f"[TT] gói/quota chủ ({owner}) không cho phép → bỏ qua {user_id}")
         return
 
+    # MULTI-TENANT: đóng dấu shop sở hữu hội thoại (chủ account này)
+    from app.core import tenant
+    tenant.assign(conv_manager, user_id, owner)
+
     log.info(f"[TT] biz={business_id} {sender} | {text[:80]!r}")
 
     def _run():
@@ -136,6 +140,11 @@ def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "/tiktok", conv_manager, channel, account="tiktok")
+
+    # MULTI-TENANT: chốt chặn tập trung — mọi thao tác lên 1 hội thoại phải
+    # thuộc shop của user đăng nhập (cover cả chat_tools send-media/assign...)
+    from app.web_api.bridge import install_tenant_conv_guard
+    install_tenant_conv_guard(app, conv_manager)
 
     @app.route("/health")
     def health():
@@ -291,6 +300,8 @@ def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
             uid_biz = parts[1] if len(parts) >= 3 else ""
             if business_id and uid_biz != business_id:
                 continue
+            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
+                continue
             rows.append(_conv_summary(uid, conv))
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
         total = len(rows)
@@ -300,7 +311,7 @@ def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
     @app.route("/tiktok/conversations/<user_id>")
     def tt_conversation(user_id):
         conv = conv_manager._sessions.get(user_id)
-        if not conv:
+        if not conv or not _tenant_visible(conv):
             return {"error": "not found"}, 404
         msgs = [
             {"role": m.get("role"), "content": m.get("content", "")}

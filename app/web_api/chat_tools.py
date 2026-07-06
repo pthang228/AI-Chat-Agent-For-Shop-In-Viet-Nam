@@ -176,14 +176,27 @@ def register_chat_tools(app, prefix: str, conv_manager, channel, account: str,
             "customer_name": o.get("customer_name") or "",
         }}
 
-    # ── Câu trả lời mẫu (kho CHUNG — chỉ gắn ở bridge 5005) ─────────
+    # ── Câu trả lời mẫu (theo SHOP — multi-tenant, gắn ở bridge 5005) ──
     if with_canned:
         from app.core.db import get_db
         db = get_db()
 
+        def _cn_ws():
+            from app.core import tenant
+            return tenant.current_workspace_or_none()
+
         @app.route("/canned")
         def canned_list():
-            rows = db.query("SELECT id, title, content FROM canned_replies ORDER BY id")
+            from app.core import tenant as _t
+            ws = _cn_ws()
+            if not ws:
+                rows = db.query("SELECT id, title, content FROM canned_replies ORDER BY id")
+            elif ws == _t.default_owner():   # chủ nền tảng thấy cả câu mẫu cũ chưa gắn
+                rows = db.query("SELECT id, title, content FROM canned_replies "
+                                "WHERE tenant=? OR tenant='' ORDER BY id", (ws,))
+            else:
+                rows = db.query("SELECT id, title, content FROM canned_replies "
+                                "WHERE tenant=? ORDER BY id", (ws,))
             return jsonify([dict(r) for r in rows])
 
         @app.route("/canned", methods=["POST"])
@@ -195,12 +208,17 @@ def register_chat_tools(app, prefix: str, conv_manager, channel, account: str,
                 return {"ok": False, "error": "nội dung trống"}, 400
             title = (d.get("title") or "").strip()[:60] or content[:30]
             cur = db.execute(
-                "INSERT INTO canned_replies (title, content, created_at) VALUES (?,?,?)",
-                (title, content[:2000], datetime.now().isoformat()))
+                "INSERT INTO canned_replies (title, content, created_at, tenant) VALUES (?,?,?,?)",
+                (title, content[:2000], datetime.now().isoformat(), _cn_ws() or ""))
             return {"ok": True, "id": cur.lastrowid, "title": title}
 
         @app.route("/canned/<int:cid>", methods=["DELETE"])
         def canned_del(cid):
+            from app.core import tenant as _t
+            ws = _cn_ws()
+            rows = db.query("SELECT tenant FROM canned_replies WHERE id=?", (cid,))
+            if rows and ws and not _t.visible(rows[0]["tenant"] or "", ws):
+                return {"ok": False, "error": "not found"}, 404
             db.execute("DELETE FROM canned_replies WHERE id=?", (cid,))
             return {"ok": True}
 
