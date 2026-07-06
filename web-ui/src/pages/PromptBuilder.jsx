@@ -445,8 +445,7 @@ export default function PromptBuilder() {
         {/* Bước 2: link dữ liệu (tuỳ chọn) */}
         <div className="panel set-card" style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>2️⃣ Link dữ liệu <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn — có link thì AI đọc thêm)</span></h3>
-          <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets… <b>Link phải để CÔNG KHAI</b> (ai mở cũng xem được, không cần đăng nhập) thì AI mới đọc được — xem hướng dẫn ở dưới.
-            Ô bên cạnh: <b>tự ghi mục đích / nội dung link</b> để AI hiểu link đó dùng làm gì (vd "bảng giá phòng", "menu"). Nếu là <b>Google Sheet lịch đặt chỗ</b>, hệ thống tự nhận ra và nối để bot <b>tra lịch trực tiếp</b>.</p>
+          <p className="hint">Dán link (bảng giá, website, Google Docs/Sheets…) — <b>link phải để công khai</b>. Ô bên cạnh ghi <b>link đó là gì</b> (vd "bảng giá phòng") cho AI hiểu. Link <b>Google Sheet lịch đặt chỗ</b> sẽ tự nối để bot tra lịch.</p>
           {links.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <input style={{ flex: "1 1 240px" }} placeholder="https://…" value={l.url}
@@ -481,19 +480,12 @@ export default function PromptBuilder() {
           {/* Hướng dẫn công khai link — bấm mở khi cần */}
           <details className="prompt-help" style={{ marginTop: 12 }}>
             <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13.5 }}>
-              ❓ Link không đọc được? Cách mở CÔNG KHAI link cho AI đọc
+              ❓ Link không đọc được?
             </summary>
             <div className="hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
-              AI chỉ đọc được link <b>ai mở cũng xem được</b> (không cần đăng nhập). Cách mở:
-              <br />• <b>Google Docs / Sheets:</b> File → Share → Chia sẻ chung → đổi thành
-              <b> "Bất kỳ ai có đường liên kết"</b> (quyền Người xem). Hoặc File → Chia sẻ →
-              <b> Xuất bản lên web</b> rồi dán link vừa tạo.
-              <br />• <b>Google Sheet lịch đặt chỗ:</b> ngoài bước trên, còn phải <b>Share</b> thêm cho
-              email service account ở trên (bot cần quyền đọc trực tiếp để tra lịch).
-              <br />• <b>Website / bài viết Facebook:</b> để ở chế độ công khai (mở bằng cửa sổ ẩn danh
-              thử — nếu xem được là ổn).
-              <br />• <b>Facebook cá nhân / trang riêng tư, file Drive giới hạn:</b> AI KHÔNG đọc được —
-              hãy dán thẳng nội dung vào ô "Hướng dẫn thêm" bên dưới.
+              Link phải để <b>công khai</b> (ai có link cũng xem được, không cần đăng nhập).
+              <br />• <b>Google Docs / Sheets:</b> bấm <b>Share</b> → đổi sang <b>"Bất kỳ ai có đường liên kết"</b>.
+              <br />• <b>Link riêng tư</b> (Facebook cá nhân, Drive giới hạn…): AI không đọc được — dán thẳng nội dung vào ô hướng dẫn bên dưới.
             </div>
           </details>
         </div>
