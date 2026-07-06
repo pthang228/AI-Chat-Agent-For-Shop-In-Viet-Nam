@@ -36,6 +36,12 @@ export function currentUser() {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
+// Vai trò team: chủ (owner — mặc định, acc cũ chưa có role) hay nhân viên (staff).
+// Nhân viên chỉ thấy Hộp thư / Khách hàng / Đơn hàng / Thống kê.
+export function isStaff(user) {
+  return (user || currentUser())?.role === "staff";
+}
+
 function cacheUser(user) {
   const s = localStorage.getItem(TOKEN_KEY) ? localStorage : sessionStorage;
   s.setItem(USER_KEY, JSON.stringify(user));

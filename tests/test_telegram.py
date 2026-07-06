@@ -21,12 +21,15 @@ sys.modules.update({
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
 os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
+os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
 
 from pathlib import Path
 from app.core.conversation import ConversationManager
 from app.channels.telegram import TelegramChannel
 import app.web_api.telegram_api as tg
+import app.core.http_util as httputil   # send đi qua đây → patch requests.post ở đây
 
 PASS = FAIL = 0
 def check(cond, name, detail=""):
@@ -53,11 +56,11 @@ ch._sent.clear(); ch.send_text("tg:1", "x" * 9000)
 check(len(ch._sent) == 3, "A3 long_text_split", f"n={len(ch._sent)}")
 
 # A4: gửi thật dùng token (patch requests) → đúng URL + chat_id
-with patch.object(tg_mod := __import__('app.channels.telegram', fromlist=['requests']), 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, data=None, files=None, timeout=None):
         calls.append((url, data)); m = MagicMock(); m.status_code = 200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch2 = TelegramChannel(token="TESTTOKEN", conv_manager=cm)
     ch2.send_text("tg:777", "hi")
     check(calls and "bot TESTTOKEN".replace(" ", "") in calls[-1][0].replace("bot", "bot") and "/sendMessage" in calls[-1][0],
@@ -171,11 +174,11 @@ ch_mt = TelegramChannel(store=store, token="", conv_manager=cm)
 check(ch_mt._parse("tg:BOT1:CHAT9") == ("BOT1", "CHAT9"), "D0 parse_3part")
 check(ch_mt._parse("tg:55") == (None, "55"), "D0 parse_2part")
 # D1: token theo bot + D2: notify_owner đúng chủ của bot (ctx)
-with patch.object(tgch, 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, data=None, files=None, timeout=None):
         calls.append((url, data)); m = MagicMock(); m.status_code = 200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch_mt.send_text("tg:BOT1:CHAT9", "hi")
     check(calls and "botTOK1/sendMessage" in calls[-1][0] and calls[-1][1]["chat_id"] == "CHAT9",
           "D1 send_uses_bot_token", f"{calls[-1] if calls else None}")

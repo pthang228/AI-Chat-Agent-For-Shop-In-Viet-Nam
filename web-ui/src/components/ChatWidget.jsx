@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 // Bong bóng chat tư vấn DỊCH VỤ (kiểu Crisp) — KÉO THẢ được + bấm ✕ để xoá.
 // Chat với bot bán hàng của NovaChat (backend /support/chat, không cần đăng nhập).
 
-const API = "http://localhost:5005";
+const API = "http://127.0.0.1:5005";
 const STORE_KEY = "hb_support_chat";
 const POS_KEY = "hb_cw_pos";       // {left, top} px — vị trí đã kéo
 const HIDDEN_KEY = "hb_cw_hidden"; // "1" = đã xoá bong bóng

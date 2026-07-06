@@ -23,6 +23,7 @@ import requests
 
 from app.core.config import Config
 from app.core.channel import Channel
+from app.core.http_util import post_with_retry
 from app.core import owner_call, telegram_owner
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,9 @@ class TelegramChannel(Channel):
 
     def set_ctx(self, bot_id):
         self._ctx.bot_id = bot_id
+
+    def get_ctx(self):
+        return getattr(self._ctx, "bot_id", None)
 
     def _cur_bot(self):
         return getattr(self._ctx, "bot_id", None)
@@ -85,15 +89,14 @@ class TelegramChannel(Channel):
         if not token:
             log.info(f"[TG mock] {method} {data}")
             return None
-        try:
-            r = requests.post(f"https://api.telegram.org/bot{token}/{method}",
-                              data=data, files=files, timeout=30)
-            if r.status_code >= 400:
-                log.error(f"[TG] {method} {r.status_code}: {r.text[:300]}")
-            return r
-        except Exception as e:
-            log.error(f"[TG] lỗi {method}: {e}")
+        r = post_with_retry(f"https://api.telegram.org/bot{token}/{method}",
+                            data=data, files=files, timeout=30,
+                            retries=Config.SEND_RETRIES, log_tag=f"TG {method}")
+        if r is None:
             return None
+        if r.status_code >= 400:
+            log.error(f"[TG] {method} {r.status_code}: {r.text[:300]}")
+        return r
 
     def _send_photo_file(self, token, chat_id: str, path: Path):
         self._sent.append(("sendPhoto", {"chat_id": chat_id, "path": str(path)}))
@@ -131,9 +134,49 @@ class TelegramChannel(Channel):
         for i in range(0, len(text), MAX_LEN):
             self._post(token, "sendMessage", {"chat_id": chat_id, "text": text[i:i + MAX_LEN]})
 
+    def send_file(self, user_id: str, path, url: str, kind: str, caption: str = "") -> bool:
+        """Telegram gửi ảnh/video/ghi âm THẬT (upload multipart local file) — không
+        phụ thuộc URL/tunnel."""
+        from pathlib import Path as _P
+        bot_id, chat_id = self._parse(user_id)
+        token = self._token_for(bot_id)
+        method, field = {"image": ("sendPhoto", "photo"),
+                         "video": ("sendVideo", "video"),
+                         "audio": ("sendAudio", "audio")}.get(kind, ("sendDocument", "document"))
+        self._sent.append((method, {"chat_id": chat_id, "path": str(path)}))
+        if not token:
+            log.info(f"[TG mock] {method} {path}")
+            return True
+        try:
+            with open(_P(path), "rb") as f:
+                data = {"chat_id": chat_id}
+                if caption:
+                    data["caption"] = caption[:1000]
+                r = requests.post(f"https://api.telegram.org/bot{token}/{method}",
+                                  data=data, files={field: f}, timeout=120)
+            if r.status_code >= 400:
+                log.error(f"[TG] {method} {r.status_code}: {r.text[:200]}")
+                # định dạng bị từ chối (vd webm ghi âm) → thử gửi dạng tài liệu
+                if method != "sendDocument":
+                    with open(_P(path), "rb") as f:
+                        r = requests.post(f"https://api.telegram.org/bot{token}/sendDocument",
+                                          data={"chat_id": chat_id}, files={"document": f}, timeout=120)
+                    return r.status_code < 400
+                return False
+            return True
+        except Exception as e:
+            log.error(f"[TG] lỗi {method} {path}: {e}")
+            return False
+
     def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
         bot_id, chat_id = self._parse(user_id)
         return self._send_dir(self._token_for(bot_id), chat_id, Path(folder), caption)
+
+    def send_image_url(self, user_id: str, url: str, caption: str = "") -> None:
+        bot_id, chat_id = self._parse(user_id)
+        # Telegram sendPhoto nhận URL trực tiếp — không cần tải về
+        self._post(self._token_for(bot_id), "sendPhoto",
+                   {"chat_id": chat_id, "photo": url, "caption": caption or ""})
 
     def send_room_photos(self, user_id: str, room_names: list) -> None:
         bot_id, chat_id = self._parse(user_id)

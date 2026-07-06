@@ -1,9 +1,10 @@
 // Gọi server Telegram (telegram_api Flask, cổng 5007) — đã bật CORS.
-const TG_URL = "http://localhost:5007";
+import { withAuth } from "./apiAuth.js";
+const TG_URL = "http://127.0.0.1:5007";
 
 async function j(path, opts) {
   try {
-    const r = await fetch(TG_URL + path, opts);
+    const r = await fetch(TG_URL + path, withAuth(opts));
     let body = null;
     try { body = await r.json(); } catch { /* ignore */ }
     return { ok: r.ok, status: r.status, body };

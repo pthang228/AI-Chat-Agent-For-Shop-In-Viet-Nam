@@ -1,7 +1,8 @@
 // Đăng nhập Google bằng Google Identity Services (GIS) — chạy phía trình duyệt.
 // Cần OAuth Client ID (tạo ở Google Cloud Console) đặt trong web-ui/.env:
 //   VITE_GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
-// và thêm origin (vd http://localhost:5173) vào "Authorized JavaScript origins".
+// và thêm origin vào "Authorized JavaScript origins" — thêm CẢ http://localhost:5173
+// LẪN http://127.0.0.1:5173 (origin tính theo URL trên thanh địa chỉ trình duyệt).
 
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 

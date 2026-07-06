@@ -11,9 +11,11 @@ Khách (shop) DÁN shop_id + access_token trong web → /shopee/connect xác th�
 Tôn trọng nút bật/tắt bot (data/bot_state.json) + owner-takeover, giống mọi kênh.
 """
 
+import hashlib
+import hmac
 import time
 import logging
-import threading
+import threading   # test cũ patch sp.threading.Thread (nay dispatch dùng submit)
 
 import requests
 from flask import Flask, request, jsonify
@@ -21,8 +23,25 @@ from flask import Flask, request, jsonify
 from app.core.config import Config
 from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
 from app.web_api.stats_util import compute_stats
+from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
 log = logging.getLogger("shopee_api")
+
+_dedup = DedupCache(500)   # nhớ message_id đã xử lý — Shopee gửi lại push khi ta 200 chậm
+
+
+def valid_signature(raw_body: bytes, authorization: str) -> bool:
+    """Chữ ký push Shopee: Authorization = HMAC-SHA256(partner_key, url|body).
+    Best-effort: chưa cấu hình partner_key → cho qua; đã cấu hình nhưng CHƯA bật
+    Config.SHOPEE_WEBHOOK_STRICT → cho qua (spec push chưa kiểm chứng với app được
+    duyệt). Bật strict + lệch → chặn."""
+    key = Config.SHOPEE_PARTNER_KEY
+    if not key or not Config.SHOPEE_WEBHOOK_STRICT:
+        return True
+    base = request.url + "|" + (raw_body or b"").decode("utf-8", "ignore")
+    expected = hmac.new(key.encode(), base.encode(), hashlib.sha256).hexdigest()
+    got = (authorization or "").split("=", 1)[-1].strip()
+    return hmac.compare_digest(expected, got)
 
 
 def _uid(shop_id, buyer_id):
@@ -30,7 +49,7 @@ def _uid(shop_id, buyer_id):
 
 
 def parse_event(payload: dict):
-    """Payload webhook push Shopee → list[(shop_id, buyer_id, text, name)].
+    """Payload webhook push Shopee → list[(shop_id, buyer_id, text, msg_id, name)].
 
     Mapping field gói gọn ở đây (spec Shopee có thể đổi khi app được duyệt).
     Chấp nhận các dạng:
@@ -49,7 +68,7 @@ def parse_event(payload: dict):
     for ev in events:
         if not isinstance(ev, dict):
             continue
-        shop_id, sender, text, name = "", "", "", ""
+        shop_id, sender, text, msg_id, name = "", "", "", "", ""
 
         if "code" in ev:                       # dạng push chuẩn Shopee
             if ev.get("code") != 10:           # 10 = new message
@@ -60,6 +79,7 @@ def parse_event(payload: dict):
                 continue
             c = data.get("content") or {}
             sender = str(c.get("from_id") or "").strip()
+            msg_id = str(c.get("message_id") or c.get("msg_id") or "")
             mtype = str(c.get("message_type") or "text")
             inner = c.get("content") or {}
             if mtype == "text":
@@ -74,8 +94,10 @@ def parse_event(payload: dict):
             raw_msg = ev.get("message")
             if isinstance(raw_msg, dict):
                 text = str(raw_msg.get("text") or "")
+                msg_id = str(raw_msg.get("message_id") or raw_msg.get("msg_id") or "")
             else:
                 text = str(ev.get("text") or "")
+                msg_id = str(ev.get("msg_id") or "")
             name = str(ev.get("sender_name") or ev.get("username") or "").strip()
 
         text = text.strip()
@@ -83,7 +105,7 @@ def parse_event(payload: dict):
             continue
         if shop_id and sender == shop_id:      # echo tin shop tự gửi
             continue
-        out.append((shop_id, sender, text, name))
+        out.append((shop_id, sender, text, msg_id, name))
     return out
 
 
@@ -133,18 +155,26 @@ def handle_event(shop_id, sender, text, name, brain, conv_manager, store=None):
             except Exception:
                 pass
 
-    threading.Thread(target=_run, daemon=True).start()
+    submit(_run)
 
 
 def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
     app = Flask(__name__)
+    install_cors(app)
+    install_auth_guard(
+        app,
+        public_exact={"/shopee/webhook", "/shopee/config"},
+        public_prefixes=("/media/outbox",),
+        # Nhân viên: chỉ hộp thư — cấm kết nối/ngắt shop, đặt chủ
+        staff_deny=(
+            "/shopee/connect", "DELETE /shopee/shops", "POST /shopee/shops",
+            "/shopee/set-owner", "DELETE /shopee/conversations",
+        ),
+    )
 
-    @app.after_request
-    def _cors(resp):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
+    # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
+    from app.web_api.chat_tools import register_chat_tools
+    register_chat_tools(app, "/shopee", conv_manager, channel, account="shopee")
 
     @app.route("/health")
     def health():
@@ -168,10 +198,15 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
 
     @app.route("/shopee/webhook", methods=["POST"])
     def sp_receive():
+        raw = request.get_data() or b""
+        if not valid_signature(raw, request.headers.get("Authorization", "")):
+            log.warning("[SP] CHẶN push sai chữ ký (SHOPEE_WEBHOOK_STRICT bật)")
+            return {"ok": False, "error": "bad signature"}, 403
         payload = request.get_json(force=True, silent=True) or {}
-        # (Chữ ký push: Authorization = HMAC(url|body, partner_key) — verify
-        # best-effort như Meta: chưa chặn để không rớt tin khi Shopee đổi format.)
-        for shop_id, sender, text, name in parse_event(payload):
+        for shop_id, sender, text, msg_id, name in parse_event(payload):
+            if _dedup.seen(msg_id):
+                log.info(f"[SP] bỏ qua push trùng msg_id={msg_id}")
+                continue
             handle_event(shop_id, sender, text, name, brain, conv_manager, store)
         return {"ok": True}
 
@@ -319,8 +354,10 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
         return jsonify({
             "user_id": user_id,
             "name": getattr(conv, "name", ""),
+            "avatar": getattr(conv, "avatar", "") or "",
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
+            "assigned_to": getattr(conv, "assigned_to", "") or "",
             "messages": msgs,
         })
 
@@ -342,6 +379,9 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
         conv.add_assistant_message(text)
         conv.set_owner_active(True)
         conv_manager.save()
+        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
+        from app.core import knowledge_learn
+        submit(knowledge_learn.suggest_from_reply, user_id, "shopee", list(conv.messages), text)
         return {"ok": True}
 
     @app.route("/shopee/conversations/<user_id>/toggle-bot", methods=["POST"])

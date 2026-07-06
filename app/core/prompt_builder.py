@@ -88,7 +88,8 @@ def fetch_link(url: str) -> dict:
 def _call_ai_long(messages: list) -> str:
     if Config.DEEPSEEK_API_KEY:
         try:
-            client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+            client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com",
+                            timeout=Config.AI_LONG_TIMEOUT)
             r = client.chat.completions.create(
                 model="deepseek-chat", messages=messages, max_tokens=6000, temperature=0.4)
             log.info("[PromptBuilder] dùng DeepSeek")
@@ -97,7 +98,8 @@ def _call_ai_long(messages: list) -> str:
             log.error(f"[PromptBuilder] DeepSeek lỗi: {e}")
     if Config.GROQ_API_KEY:
         try:
-            client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+            client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1",
+                            timeout=Config.AI_LONG_TIMEOUT)
             r = client.chat.completions.create(
                 model="llama-3.3-70b-versatile", messages=messages, max_tokens=6000, temperature=0.4)
             log.info("[PromptBuilder] dùng Groq")

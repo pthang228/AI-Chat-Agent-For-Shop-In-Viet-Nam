@@ -14,6 +14,7 @@ import requests
 
 from app.core.config import Config
 from app.core.channel import Channel
+from app.core.http_util import post_with_retry
 from app.core import owner_call
 
 log = logging.getLogger(__name__)
@@ -33,14 +34,13 @@ class ZaloNodeChannel(Channel):
     # ── Gọi Node ──────────────────────────────────────────────────
 
     def _post(self, path: str, payload: dict):
-        try:
-            r = requests.post(f"{self.node_url}{path}", json=payload, timeout=60)
-            if r.status_code >= 400:
-                log.error(f"[Node] {path} → {r.status_code} {r.text[:200]}")
-            return r
-        except Exception as e:
-            log.error(f"[Node] gọi {path} lỗi: {e}")
+        r = post_with_retry(f"{self.node_url}{path}", json=payload, timeout=60,
+                            retries=Config.SEND_RETRIES, log_tag=f"Node {path}")
+        if r is None:
             return None
+        if r.status_code >= 400:
+            log.error(f"[Node] {path} → {r.status_code} {r.text[:200]}")
+        return r
 
     # ── Giao diện Channel ─────────────────────────────────────────
 
@@ -96,6 +96,41 @@ class ZaloNodeChannel(Channel):
 
     def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
         return self._send_dir(user_id, Path(folder), caption)
+
+    def send_file(self, user_id: str, path, url: str, kind: str, caption: str = "") -> bool:
+        """Zalo Node đọc file LOCAL trực tiếp (KHÔNG tải qua URL/tunnel — tunnel
+        hay chết + Node cùng máy). Ảnh: gửi thật qua /send-image. Video/ghi âm:
+        zca-js/Node chưa hỗ trợ gửi file → trả False (chat_tools báo rõ)."""
+        if kind == "image":
+            try:
+                if caption:
+                    self.send_text(user_id, caption)
+                self._mark_bot_send(user_id)
+                self._post("/send-image", {"userId": user_id, "paths": [str(Path(path).resolve())]})
+                return True
+            except Exception as e:
+                log.error(f"[ZaloNode] send_file ảnh lỗi: {e}")
+                return False
+        return False   # Zalo cá nhân chưa gửi được video/ghi âm
+
+    def send_image_url(self, user_id: str, url: str, caption: str = "") -> None:
+        # Node /send-image chỉ nhận path local → tải ảnh về file tạm rồi gửi;
+        # tải lỗi → fallback gửi text kèm link (Zalo hiện preview).
+        try:
+            import requests as _rq
+            r = _rq.get(url, timeout=15)
+            r.raise_for_status()
+            tmp_dir = Config.DATA_DIR / "qr_tmp"
+            tmp_dir.mkdir(exist_ok=True)
+            f = tmp_dir / f"img_{abs(hash(url)) % 10**8}.png"
+            f.write_bytes(r.content)
+            if caption:
+                self.send_text(user_id, caption)
+            self._mark_bot_send(user_id)
+            self._post("/send-image", {"userId": user_id, "paths": [str(f.resolve())]})
+        except Exception as e:
+            log.error(f"[ZaloNode] send_image_url lỗi ({e}) → gửi link")
+            self.send_text(user_id, (caption + "\n" if caption else "") + url)
 
     def send_room_photos(self, user_id: str, room_names: list[str]) -> None:
         base = Path(Config.ROOMS_PHOTOS_DIR)

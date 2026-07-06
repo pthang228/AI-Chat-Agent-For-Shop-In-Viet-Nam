@@ -21,6 +21,8 @@ Start-Svc 'python' @('scripts\run_meta.py')    $ROOT                         'ru
 Start-Svc 'python' @('-m','app.main_telegram') $ROOT                         'telegram'
 Start-Svc 'python' @('-m','app.main_tiktok')   $ROOT                         'tiktok'
 Start-Svc 'python' @('-m','app.main_shopee')   $ROOT                         'shopee'
+Start-Svc 'python' @('-m','app.main_zalo_oa')  $ROOT                         'zalo_oa'
+Start-Svc 'python' @('-m','app.main_webchat')  $ROOT                         'webchat'
 Start-Svc $npm     @('run','dev')              (Join-Path $ROOT 'web-ui')    'web-ui'
 
 Start-Sleep -Seconds 8

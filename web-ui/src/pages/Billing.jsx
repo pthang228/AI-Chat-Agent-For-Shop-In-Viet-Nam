@@ -48,8 +48,10 @@ export default function Billing() {
   }, [deps.map((d) => d.status).join(",")]);
 
   async function doRedeem() {
-    setMsg("");
+    if (busy) return;              // chặn double-submit
+    setMsg(""); setBusy(true);
     const r = await billing.redeem(promo.trim());
+    setBusy(false);
     setMsg(r.ok ? "✅ Đã áp dụng mã — dùng thử 7 ngày!" : "❌ " + (r.body?.error || "Mã không đúng"));
     if (r.ok) { setPromo(""); load(); }
   }
@@ -61,11 +63,13 @@ export default function Billing() {
     else setMsg("❌ " + (r.body?.error || "Không tạo được lệnh nạp"));
   }
   async function doBuy(tier) {
+    if (busy) return;              // chặn double-submit → trừ ví 2 lần
     const t = me.tiers.find((x) => x.tier === tier);
     const price = t.prices[duration];
     if (!confirm(`Mua ${TIER_ICON[tier]} ${t.label} · ${DUR_LABEL[duration]} giá ${vnd(price)} bằng ví?`)) return;
-    setMsg("");
+    setMsg(""); setBusy(true);
     const r = await billing.buy(tier, duration);
+    setBusy(false);
     setMsg(r.ok ? `✅ Đã kích hoạt ${t.label} · ${DUR_LABEL[duration]}!` : "❌ " + (r.body?.error || "Mua thất bại"));
     if (r.ok) load();
   }
@@ -127,7 +131,7 @@ export default function Billing() {
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <input style={{ flex: 1 }} placeholder="Nhập mã giới thiệu…" value={promo}
                    onChange={(e) => setPromo(e.target.value)} />
-            <button className="btn-primary sm" onClick={doRedeem} disabled={!promo.trim()}>Áp dụng</button>
+            <button className="btn-primary sm" onClick={doRedeem} disabled={busy || !promo.trim()}>Áp dụng</button>
           </div>
         </div>
       )}
@@ -164,7 +168,7 @@ export default function Billing() {
                 <button className="btn-outline sm" disabled>👑 Đang dùng vĩnh viễn</button>
               ) : (
                 <button className={"btn-primary sm" + (me.balance < price ? " plan-poor" : "")}
-                        onClick={() => doBuy(t.tier)} disabled={me.balance < price}
+                        onClick={() => doBuy(t.tier)} disabled={busy || me.balance < price}
                         title={me.balance < price ? "Ví chưa đủ — nạp thêm bên dưới" : cur ? "Cộng thêm thời hạn vào gói hiện tại" : ""}>
                   {me.balance < price ? "Ví chưa đủ" : cur ? "Gia hạn thêm" : "Chọn gói này"}
                 </button>

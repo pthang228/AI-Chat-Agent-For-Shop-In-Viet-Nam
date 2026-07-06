@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { shopee } from "../shopeeApi.js";
 import GuideBox from "./GuideBox.jsx";
+import { ChannelTile } from "./ChannelIcon.jsx";
 
 // Kết nối Shopee ĐA KHÁCH trong web: dán Shop ID + access token (shop đã uỷ quyền
 // cho app của NovaChat trên Shopee Open Platform).
@@ -74,7 +75,7 @@ export default function ShopeeConnect() {
 
   return (
     <div className="connect">
-      <div className="status ok">🛒 Kết nối Shopee</div>
+      <div className="status ok"><ChannelTile ch="shopee" size={22} /> Kết nối Shopee</div>
 
       {/* Hướng dẫn viết cho chủ shop KHÔNG RÀNH kỹ thuật — từng bước cụ thể */}
       <GuideBox

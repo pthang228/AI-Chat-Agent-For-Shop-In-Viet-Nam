@@ -15,6 +15,7 @@ from flask import Flask, request, jsonify
 
 from app.core.config import Config
 from app.web_api.stats_util import compute_stats
+from app.web_api.api_guard import install_cors, install_auth_guard, submit as _submit, DedupCache
 
 log = logging.getLogger("bridge")
 
@@ -22,7 +23,7 @@ log = logging.getLogger("bridge")
 BOT_STATE_FILE = Config.DATA_DIR / "bot_state.json"
 
 
-ALL_CHANNELS = ("zalo", "meta", "telegram", "tiktok", "shopee")
+ALL_CHANNELS = ("zalo", "meta", "telegram", "tiktok", "shopee", "zalooa", "webchat")
 
 
 def _norm_channel(ch: str) -> str:
@@ -100,8 +101,10 @@ def _conv_summary(uid, conv):
     return {
         "user_id": uid,
         "name": getattr(conv, "name", ""),
+        "avatar": getattr(conv, "avatar", "") or "",
         "owner_active": conv.is_owner_active(),
         "stage": conv.stage,
+        "assigned_to": getattr(conv, "assigned_to", "") or "",
         "checkin": conv.checkin,
         "checkout": conv.checkout,
         "selected_room": conv.selected_room,
@@ -114,15 +117,11 @@ def _conv_summary(uid, conv):
 def create_bridge(brain, conv_manager) -> Flask:
     app = Flask(__name__)
 
-    bot_state = _load_bot_state()
+    # (bot_state đọc TƯƠI trong từng route qua _load_bot_state() — không giữ
+    # snapshot lúc boot để tránh trạng thái lỗi thời khi copilot/kênh khác ghi file.)
 
-    # CORS thủ công (không cần flask_cors) để web React (cổng 5173) gọi được API này.
-    @app.after_request
-    def _cors(resp):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        return resp
+    # CORS siết theo ALLOWED_ORIGINS + mở header Authorization (client gửi Bearer).
+    install_cors(app)
 
     # Auth thật (users/token/apps trong SQLite) — web React đăng nhập qua đây
     from app.web_api.auth_api import register_auth_routes
@@ -140,6 +139,16 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.web_api.photo_api import register_photo_routes
     register_photo_routes(app)
 
+    # Sổ đơn hàng + thread nhắc đơn tới hạn (báo qua notify_owner kênh Zalo)
+    from app.web_api.orders_api import register_orders_routes
+    register_orders_routes(app)
+    from app.core import orders as _orders
+    _orders.start_reminder_thread(brain.channel.notify_owner)
+
+    # Thanh toán: /payhook (đối soát SePay/Casso, bản local) + /orders/bank (QR shop)
+    from app.web_api.payment_api import register_payment_routes
+    register_payment_routes(app, notify_fn=brain.channel.notify_owner)
+
     # Chat tư vấn dịch vụ (bong bóng chat góc web, không cần đăng nhập)
     from app.web_api.support_api import register_support_routes
     register_support_routes(app)
@@ -154,7 +163,9 @@ def create_bridge(brain, conv_manager) -> Flask:
     def bot_status():
         """Trạng thái bot. ?channel=zalo|meta|telegram → của riêng kênh đó (mặc định: cờ chung)."""
         channel = _norm_channel(request.args.get("channel", ""))
-        return {"enabled": _channel_enabled(bot_state, channel), "channel": channel or "all"}
+        # Đọc file TƯƠI: copilot/kênh khác có thể vừa ghi bot_state (đừng dùng
+        # closure cũ nạp lúc boot → trả trạng thái lỗi thời).
+        return {"enabled": _channel_enabled(_load_bot_state(), channel), "channel": channel or "all"}
 
     @app.route("/bot-toggle", methods=["POST"])
     def bot_toggle():
@@ -165,16 +176,17 @@ def create_bridge(brain, conv_manager) -> Flask:
         channel = _norm_channel(data.get("channel") or "")
         app_name = _norm_text(data.get("app_name") or "")
 
-        chans = bot_state.setdefault("channels", {})
+        state = _load_bot_state()   # đọc TƯƠI rồi sửa → không đua với ghi từ copilot
+        chans = state.setdefault("channels", {})
         if not channel or channel == "all":
             for c in ALL_CHANNELS:
                 chans[c] = enabled
-            bot_state["enabled"] = enabled
+            state["enabled"] = enabled
             scope = "tất cả kênh"
         else:
             chans[channel] = enabled
             scope = channel
-        _save_bot_state(bot_state)
+        _save_bot_state(state)
 
         label = f" {app_name}" if app_name else f" ({scope})"
         if enabled:
@@ -190,6 +202,29 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     # ── API hội thoại (thay cho dashboard.py) ──────────────────────────
 
+    # uid đã hỏi Node avatar — dùng DedupCache (bounded 5000, thread-safe) thay set
+    # vô hạn: 10k khách × không avatar → set phình mãi không co (memory leak).
+    _av_asked = DedupCache(5000)
+
+    def _backfill_zalo_avatars(missing):
+        """Khách CŨ chưa có avatar (chưa nhắn tin mới) → hỏi Node /avatar/<uid>
+        (Node gọi zca-js getUserInfo, có cache). Chạy nền, best-effort."""
+        import requests as _rq
+        node_url = getattr(brain.channel, "node_url", "") or "http://127.0.0.1:4000"
+        changed = False
+        for uid in missing:
+            try:
+                r = _rq.get(f"{node_url}/avatar/{uid}", timeout=10)
+                av = (r.json() or {}).get("avatar") if r.status_code == 200 else ""
+                if av:
+                    conv_manager.get(uid).avatar = av
+                    changed = True
+                    log.info(f"[avatar] backfill {uid} → có ảnh")
+            except Exception as e:
+                log.debug(f"[avatar] backfill {uid}: {e}")
+        if changed:
+            conv_manager.save()
+
     @app.route("/conversations")
     def list_conversations():
         # Trả mảng (giữ shape cũ cho UI), mặc định 200 khách mới nhất —
@@ -204,6 +239,12 @@ def create_bridge(brain, conv_manager) -> Flask:
             for uid, conv in list(conv_manager._sessions.items())
         ]
         rows.sort(key=lambda r: r["last_updated"], reverse=True)
+        # Khách thiếu avatar → backfill nền qua Node (mỗi uid chỉ hỏi 1 lần).
+        # seen() vừa kiểm-vừa-nhớ atomic → chỉ giữ uid CHƯA hỏi.
+        missing = [r["user_id"] for r in rows[offset:offset + limit]
+                   if not r["avatar"] and not _av_asked.seen(r["user_id"])]
+        if missing:
+            _submit(_backfill_zalo_avatars, missing)
         return jsonify(rows[offset:offset + limit])
 
     @app.route("/conversations/<user_id>")
@@ -219,8 +260,10 @@ def create_bridge(brain, conv_manager) -> Flask:
         return jsonify({
             "user_id": user_id,
             "name": getattr(conv, "name", ""),
+            "avatar": getattr(conv, "avatar", "") or "",
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
+            "assigned_to": getattr(conv, "assigned_to", "") or "",
             "checkin": conv.checkin,
             "checkout": conv.checkout,
             "messages": msgs,
@@ -252,6 +295,9 @@ def create_bridge(brain, conv_manager) -> Flask:
         conv.add_assistant_message(text)
         conv.set_owner_active(True)   # chủ đang xử lý → bot dừng tự động trả lời
         conv_manager.save()
+        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
+        from app.core import knowledge_learn
+        _submit(knowledge_learn.suggest_from_reply, user_id, "zalo", list(conv.messages), text)
         return {"ok": True}
 
     @app.route("/conversations/<user_id>", methods=["DELETE"])
@@ -297,11 +343,15 @@ def create_bridge(brain, conv_manager) -> Flask:
                     conv.set_owner_active(True)
                     conv_manager.save()
                     log.info(f"[OwnerTakeover] Chủ nhà tự nhắn {user_id} → bot dừng auto-reply 48h")
+                # Bot học từ hội thoại: chủ gõ tay trên điện thoại cũng là "trả lời tay"
+                from app.core import knowledge_learn
+                _submit(knowledge_learn.suggest_from_reply, user_id, "zalo",
+                        list(conv.messages), text)
                 return {"ok": True, "owner_takeover": True}
             return {"ok": True, "skipped": "self-echo"}
 
         # Bot kênh Zalo bị tắt → không auto-reply khách
-        if not _channel_enabled(bot_state, "zalo"):
+        if not _channel_enabled(_load_bot_state(), "zalo"):
             log.info(f"[Skip] bot_disabled {user_id}")
             return {"ok": True, "skipped": "bot_disabled"}
 
@@ -313,10 +363,13 @@ def create_bridge(brain, conv_manager) -> Flask:
 
         conv = conv_manager.get(user_id)
 
-        # Cập nhật tên hiển thị nếu Node truyền dName
+        # Cập nhật tên + avatar hiển thị nếu Node truyền (zca-js kèm dName/avt)
         d_name = (data.get("dName") or "").strip()
         if d_name and d_name != conv.name:
             conv.name = d_name
+        d_avatar = (data.get("avatar") or "").strip()
+        if d_avatar and d_avatar != conv.avatar:
+            conv.avatar = d_avatar
 
         # Chủ nhà đang tiếp quản → bot im lặng
         if conv.is_owner_active():
@@ -344,7 +397,45 @@ def create_bridge(brain, conv_manager) -> Flask:
                 except Exception:
                     pass
 
-        threading.Thread(target=_run, daemon=True).start()
+        _submit(_run)
         return {"ok": True}
+
+    # CRM Khách hàng (gộp mọi kênh — đọc thẳng SQLite dùng chung)
+    from app.web_api.customers_api import register_customers_routes
+    register_customers_routes(app)
+
+    # Copilot quản trị — trợ lý AI giúp chủ shop cài đặt & vận hành
+    from app.web_api.copilot_api import register_copilot_routes
+    register_copilot_routes(app)
+
+    # Tin nhắn hàng loạt (broadcast/remarketing) — chỉ chủ, staff bị guard chặn
+    from app.web_api.broadcast_api import register_broadcast_routes
+    register_broadcast_routes(app)
+
+    # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm + câu trả lời mẫu
+    from app.web_api.chat_tools import register_chat_tools
+    register_chat_tools(app, "", conv_manager, getattr(brain, "channel", None),
+                        account=getattr(conv_manager, "_account", "zalo") or "zalo",
+                        with_canned=True)
+
+    # Bảo vệ API quản trị bridge bằng Bearer token. Công khai: đăng nhập/đăng ký
+    # Google, /incoming (Node localhost gọi vào), webhook đối soát tiền /payhook,
+    # chat tư vấn landing /support/chat, phục vụ ảnh /photos + /media. Còn lại
+    # (/conversations, /bot-toggle, /stats, billing, orders, prompt…) cần đăng nhập.
+    install_auth_guard(
+        app,
+        public_exact={
+            "/auth/login", "/auth/register", "/auth/google",
+            "/incoming", "/payhook", "/support/chat",
+        },
+        public_prefixes=("/photos/file", "/photos/media", "/media"),
+        # Nhân viên (role=staff) chỉ làm hộp thư/khách/đơn — cấm phần quản trị
+        staff_deny=(
+            "/billing", "/prompt", "/team", "/broadcasts", "/copilot",
+            "/orders/bank", "/bot-toggle",
+            "POST /photos/sets", "DELETE /photos/sets",
+            "DELETE /conversations",     # xoá hội thoại: chỉ chủ
+        ),
+    )
 
     return app

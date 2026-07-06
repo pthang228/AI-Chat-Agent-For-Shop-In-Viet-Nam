@@ -4,17 +4,21 @@ import { logout } from "../auth.js";
 import { getApps, addApp, removeApp } from "../store.js";
 import { brain } from "../brainApi.js";
 import { IcPlus, IcSpark, IcChev } from "./icons.jsx";
+import { ChannelIcon, ChannelTile } from "./ChannelIcon.jsx";
 
+// icon = key kênh cho <ChannelIcon/> (logo thương hiệu thật, không dùng emoji)
 export const CHANNELS = {
-  zalo:      { label: "Zalo",            icon: "💬", color: "#0068ff" },
-  meta:      { label: "Mess + Instagram", icon: "✉️", color: "#7b3fb3" },
-  telegram:  { label: "Telegram",        icon: "✈️", color: "#229ED9" },
-  tiktok:    { label: "TikTok",          icon: "🎵", color: "#161823" },
-  shopee:    { label: "Shopee",          icon: "🛒", color: "#EE4D2D" },
-  messenger: { label: "Mess + Instagram", icon: "✉️", color: "#7b3fb3" },
-  instagram: { label: "Mess + Instagram", icon: "✉️", color: "#7b3fb3" },
+  zalo:      { label: "Zalo",            icon: "zalo",      color: "#0068ff" },
+  meta:      { label: "Mess + Instagram", icon: "meta",      color: "#7b3fb3" },
+  telegram:  { label: "Telegram",        icon: "telegram",  color: "#229ED9" },
+  tiktok:    { label: "TikTok",          icon: "tiktok",    color: "#161823" },
+  shopee:    { label: "Shopee",          icon: "shopee",    color: "#EE4D2D" },
+  zalooa:    { label: "Zalo OA",         icon: "zalooa",    color: "#005AE0" },
+  webchat:   { label: "Website",         icon: "webchat",   color: "#4F46E5" },
+  messenger: { label: "Mess + Instagram", icon: "meta",      color: "#7b3fb3" },
+  instagram: { label: "Mess + Instagram", icon: "meta",      color: "#7b3fb3" },
 };
-const ADD_CHANNELS = ["zalo", "meta", "telegram", "tiktok", "shopee"];
+const ADD_CHANNELS = ["zalo", "zalooa", "meta", "telegram", "tiktok", "shopee", "webchat"];
 
 export function botKey(ch) { return (ch === "messenger" || ch === "instagram") ? "meta" : ch; }
 
@@ -127,7 +131,9 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
           return (
             <div className="app-card clickable" key={app.id} onClick={() => nav(`/app/${app.id}`)}>
               <div className="app-top">
-                <div className="app-icon" style={{ background: ch.color }}>{ch.icon}</div>
+                <div className="app-icon" style={{ background: ch.color }}>
+                  <ChannelIcon ch={ch.icon} size={28} />
+                </div>
                 <div className="app-titles">
                   <div className="app-name">{app.name}</div>
                   <div className="app-ch">{ch.label}</div>
@@ -188,7 +194,7 @@ function AddAppModal({ onClose, onAdd }) {
               <button type="button" key={key}
                       className={"ch-opt" + (channel === key ? " active" : "")}
                       onClick={() => setChannel(key)}>
-                <span style={{ fontSize: 22 }}>{c.icon}</span> {c.label}
+                <ChannelTile ch={c.icon} size={30} color={c.color} /> {c.label}
               </button>
             );
           })}

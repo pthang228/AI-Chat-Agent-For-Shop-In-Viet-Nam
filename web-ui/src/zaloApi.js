@@ -1,6 +1,6 @@
 // Gọi trực tiếp Node service (zca-js) — đã bật CORS nên fetch từ React được.
 // Sau này multi-tenant sẽ đổi URL theo từng app/tenant.
-const NODE_URL = "http://localhost:4000";
+const NODE_URL = "http://127.0.0.1:4000";
 
 async function j(path, opts) {
   const r = await fetch(NODE_URL + path, opts);

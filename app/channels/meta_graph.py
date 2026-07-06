@@ -125,12 +125,14 @@ def list_pages(user_token: str) -> list:
     return list(pages.values())
 
 
-# Field subscribe Ở CẤP PAGE (subscribed_apps) — chỉ là field Messenger hợp lệ.
+# Field subscribe Ở CẤP PAGE (subscribed_apps) — chỉ là field Page hợp lệ.
 # LƯU Ý: tin nhắn Instagram KHÔNG đi qua đây mà qua webhook object "instagram"
 # (khai ở App Dashboard, subscribe field "messages"). Không nhét field IG vào
 # subscribed_apps — Graph trả 400 "invalid subscription field" → hỏng luôn cả
 # subscribe `messages` của Page (đã từng vấp khi bật FB_ENABLE_IG).
-FB_SUBSCRIBE_FIELDS = "messages,messaging_postbacks,messaging_referrals"
+# "feed" = bài viết/bình luận trên Page (mục Bài viết & bình luận) — field Page
+# hợp lệ, cần quyền pages_manage_engagement để ẩn/trả lời bình luận.
+FB_SUBSCRIBE_FIELDS = "messages,messaging_postbacks,messaging_referrals,feed"
 
 
 def subscribe_fields() -> str:

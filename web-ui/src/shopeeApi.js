@@ -1,9 +1,10 @@
 // Gọi API kênh Shopee (Flask cổng 5009).
-const URL = "http://localhost:5009";
+import { withAuth } from "./apiAuth.js";
+const URL = "http://127.0.0.1:5009";
 
 async function j(path, opts) {
   try {
-    const r = await fetch(URL + path, opts);
+    const r = await fetch(URL + path, withAuth(opts));
     let body = null;
     try { body = await r.json(); } catch { /* ignore */ }
     return { ok: r.ok, status: r.status, body };

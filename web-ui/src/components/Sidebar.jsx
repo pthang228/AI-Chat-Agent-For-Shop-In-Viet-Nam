@@ -28,21 +28,29 @@ function IcGear()      { return svg(<><circle cx="12" cy="12" r="3" /><path d="M
 function IcCollapse()  { return svg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>); }
 
 // Mục điều hướng nội bộ (section) trong trang Overview
+function IcOrders() { return svg(<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4H6zM3 6h18M16 10a4 4 0 0 1-8 0" />); }
+function IcUsers()  { return svg(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>); }
+
 const SECTIONS = [
   { key: "overview",  label: "Tổng quan",        icon: IcOverview },
   { key: "chat",      label: "Hội thoại",         icon: IcChat },
-  { key: "chatbot",   label: "Chatbot",           icon: IcBot },
-  { key: "broadcast", label: "Tin nhắn hàng loạt", icon: IcBroadcast },
+  { key: "customers", label: "Khách hàng",        icon: IcUsers },
+  { key: "chatbot",   label: "Chatbot",           icon: IcBot,       ownerOnly: true },
+  { key: "orders",    label: "Đơn hàng",          icon: IcOrders },
+  { key: "broadcast", label: "Tin nhắn hàng loạt", icon: IcBroadcast, ownerOnly: true },
   { key: "posts",     label: "Bài viết & bình luận", icon: IcPost, note: "FB + TikTok" },
   { key: "stats",     label: "Thống kê",          icon: IcStats },
 ];
 // Mục điều hướng route thật
 const LINKS = [
-  { to: "/billing",  label: "Gói dịch vụ", icon: IcBox },
+  { to: "/billing",  label: "Gói dịch vụ", icon: IcBox, ownerOnly: true },
   { to: "/settings", label: "Cài đặt",     icon: IcGear },
 ];
 
-export default function Sidebar({ active = "overview", onSelect, collapsed = false, onToggle }) {
+// staff (nhân viên) chỉ thấy mục vận hành hộp thư — mục quản trị ẩn đi
+export default function Sidebar({ active = "overview", onSelect, collapsed = false, onToggle, staff = false }) {
+  const sections = SECTIONS.filter((s) => !(staff && s.ownerOnly));
+  const links = LINKS.filter((l) => !(staff && l.ownerOnly));
   return (
     <aside className={"sb" + (collapsed ? " collapsed" : "")}>
       <div className="sb-head">
@@ -56,7 +64,7 @@ export default function Sidebar({ active = "overview", onSelect, collapsed = fal
       </div>
 
       <nav className="sb-nav">
-        {SECTIONS.map(({ key, label, icon: Icon, note }) => (
+        {sections.map(({ key, label, icon: Icon, note }) => (
           <button
             key={key}
             className={"sb-item" + (active === key ? " active" : "")}
@@ -75,7 +83,7 @@ export default function Sidebar({ active = "overview", onSelect, collapsed = fal
 
         <div className="sb-sep" />
 
-        {LINKS.map(({ to, label, icon: Icon }) => (
+        {links.map(({ to, label, icon: Icon }) => (
           <Link key={to} to={to} className="sb-item" title={label}>
             <span className="sb-ico"><Icon /></span>
             {!collapsed && <span className="sb-lbl">{label}</span>}

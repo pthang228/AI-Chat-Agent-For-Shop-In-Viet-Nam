@@ -106,7 +106,7 @@ kn.ingest(CHUNKS)
 
 # B7: format_block đóng gói + lệnh cấm bịa
 blk = kn.format_block(kn.retrieve("phòng 301"))
-check("DỮ LIỆU SHOP" in blk and "KHÔNG bịa" in blk and "700k" in blk, "B7 format_block")
+check("DỮ LIỆU SHOP" in blk and "bịa" in blk and "700k" in blk, "B7 format_block")
 check(kn.format_block([]) == "", "B8 format_block_empty")
 
 print("\n── C. prompt_builder: parse hybrid ──")

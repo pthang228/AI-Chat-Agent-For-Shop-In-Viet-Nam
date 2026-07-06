@@ -123,8 +123,11 @@ class Brain:
 
         conv.add_user_message(text)
 
-        # Gửi cho AI phân tích (không bao gồm tin nhắn vừa thêm)
-        result = analyze_message(text, conv.get_recent_messages(n=20)[:-1])
+        # Gửi cho AI phân tích (không bao gồm tin nhắn vừa thêm).
+        # user_id + account để AI đọc TRÍ NHỚ VỀ KHÁCH (CRM) → cá nhân hoá.
+        result = analyze_message(text, conv.get_recent_messages(n=20)[:-1],
+                                 user_id=user_id,
+                                 account=getattr(self.conv_manager, "_account", "") or "")
 
         intent        = result.get("intent", "other")
         checkin       = result.get("checkin")  or conv.checkin
@@ -640,6 +643,44 @@ class Brain:
             f"Vui lòng liên hệ lại khách để xác nhận và hướng dẫn đặt cọc!"
         )
         self.channel.notify_owner(owner_msg)
+
+        # Tự tạo ĐƠN NHÁP từ hội thoại (chạy nền — AI bóc tách hơi chậm,
+        # không được chặn luồng trả lời khách). Lỗi cũng không ảnh hưởng booking.
+        import threading as _threading
+        _channel_name = getattr(self.conv_manager, "_account", "") or ""
+        # Ctx đa khách (shop_id/oa_id/business_id) là thread-local → thread con
+        # _make_order KHÔNG kế thừa → snapshot rồi set lại để notify_owner báo
+        # ĐÚNG chủ shop (đa khách TikTok/Shopee/Zalo OA).
+        _ctx_snapshot = self.channel.get_ctx()
+
+        def _make_order():
+            try:
+                self.channel.set_ctx(_ctx_snapshot)
+                from app.core import orders, payments
+                o = orders.create_from_conversation(user_id, conv, channel=_channel_name)
+                if not o:
+                    return
+                self.channel.notify_owner(
+                    f"📝 Đã tạo đơn nháp {o['code']}"
+                    + (f" · {o['total']:,}đ" if o['total'] else "")
+                    + " — vào web mục Đơn hàng để duyệt.")
+                # Shop đã khai tài khoản nhận tiền + đơn có số tiền → gửi QR động
+                # cho khách (nội dung CK = mã đơn để đối soát tự động), đơn sang
+                # "chờ thanh toán". Chưa khai bank → dừng ở đơn nháp như cũ.
+                bank = payments.get_bank()
+                if bank and o["total"] > 0:
+                    qr = payments.build_vietqr_url(bank, amount=o["total"], memo=o["code"])
+                    self.channel.send_image_url(
+                        user_id, qr,
+                        f"Để giữ chỗ, mình chuyển khoản (cọc hoặc đủ {o['total']:,}đ) "
+                        f"với nội dung {o['code']} giúp em nhé 👇 "
+                        f"Nhận được tiền hệ thống tự xác nhận ạ!")
+                    orders.update(o["id"], status="awaiting_payment")
+                    orders.add_event(o["id"], "Đã gửi QR thanh toán cho khách")
+            except Exception as e:
+                log.error(f"[Orders] tạo đơn nháp lỗi: {e}")
+
+        _threading.Thread(target=_make_order, daemon=True).start()
 
         # Gọi chủ nhà
         time.sleep(1)

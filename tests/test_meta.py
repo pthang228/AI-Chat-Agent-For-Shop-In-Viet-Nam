@@ -22,6 +22,8 @@ sys.modules.update({
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
 os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
+os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -30,6 +32,7 @@ from app.core.conversation import ConversationManager
 from app.core.meta_store import MetaStore
 from app.channels.meta import MetaChannel
 import app.web_api.meta_webhook as meta_mod
+import app.core.http_util as httputil   # send đi qua đây → patch requests.post ở đây
 
 PASS = FAIL = 0
 def check(cond, name, detail=""):
@@ -73,11 +76,11 @@ check(imgs and all(m["attachment"]["payload"]["url"].startswith("https://pub.exa
                    for m in imgs), "A5 image_public_url", f"imgs={imgs[:1]}")
 
 # A6: gửi thật dùng token Page (patch requests) → đúng access_token + endpoint Facebook
-with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, params=None, json=None, timeout=None):
         calls.append((url, params, json)); m = MagicMock(); m.status_code = 200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch2 = MetaChannel(store=store, page_token="", public_base_url="https://p", conv_manager=cm)
     ch2.send_text("fb:PAGE1:PSID9", "hi")
     check(calls and calls[-1][1]["access_token"] == "TOK_PAGE1", "A6 send_uses_page_token", f"calls={calls}")
@@ -85,11 +88,11 @@ with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'reque
           "A6 fb_endpoint", f"url={calls[-1][0]}")
 
 # A7: Instagram ĐA KHÁCH — có token Page → gửi qua graph.facebook.com + token Page (RESPONSE)
-with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, params=None, json=None, timeout=None):
         calls.append((url, params, json)); m = MagicMock(); m.status_code = 200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch_ig = MetaChannel(store=store, page_token="", ig_token="IG_TOK",
                         public_base_url="https://p", conv_manager=cm)
     ch_ig.send_text("ig:PAGE1:IGU1", "chào")
@@ -98,11 +101,11 @@ with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'reque
     check(calls and calls[-1][2].get("messaging_type") == "RESPONSE", "A7 ig_messaging_type", f"json={calls[-1][2] if calls else None}")
 
 # A8: Instagram DỰ PHÒNG — không có token Page → graph.instagram.com + IG_ACCESS_TOKEN, KHÔNG messaging_type
-with patch.object(__import__('app.channels.meta', fromlist=['requests']), 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, params=None, json=None, timeout=None):
         calls.append((url, params, json)); m = MagicMock(); m.status_code = 200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch_ig2 = MetaChannel(store=store, page_token="", ig_token="IG_TOK",
                          public_base_url="https://p", conv_manager=cm)
     ch_ig2.send_text("ig:IGU1", "chào")   # 2 phần → page_id=None → fallback

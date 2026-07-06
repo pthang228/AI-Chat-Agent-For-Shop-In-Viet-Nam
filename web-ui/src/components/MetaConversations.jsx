@@ -3,7 +3,8 @@ import { meta } from "../metaApi.js";
 import ChatSend from "./ChatSend.jsx";
 
 function displayName(c) {
-  return c.name ? `${c.name} (…${c.user_id.slice(-6)})` : `…${c.user_id.slice(-8)}`;
+  const uid = String(c.user_id || "");
+  return c.name ? `${c.name} (…${uid.slice(-6)})` : `…${uid.slice(-8)}`;
 }
 
 function relTime(iso) {

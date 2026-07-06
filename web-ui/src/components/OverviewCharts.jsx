@@ -8,6 +8,8 @@ const CH = {
   telegram: { label: "Telegram",    color: "#229ed9" },
   tiktok:   { label: "TikTok",      color: "#161823" },
   shopee:   { label: "Shopee",      color: "#EE4D2D" },
+  zalooa:   { label: "Zalo OA",     color: "#005AE0" },
+  webchat:  { label: "Website",     color: "#4F46E5" },
 };
 
 /* Ngày dạng local (tránh lệch UTC ở VN) */

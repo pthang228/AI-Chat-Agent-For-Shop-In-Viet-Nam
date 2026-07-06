@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     owner_active_since TEXT,
     last_updated       TEXT NOT NULL,
     messages           TEXT NOT NULL DEFAULT '[]',
+    avatar             TEXT NOT NULL DEFAULT '',   -- URL ảnh đại diện khách (kênh cung cấp)
+    assigned_to        TEXT NOT NULL DEFAULT '',   -- nhân viên được phân công (username)
     PRIMARY KEY (account, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_acc_lu ON sessions(account, last_updated);
@@ -58,6 +60,8 @@ CREATE TABLE IF NOT EXISTS users (
     email         TEXT NOT NULL DEFAULT '',  -- email liên hệ (có thể khác username)
     provider      TEXT NOT NULL DEFAULT 'password',  -- password | google
     picture       TEXT NOT NULL DEFAULT '',
+    role          TEXT NOT NULL DEFAULT 'owner',     -- owner | staff (nhân viên)
+    owner_username TEXT NOT NULL DEFAULT '',         -- staff thuộc workspace chủ nào
     created_at    TEXT NOT NULL
 );
 
@@ -118,6 +122,29 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_shop ON knowledge_chunks(shop);
 
+-- SỔ ĐƠN HÀNG — bot tự tạo đơn nháp khi khách chốt (booking_confirmed),
+-- chủ shop duyệt/đổi trạng thái trong web; scheduler nhắc khi tới hạn (due_at)
+CREATE TABLE IF NOT EXISTS orders (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    code          TEXT UNIQUE NOT NULL,            -- DH0001, DH0002…
+    channel       TEXT NOT NULL DEFAULT '',        -- zalo|meta|telegram|tiktok|shopee
+    user_id       TEXT NOT NULL DEFAULT '',        -- khách trong hội thoại (mở lại chat được)
+    customer_name TEXT NOT NULL DEFAULT '',
+    phone         TEXT NOT NULL DEFAULT '',
+    order_type    TEXT NOT NULL DEFAULT 'booking', -- booking (phòng/lịch hẹn) | goods (bán hàng)
+    items         TEXT NOT NULL DEFAULT '[]',      -- JSON [{name, qty, price}]
+    total         INTEGER NOT NULL DEFAULT 0,      -- VND
+    status        TEXT NOT NULL DEFAULT 'draft',   -- draft|awaiting_payment|paid|fulfilled|done|cancelled
+    due_at        TEXT,                            -- ISO — ngày checkin / hạn gửi hàng
+    note          TEXT NOT NULL DEFAULT '',
+    timeline      TEXT NOT NULL DEFAULT '[]',      -- JSON [{at, event}] nhật ký đơn
+    reminded      INTEGER NOT NULL DEFAULT 0,      -- đã nhắc tới hạn chưa
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_due ON orders(due_at);
+
 -- Bộ ảnh đặt tên (Thư viện ảnh) — shop upload, bot gửi khi khách hỏi trúng tên/keywords
 CREATE TABLE IF NOT EXISTS photo_sets (
     slug       TEXT PRIMARY KEY,             -- tên thư mục an toàn (bỏ dấu, dash)
@@ -136,6 +163,100 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tx_user ON transactions(username);
+
+-- CRM KHÁCH HÀNG: hồ sơ bổ sung cho từng hội thoại (account+user_id = 1 khách).
+-- Tên hiển thị lấy từ sessions.name (kênh tự cập nhật); cột name ở đây là
+-- BẢN GHI ĐÈ do chủ tự đặt (ưu tiên hơn khi khác rỗng).
+CREATE TABLE IF NOT EXISTS customers (
+    account    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    name       TEXT NOT NULL DEFAULT '',   -- chủ tự đặt (đè tên kênh)
+    salutation TEXT NOT NULL DEFAULT '',   -- cách xưng hô: anh|chị|em|bạn...
+    phone      TEXT NOT NULL DEFAULT '',
+    email      TEXT NOT NULL DEFAULT '',
+    address    TEXT NOT NULL DEFAULT '',
+    note       TEXT NOT NULL DEFAULT '',
+    updated_at TEXT,
+    PRIMARY KEY (account, user_id)
+);
+
+-- TRÍ NHỚ AI VỀ KHÁCH — facts để bot cá nhân hoá phản hồi (AI bóc hoặc chủ ghi tay)
+CREATE TABLE IF NOT EXISTS customer_memory (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    account    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'manual',  -- manual | ai
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cmem_cust ON customer_memory(account, user_id);
+
+-- LỊCH SỬ THAY ĐỔI hồ sơ khách (audit — ai đổi gì, cũ → mới)
+CREATE TABLE IF NOT EXISTS customer_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    account    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    field      TEXT NOT NULL,
+    old_value  TEXT NOT NULL DEFAULT '',
+    new_value  TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chist_cust ON customer_history(account, user_id);
+
+-- CÂU TRẢ LỜI MẪU (canned replies) — chủ soạn sẵn, bấm 1 chạm chèn vào ô chat
+CREATE TABLE IF NOT EXISTS canned_replies (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL DEFAULT '',   -- nhãn ngắn hiện trên nút
+    content    TEXT NOT NULL,              -- nội dung chèn vào ô nhập
+    created_at TEXT NOT NULL
+);
+
+-- BOT HỌC TỪ HỘI THOẠI: chủ trả lời tay câu bot không biết → AI bóc thành mẩu
+-- tri thức ĐỀ XUẤT, chủ duyệt trong web mới vào knowledge_chunks (không tự học sai)
+CREATE TABLE IF NOT EXISTS knowledge_suggestions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop       TEXT NOT NULL DEFAULT 'default',
+    channel    TEXT NOT NULL DEFAULT '',        -- kênh phát sinh (zalo|meta|...)
+    user_id    TEXT NOT NULL DEFAULT '',        -- hội thoại phát sinh
+    question   TEXT NOT NULL DEFAULT '',        -- câu khách hỏi
+    answer     TEXT NOT NULL DEFAULT '',        -- câu chủ trả lời tay
+    title      TEXT NOT NULL DEFAULT '',        -- mẩu tri thức AI đề xuất
+    content    TEXT NOT NULL,
+    keywords   TEXT NOT NULL DEFAULT '[]',      -- JSON array
+    status     TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ksug_shop_status ON knowledge_suggestions(shop, status);
+
+-- TIN NHẮN HÀNG LOẠT (broadcast/remarketing) — chủ soạn 1 tin gửi cho nhóm khách
+-- cũ theo kênh + mức độ hoạt động. Tin KHÔNG chèn vào luồng hội thoại (tránh đè
+-- cache RAM của tiến trình kênh) — lịch sử nằm ở broadcast_log.
+CREATE TABLE IF NOT EXISTS broadcasts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL DEFAULT '',
+    message     TEXT NOT NULL,
+    channels    TEXT NOT NULL DEFAULT '[]',      -- JSON array key kênh (zalo|meta|...)
+    segment     TEXT NOT NULL DEFAULT '{}',      -- JSON {type: all|active|inactive, days}
+    status      TEXT NOT NULL DEFAULT 'draft',   -- draft|sending|done|cancelled
+    total       INTEGER NOT NULL DEFAULT 0,      -- số khách trong tập gửi
+    sent        INTEGER NOT NULL DEFAULT 0,
+    failed      INTEGER NOT NULL DEFAULT 0,
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    started_at  TEXT,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS broadcast_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    broadcast_id INTEGER NOT NULL,
+    account      TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'sent',   -- sent | failed
+    error        TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bclog_bid ON broadcast_log(broadcast_id);
 """
 
 
@@ -162,6 +283,19 @@ class Db:
             ("billing", "tier",      "TEXT NOT NULL DEFAULT 'trial'"),
             ("billing", "ai_used",   "INTEGER NOT NULL DEFAULT 0"),
             ("billing", "ai_period", "TEXT NOT NULL DEFAULT ''"),
+            # Tài khoản nhận tiền của SHOP (QR động VietQR gửi khách khi chốt đơn)
+            ("users", "bank_code",    "TEXT NOT NULL DEFAULT ''"),
+            ("users", "bank_account", "TEXT NOT NULL DEFAULT ''"),
+            ("users", "bank_holder",  "TEXT NOT NULL DEFAULT ''"),
+            # Avatar khách (DB cũ chưa có cột — LƯU Ý: mọi INSERT vào sessions phải
+            # ghi TÊN CỘT tường minh vì cột này nằm cuối ở DB cũ nhưng giữa schema mới)
+            ("sessions", "avatar",    "TEXT NOT NULL DEFAULT ''"),
+            # TEAM: phân quyền nhân viên — role owner|staff; staff thuộc workspace
+            # của owner_username (rỗng = chính mình là chủ)
+            ("users", "role",           "TEXT NOT NULL DEFAULT 'owner'"),
+            ("users", "owner_username", "TEXT NOT NULL DEFAULT ''"),
+            # Hội thoại được PHÂN CÔNG cho nhân viên nào (username, rỗng = chưa gán)
+            ("sessions", "assigned_to", "TEXT NOT NULL DEFAULT ''"),
         ]
         for table, col, decl in adds:
             try:

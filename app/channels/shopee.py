@@ -35,6 +35,7 @@ import requests
 
 from app.core.config import Config
 from app.core.channel import Channel
+from app.core.http_util import post_with_retry
 from app.core import owner_call
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ MAX_PHOTOS_PER_ROOM = 5
 MAX_LEN = 1000   # Shopee chat giới hạn tin ngắn hơn các kênh khác
 
 SEND_PATH = "/api/v2/sellerchat/send_message"
+REFRESH_PATH = "/api/v2/auth/access_token/get"
 
 
 class ShopeeChannel(Channel):
@@ -74,6 +76,9 @@ class ShopeeChannel(Channel):
 
     def set_ctx(self, shop_id):
         self._ctx.shop_id = shop_id
+
+    def get_ctx(self):
+        return getattr(self._ctx, "shop_id", None)
 
     def _cur_shop(self):
         return getattr(self._ctx, "shop_id", None)
@@ -109,12 +114,56 @@ class ShopeeChannel(Channel):
         base = f"{self.partner_id}{path}{timestamp}{access_token}{shop_id}"
         return hmac.new(self.partner_key.encode(), base.encode(), hashlib.sha256).hexdigest()
 
-    def _send_api(self, shop_id, buyer_id: str, message: dict):
+    def _sign_public(self, path: str, timestamp: int) -> str:
+        """Chữ ký API công khai (refresh token): HMAC(partner_key, partner_id+path+ts)."""
+        base = f"{self.partner_id}{path}{timestamp}"
+        return hmac.new(self.partner_key.encode(), base.encode(), hashlib.sha256).hexdigest()
+
+    def _refresh(self, shop_id) -> str:
+        """Access token Shopee sống ~4h → đổi token mới bằng refresh_token.
+        Trả access_token mới hoặc "" nếu không refresh được. Shopee trả cả
+        refresh_token mới → lưu đè ngay (như Zalo OA)."""
+        if not (shop_id and self.store and self.partner_id and self.partner_key):
+            return ""
+        rt = self.store.get(shop_id).get("refresh_token") if hasattr(self.store, "get") else None
+        if not rt:
+            return ""
+        ts = int(time.time())
+        try:
+            r = requests.post(
+                f"{self.api_base}{REFRESH_PATH}",
+                params={"partner_id": self.partner_id, "timestamp": ts,
+                        "sign": self._sign_public(REFRESH_PATH, ts)},
+                json={"shop_id": int(shop_id) if str(shop_id).isdigit() else shop_id,
+                      "refresh_token": rt, "partner_id": int(self.partner_id)
+                      if str(self.partner_id).isdigit() else self.partner_id},
+                timeout=15,
+            )
+            j = r.json() if r.content else {}
+            new_at = j.get("access_token") or ""
+            if new_at:
+                self.store.upsert(shop_id, access_token=new_at,
+                                  refresh_token=j.get("refresh_token") or None)
+                log.info(f"[SP] đã refresh token cho shop {shop_id}")
+                return new_at
+            log.error(f"[SP] refresh token thất bại shop {shop_id}: {str(j.get('error') or j)[:200]}")
+        except Exception as e:
+            log.error(f"[SP] lỗi refresh token shop {shop_id}: {e}")
+        return ""
+
+    @staticmethod
+    def _is_token_error(j: dict) -> bool:
+        err = str((j or {}).get("error") or "").lower()
+        return bool(err) and ("token" in err or "auth" in err)
+
+    def _send_api(self, shop_id, buyer_id: str, message: dict, _retried=False):
         """Gửi 1 tin chat. `message`: {"text": ...} hoặc {"image_url": ...}.
-        Toàn bộ mapping sang API Shopee nằm ở đây — spec đổi chỉ sửa hàm này."""
+        Toàn bộ mapping sang API Shopee nằm ở đây — spec đổi chỉ sửa hàm này.
+        Token hết hạn (~4h) → tự refresh + gửi lại đúng 1 lần."""
         shop_id = str(shop_id or self.shop_id or "")
         token = self._token_for(shop_id)
-        self._sent.append((buyer_id, message))
+        if not _retried:
+            self._sent.append((buyer_id, message))
         if not (token and self.partner_id and self.partner_key):
             log.info(f"[SP mock] (chưa đủ token/partner, shop={shop_id}) → {buyer_id}: {message}")
             return None
@@ -134,19 +183,20 @@ class ShopeeChannel(Channel):
             body = {"to_id": int(buyer_id) if str(buyer_id).isdigit() else buyer_id,
                     "message_type": "text",
                     "content": {"text": message.get("text", "")}}
-        try:
-            r = requests.post(f"{self.api_base}{SEND_PATH}",
-                              params=params, json=body, timeout=30)
-            if r.status_code >= 400:
-                log.error(f"[SP] send {r.status_code}: {r.text[:300]}")
-            else:
-                j = r.json() if r.content else {}
-                if j.get("error"):
-                    log.error(f"[SP] send error: {j.get('error')} {j.get('message', '')[:200]}")
-            return r
-        except Exception as e:
-            log.error(f"[SP] lỗi gửi: {e}")
+        r = post_with_retry(f"{self.api_base}{SEND_PATH}",
+                            params=params, json=body, timeout=30,
+                            retries=Config.SEND_RETRIES, log_tag="SP")
+        if r is None:
             return None
+        if r.status_code >= 400:
+            log.error(f"[SP] send {r.status_code}: {r.text[:300]}")
+        else:
+            j = r.json() if r.content else {}
+            if self._is_token_error(j) and not _retried and self._refresh(shop_id):
+                return self._send_api(shop_id, buyer_id, message, _retried=True)
+            if j.get("error"):
+                log.error(f"[SP] send error: {j.get('error')} {str(j.get('message', ''))[:200]}")
+        return r
 
     def _public_url(self, path: Path):
         """Đường dẫn file trong MEDIA_DIR → URL công khai để Shopee tải về."""
@@ -184,6 +234,12 @@ class ShopeeChannel(Channel):
     def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
         shop_id, uid = self._parse(user_id)
         return self._send_dir(shop_id, uid, Path(folder), caption)
+
+    def send_image_url(self, user_id: str, url: str, caption: str = "") -> None:
+        shop_id, uid = self._parse(user_id)
+        if caption:
+            self._send_api(shop_id, uid, {"text": caption})
+        self._send_api(shop_id, uid, {"image_url": url})
 
     def send_room_photos(self, user_id: str, room_names: list) -> None:
         shop_id, uid = self._parse(user_id)

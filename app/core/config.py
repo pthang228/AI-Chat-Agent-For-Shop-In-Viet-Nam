@@ -39,6 +39,9 @@ class Config:
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     # Groq (fallback)
     GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
+    # Timeout gọi AI (giây) — tránh 1 request treo giữ mãi 1 thread/1 khách chờ.
+    AI_TIMEOUT       = int(os.getenv("AI_TIMEOUT", "60"))        # trả lời khách
+    AI_LONG_TIMEOUT  = int(os.getenv("AI_LONG_TIMEOUT", "120"))  # sinh prompt/dạy AI (dài hơn)
 
     # Google Sheets
     GOOGLE_CREDENTIALS_FILE = _resolve(os.getenv("GOOGLE_CREDENTIALS_FILE"), "google_credentials.json")
@@ -95,6 +98,49 @@ class Config:
     SHOPEE_ACCESS_TOKEN = os.getenv("SHOPEE_ACCESS_TOKEN", "")   # token 1 shop (.env, test)
     SHOPEE_SHOP_ID      = os.getenv("SHOPEE_SHOP_ID", "")
     SHOPEE_API_PORT     = int(os.getenv("SHOPEE_API_PORT", "5009"))
+
+    # Zalo OA (Official Account API v3, developers.zalo.me) — kênh Zalo CHÍNH THỨC
+    # (khác kênh "zalo" cá nhân QR/Node). App của VENDOR dùng chung, mỗi OA khách
+    # uỷ quyền → oa_id + access_token (+ refresh_token, token chỉ sống ~25h nên
+    # hệ thống tự refresh khi có app_id + secret + refresh_token).
+    ZALO_OA_APP_ID       = os.getenv("ZALO_OA_APP_ID", "")
+    ZALO_OA_APP_SECRET   = os.getenv("ZALO_OA_APP_SECRET", "")
+    ZALO_OA_ACCESS_TOKEN = os.getenv("ZALO_OA_ACCESS_TOKEN", "")   # token 1 OA (.env, test)
+    ZALO_OA_ID           = os.getenv("ZALO_OA_ID", "")
+    ZALO_OA_API_BASE     = os.getenv("ZALO_OA_API_BASE", "https://openapi.zalo.me/v3.0")
+    ZALO_OA_OAUTH_BASE   = os.getenv("ZALO_OA_OAUTH_BASE", "https://oauth.zaloapp.com/v4")
+    ZALO_OA_API_PORT     = int(os.getenv("ZALO_OA_API_PORT", "5010"))
+
+    # Webchat — widget nhúng vào WEBSITE của khách hàng (kênh tự chủ 2 đầu,
+    # không cần nền tảng nào duyệt). Chủ shop tạo site → dán 1 dòng <script>
+    # vào web của họ. Khách web nhắn → POST /webchat/pub/send → brain.
+    WEBCHAT_API_PORT    = int(os.getenv("WEBCHAT_API_PORT", "5011"))
+
+    # Đối soát biến động số dư (SePay/Casso webhook /payhook) — rỗng = nhận tất (dev)
+    SEPAY_API_KEY       = os.getenv("SEPAY_API_KEY", "")
+
+    # TIN NHẮN HÀNG LOẠT (broadcast): giãn cách giữa 2 tin (giây) — gửi chậm để
+    # không bị nền tảng gắn cờ spam (Zalo cá nhân nhạy nhất). Cổng bridge để
+    # worker broadcast gọi HTTP nội bộ tới chính nó (kênh Zalo).
+    BROADCAST_THROTTLE  = float(os.getenv("BROADCAST_THROTTLE", "1.5"))
+    BRIDGE_PORT         = int(os.getenv("BRIDGE_PORT", "5005"))
+
+    # Độ bền vận hành (retry gửi tin, số worker xử lý, siết chữ ký webhook, CORS)
+    SEND_RETRIES     = int(os.getenv("SEND_RETRIES", "2"))     # số lần thử LẠI khi gửi tin lỗi (429/5xx/mạng)
+    WORKER_THREADS   = int(os.getenv("WORKER_THREADS", "8"))   # trần số tin xử lý song song mỗi tiến trình
+    # Siết chữ ký webhook: True = chặn khi chữ ký lệch (đã cấu hình secret).
+    # Messenger LUÔN được siết khi có FB_APP_SECRET; cờ này quyết định Instagram
+    # (IG có thể ký bằng secret khác → mặc định nới cho IG để không rớt tin).
+    FB_WEBHOOK_STRICT     = os.getenv("FB_WEBHOOK_STRICT", "false").strip().lower() in ("1", "true", "yes", "on")
+    # Shopee: spec chữ ký push CHƯA kiểm chứng với app được duyệt → mặc định nới
+    # (bật khi đã xác minh công thức để tránh rớt push thật lúc chạy production).
+    SHOPEE_WEBHOOK_STRICT = os.getenv("SHOPEE_WEBHOOK_STRICT", "false").strip().lower() in ("1", "true", "yes", "on")
+    # Origin web được phép gọi API (thay CORS '*'). Nhiều cổng vì Vite hay đổi port.
+    ALLOWED_ORIGINS  = [o.strip() for o in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://localhost:5174,http://localhost:5183,http://localhost:5186,"
+        "http://127.0.0.1:5173,http://127.0.0.1:5174"
+    ).split(",") if o.strip()]
 
     # Bot
     ROOMS_PHOTOS_DIR  = _resolve(os.getenv("ROOMS_PHOTOS_DIR"), "media/rooms_photos")

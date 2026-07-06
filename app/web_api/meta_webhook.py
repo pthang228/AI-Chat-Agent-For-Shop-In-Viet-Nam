@@ -24,20 +24,28 @@ import requests as _req
 from flask import Flask, request, jsonify, send_from_directory
 
 from app.core.config import Config
+from app.core import comments
+from app.core.comment_store import CommentStore
 from app.channels import meta_graph
 from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary  # dùng chung helper
 from app.web_api.stats_util import compute_stats
+from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
 log = logging.getLogger("meta_webhook")
 
+_dedup = DedupCache(500)        # nhớ mid tin đã xử lý — Meta gửi lại khi ta 200 chậm
+_feed_dedup = DedupCache(500)   # nhớ comment_id đã xử lý (webhook feed gửi lại)
+
 
 def _fetch_meta_name(user_id, sender, page_id, platform, brain, conv_manager):
-    """Gọi Graph API lấy tên khách, lưu vào conv (chạy nền, chỉ 1 lần khi chưa có tên)."""
+    """Gọi Graph API lấy tên + AVATAR khách, lưu vào conv (chạy nền, 1 lần khi thiếu).
+    profile_pic là URL CDN công khai (có chữ ký, hết hạn sau vài ngày) — hết hạn thì
+    lần fetch sau tự làm mới vì điều kiện gọi là 'thiếu name HOẶC avatar'."""
     try:
         token = brain.channel._token_for(page_id) if hasattr(brain.channel, "_token_for") else None
         if not token:
             return
-        fields = "name" if platform == "fb" else "name,username"
+        fields = "name,profile_pic" if platform == "fb" else "name,username,profile_pic"
         r = _req.get(
             f"https://graph.facebook.com/{Config.FB_GRAPH_VERSION}/{sender}",
             params={"fields": fields, "access_token": token},
@@ -47,26 +55,63 @@ def _fetch_meta_name(user_id, sender, page_id, platform, brain, conv_manager):
         if r.status_code == 200:
             data = r.json()
             name = data.get("name") or data.get("username") or ""
-            if name:
-                conv = conv_manager.get(user_id)
-                if not conv.name:
-                    conv.name = name
-                    conv_manager.save()
-                    log.info(f"[meta name] {sender} → '{name}'")
+            pic = data.get("profile_pic") or ""
+            conv = conv_manager.get(user_id)
+            changed = False
+            if name and not conv.name:
+                conv.name = name
+                changed = True
+            if pic and pic != conv.avatar:
+                conv.avatar = pic
+                changed = True
+            if changed:
+                conv_manager.save()
+                log.info(f"[meta profile] {sender} → '{name}' avatar={'có' if pic else 'không'}")
     except Exception as e:
         log.warning(f"[meta name] {sender}: {e}")
 
 
-def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
+def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> Flask:
     app = Flask(__name__)
 
-    # CORS để web React (cổng 5173) gọi được các API /meta/*
-    @app.after_request
-    def _cors(resp):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
+    # Webhook đối soát tiền (SePay/Casso) — gắn Ở ĐÂY vì 5006 là cổng duy nhất
+    # public qua ngrok: khai <PUBLIC_BASE_URL>/payhook trên SePay. Bank-info API
+    # thì ở bridge 5005 (cần auth), nên with_bank_api=False. Notify lazy để không
+    # đòi brain.channel lúc khởi tạo (tests dùng brain giả).
+    from app.web_api.payment_api import register_payment_routes
+
+    def _pay_notify(text):
+        ch = getattr(brain, "channel", None)
+        if ch:
+            ch.notify_owner(text)
+
+    register_payment_routes(app, notify_fn=_pay_notify, with_bank_api=False)
+
+    # Bài viết & bình luận Facebook (list/reply/ẩn/nhắn riêng + cài đặt tự động)
+    from app.web_api.posts_api import register_posts_routes
+    comment_store = comment_store or CommentStore()
+    register_posts_routes(app, store, comment_store)
+
+    # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
+    from app.web_api.chat_tools import register_chat_tools
+    register_chat_tools(app, "/meta", conv_manager, getattr(brain, "channel", None), account="meta")
+
+    # CORS siết theo ALLOWED_ORIGINS + mở header Authorization (client gửi Bearer).
+    install_cors(app)
+    # Bảo vệ: mọi API /meta/* quản trị cần Bearer token; webhook nền tảng + phục
+    # vụ media + payhook (SePay gọi) + config thì công khai. Cổng 5006 phơi ra
+    # internet qua ngrok nên đây là lỗ hổng cần bịt nhất.
+    install_auth_guard(
+        app,
+        public_exact={"/fb/webhook", "/meta/config", "/payhook"},
+        public_prefixes=("/media",),
+        # Nhân viên: chỉ hộp thư + trả lời bình luận — cấm kết nối/ngắt Page,
+        # cài đặt tự động hoá, xoá hội thoại
+        staff_deny=(
+            "/meta/connect", "DELETE /meta/pages", "/posts/settings",
+            "DELETE /meta/conversations",
+        ),
+    )
 
     @app.route("/health")
     def health():
@@ -130,8 +175,11 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
     @app.route("/meta/fetch-names", methods=["POST"])
     def meta_fetch_names():
         """Thủ công fetch tên từ Graph API cho tất cả khách Meta chưa có tên."""
+        # list() BẮT BUỘC: thread webhook có thể thêm session mới (get()) trong lúc
+        # lặp → RuntimeError "dict changed size during iteration" (crash 500 đúng lúc
+        # nhiều tin đến — chính lúc admin hay bấm fetch tên).
         missing = [
-            uid for uid, conv in conv_manager._sessions.items()
+            uid for uid, conv in list(conv_manager._sessions.items())
             if uid.startswith(("fb:", "ig:")) and not conv.name
         ]
         results = {}
@@ -204,8 +252,10 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         return jsonify({
             "user_id": user_id,
             "name": getattr(conv, "name", ""),
+            "avatar": getattr(conv, "avatar", "") or "",
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
+            "assigned_to": getattr(conv, "assigned_to", "") or "",
             "checkin": conv.checkin,
             "checkout": conv.checkout,
             "messages": msgs,
@@ -235,6 +285,9 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         conv.add_assistant_message(text)
         conv.set_owner_active(True)
         conv_manager.save()
+        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
+        from app.core import knowledge_learn
+        submit(knowledge_learn.suggest_from_reply, user_id, "meta", list(conv.messages), text)
         return {"ok": True}
 
     @app.route("/meta/conversations/<user_id>", methods=["DELETE"])
@@ -263,13 +316,12 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
     @app.route("/fb/webhook", methods=["POST"])
     def receive():
         raw = request.get_data()
-        if not _valid_signature(raw, request.headers.get("X-Hub-Signature-256", "")):
-            log.warning("[Meta] sai chữ ký webhook → bỏ qua")
-            return "bad signature", 403
-
         data = request.get_json(force=True, silent=True) or {}
         obj = data.get("object")
         platform = "ig" if obj == "instagram" else "fb"
+        if not _valid_signature(raw, request.headers.get("X-Hub-Signature-256", ""), platform):
+            log.warning(f"[Meta] CHẶN webhook sai chữ ký ({platform})")
+            return "bad signature", 403
         for entry in data.get("entry", []):
             entry_id = str(entry.get("id") or "")
             # IG: entry.id = id tài khoản IG → map về page_id; FB: entry.id = page_id
@@ -282,10 +334,15 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
                 _dispatch(platform, page_id, ev)
             # Instagram Login: tin trong "changes" field=messages, value giống 1 ev
             for ch in entry.get("changes", []):
-                if ch.get("field") != "messages":
-                    continue
+                field = ch.get("field")
                 val = ch.get("value")
                 if not isinstance(val, dict):
+                    continue
+                # Bình luận trên Page (mục Bài viết & bình luận) → tự động hoá
+                if field == "feed":
+                    _dispatch_feed(page_id, val)
+                    continue
+                if field != "messages":
                     continue
                 sender_id = str((val.get("sender") or {}).get("id") or "")
                 if sender_id and sender_id == entry_id:
@@ -293,19 +350,43 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
                 _dispatch(platform, page_id, val)
         return "EVENT_RECEIVED", 200
 
-    def _valid_signature(raw: bytes, header: str) -> bool:
+    def _dispatch_feed(page_id: str, value: dict):
+        """Bình luận mới → áp cài đặt tự động của Page (ẩn SĐT/trả lời/nhắn riêng).
+        Chạy NỀN (webhook trả 200 ngay); dedup theo comment_id (Meta gửi lại)."""
+        comment_id = str(value.get("comment_id") or "")
+        if not comment_id or _feed_dedup.seen(comment_id):
+            return
+        token = store.get_token(page_id) if store else None
+        settings = comment_store.get(page_id)
+        if not token or not any(
+                settings.get(k) for k in ("auto_hide_phone", "auto_reply", "private_reply")):
+            return   # Page chưa bật tự động hoá nào → khỏi tốn công
+
+        def _notify(text):
+            ch = getattr(brain, "channel", None)
+            if ch:
+                ch.notify_owner(text)
+
+        submit(comments.handle_feed_change, page_id, value, token, settings, _notify)
+
+    def _valid_signature(raw: bytes, header: str, platform: str = "fb") -> bool:
+        """Xác thực X-Hub-Signature-256 = sha256(HMAC(FB_APP_SECRET, body)).
+        - Chưa cấu hình secret → cho qua (dev/mock).
+        - Khớp → cho qua.
+        - Lệch: Messenger (fb) CHẶN (chữ ký ký bằng FB_APP_SECRET, ổn định);
+          Instagram (ig) có thể ký bằng secret khác → chỉ CHẶN khi bật
+          Config.FB_WEBHOOK_STRICT, mặc định nới (log) để không rớt tin IG."""
         secret = Config.FB_APP_SECRET
         if not secret:
-            return True  # chưa cấu hình secret (dev/mock) → bỏ qua kiểm tra
+            return True
         expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
         if header and hmac.compare_digest(expected, header):
             return True
-        # TẠM THỜI: chữ ký lệch → log để chẩn đoán, NHƯNG vẫn cho qua để bot xử lý
-        # (sẽ siết lại sau khi hiểu rõ chênh lệch — ưu tiên cho chạy được trước)
-        log.warning(
-            f"[Meta] chữ ký lệch (tạm cho qua): nhận={header[:24]!r} tính={expected[:24]!r} body_len={len(raw)}"
-        )
-        return True
+        if platform == "ig" and not Config.FB_WEBHOOK_STRICT:
+            log.warning(f"[Meta][ig] chữ ký lệch (nới cho IG — bật FB_WEBHOOK_STRICT để chặn): "
+                        f"nhận={header[:20]!r}")
+            return True
+        return False
 
     def _dispatch(platform: str, page_id: str, ev: dict):
         sender = str((ev.get("sender") or {}).get("id") or "")
@@ -314,6 +395,10 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
         msg = ev.get("message") or {}
         if msg.get("is_echo"):
             return  # tin do Page tự gửi → bỏ qua
+        mid = str(msg.get("mid") or "")
+        if _dedup.seen(mid):
+            log.info(f"[Meta] bỏ qua tin trùng mid={mid}")
+            return
         text = (msg.get("text") or "").strip()
         if not text:
             return  # scaffold: chỉ xử lý text (sticker/ảnh/postback để sau)
@@ -323,12 +408,9 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
 
         # Lưu tên khách nếu chưa có (gọi Graph API 1 lần, nền, không block)
         conv_check = conv_manager.get(user_id)
-        if not conv_check.name:
+        if not conv_check.name or not getattr(conv_check, "avatar", ""):
             _uid, _snd, _pg, _pf = user_id, sender, page_id, platform
-            threading.Thread(
-                target=lambda: _fetch_meta_name(_uid, _snd, _pg, _pf, brain, conv_manager),
-                daemon=True,
-            ).start()
+            submit(_fetch_meta_name, _uid, _snd, _pg, _pf, brain, conv_manager)
 
         # Bot kênh Meta bị tắt (đọc lại file mỗi tin để đồng bộ khi đổi từ web)
         if not _channel_enabled(_load_bot_state(), "meta"):
@@ -363,6 +445,6 @@ def create_meta_webhook(brain, conv_manager, store=None) -> Flask:
                 except Exception:
                     pass
 
-        threading.Thread(target=_run, daemon=True).start()
+        submit(_run)
 
     return app

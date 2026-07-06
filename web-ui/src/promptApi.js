@@ -1,7 +1,7 @@
 // Gọi API Prompt Builder (bridge 5005) — kèm Bearer token.
 import { getToken } from "./auth.js";
 
-const URL = "http://localhost:5005";
+const URL = "http://127.0.0.1:5005";
 
 async function j(path, opts = {}) {
   try {
@@ -35,4 +35,11 @@ export const promptApi = {
   test: (message, history = []) =>
     j("/prompt/test", { method: "POST", body: JSON.stringify({ message, history }) }),
   restoreDefault: () => j("/prompt/restore-default", { method: "POST" }),
+
+  // Bot học từ hội thoại — hàng chờ duyệt mẩu tri thức AI bóc từ câu chủ trả lời tay
+  suggestions: () => j("/prompt/suggestions"),
+  approveSuggestion: (id, edits = {}) =>
+    j(`/prompt/suggestions/${id}/approve`, { method: "POST", body: JSON.stringify(edits) }),
+  rejectSuggestion: (id) =>
+    j(`/prompt/suggestions/${id}/reject`, { method: "POST", body: JSON.stringify({}) }),
 };

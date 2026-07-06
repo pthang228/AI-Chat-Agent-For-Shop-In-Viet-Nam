@@ -83,14 +83,28 @@ def _load_tech_rules() -> str:
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
-def _compose_system(user_message: str, history: list) -> tuple:
+def _memory_block(user_id: str, account: str) -> str:
+    """TRÍ NHỚ AI VỀ KHÁCH (CRM) — có user_id thì tra, lỗi/không có → rỗng.
+    Import trễ + nuốt lỗi: đường nóng của bot không được chết vì CRM."""
+    if not user_id:
+        return ""
+    try:
+        from app.core import customers
+        return customers.memory_block(account or "", user_id)
+    except Exception:
+        return ""
+
+
+def _compose_system(user_message: str, history: list,
+                    user_id: str = None, account: str = None) -> tuple:
     """Ghép system prompt + thông tin chẩn đoán (cho trang Test bot).
-    Chế độ LAI: persona (ngắn) + DỮ LIỆU SHOP tra theo câu hỏi (RAG) + quy ước
-    kỹ thuật. Prompt cũ (không marker): giữ nguyên như trước.
+    Chế độ LAI: persona (ngắn) + DỮ LIỆU SHOP tra theo câu hỏi (RAG) + TRÍ NHỚ
+    KHÁCH (CRM) + quy ước kỹ thuật. Prompt cũ (không marker): giữ nguyên + memory.
     Trả (system_str, debug) — debug = {mode, chunks[], system_chars}."""
+    memory = _memory_block(user_id, account)
     base = _load_system_prompt()
     if not base.startswith(HYBRID_MARKER):
-        system = _today_context() + base
+        system = _today_context() + base + (("\n\n" + memory) if memory else "")
         return system, {"mode": "legacy", "chunks": [], "system_chars": len(system)}
 
     from app.core import knowledge  # import trễ — tránh vòng lặp import khi test mock
@@ -102,24 +116,29 @@ def _compose_system(user_message: str, history: list) -> tuple:
         if m.get("role") == "user":
             prev_user = str(m.get("content") or "")
             break
-    hits = knowledge.retrieve(f"{prev_user}\n{user_message}".strip())
+    # Kho nhỏ → nhồi TOÀN BỘ (0 tra trượt); kho lớn → retrieve top-k liên quan.
+    hits, kb_mode = knowledge.context_chunks(f"{prev_user}\n{user_message}".strip())
     kb_block = knowledge.format_block(hits)
     parts = [_today_context() + persona]
     if kb_block:
         parts.append(kb_block)
+    if memory:
+        parts.append(memory)
     tech = _load_tech_rules()
     if tech:
         parts.append(tech)
     system = "\n\n".join(parts)
     return system, {
         "mode": "hybrid",
+        "kb_mode": kb_mode,   # 'full' (nhồi hết) | 'retrieval' (tra top-k) | 'empty'
         "chunks": [{"title": h.get("title") or "(không tiêu đề)"} for h in hits],
         "system_chars": len(system),
     }
 
 
-def _build_system_prompt(user_message: str, history: list) -> str:
-    return _compose_system(user_message, history)[0]
+def _build_system_prompt(user_message: str, history: list,
+                         user_id: str = None, account: str = None) -> str:
+    return _compose_system(user_message, history, user_id, account)[0]
 
 
 def _call_ai(messages: list) -> str:
@@ -129,6 +148,7 @@ def _call_ai(messages: list) -> str:
             client = OpenAI(
                 api_key=Config.DEEPSEEK_API_KEY,
                 base_url="https://api.deepseek.com",
+                timeout=Config.AI_TIMEOUT,   # tránh treo thread vô hạn khi AI chậm
             )
             response = client.chat.completions.create(
                 model="deepseek-chat",
@@ -147,7 +167,7 @@ def _call_ai(messages: list) -> str:
     last_error = None
     for model in models:
         try:
-            client = Groq(api_key=Config.GROQ_API_KEY)
+            client = Groq(api_key=Config.GROQ_API_KEY, timeout=Config.AI_TIMEOUT)
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -177,8 +197,13 @@ def _parse_ai_output(full_text: str) -> dict:
     }
     if analysis_match:
         try:
-            analysis = json.loads(analysis_match.group(1).strip())
-        except json.JSONDecodeError:
+            parsed = json.loads(analysis_match.group(1).strip())
+            # AI đôi khi trả JSON array/số/chuỗi trong <analysis> → json.loads
+            # KHÔNG raise nhưng parsed không phải dict → `**analysis` sẽ TypeError
+            # làm mất câu trả lời của khách. Chỉ nhận khi là dict.
+            if isinstance(parsed, dict):
+                analysis = parsed
+        except (json.JSONDecodeError, ValueError):
             pass
 
     if "[BOOKING_CONFIRMED]" in reply:
@@ -188,8 +213,10 @@ def _parse_ai_output(full_text: str) -> dict:
     return {"reply": reply, **analysis}
 
 
-def analyze_message(user_message: str, history: list[dict]) -> dict:
-    messages = [{"role": "system", "content": _build_system_prompt(user_message, history)}]
+def analyze_message(user_message: str, history: list[dict],
+                    user_id: str = None, account: str = None) -> dict:
+    messages = [{"role": "system",
+                 "content": _build_system_prompt(user_message, history, user_id, account)}]
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
     return _parse_ai_output(_call_ai(messages))

@@ -1,9 +1,10 @@
 // Gọi server Meta (meta_webhook Flask, cổng 5006) — đã bật CORS.
-const META_URL = "http://localhost:5006";
+import { withAuth } from "./apiAuth.js";
+const META_URL = "http://127.0.0.1:5006";
 
 async function j(path, opts) {
   try {
-    const r = await fetch(META_URL + path, opts);
+    const r = await fetch(META_URL + path, withAuth(opts));
     let body = null;
     try { body = await r.json(); } catch { /* ignore */ }
     return { ok: r.ok, status: r.status, body };
@@ -63,6 +64,10 @@ const FB_SCOPE_BASE = [
   "pages_messaging",
   "pages_manage_metadata",
   "business_management",   // cần để lấy Page thuộc Business Portfolio (/me/businesses)
+  // Bài viết & bình luận: đọc bài/bình luận + ẩn/trả lời bình luận.
+  // Quyền Facebook Login chuẩn (không cần setup product như IG nên không sợ Invalid Scopes).
+  "pages_read_user_content",
+  "pages_manage_engagement",
 ];
 const IG_SCOPE = [
   "instagram_basic",

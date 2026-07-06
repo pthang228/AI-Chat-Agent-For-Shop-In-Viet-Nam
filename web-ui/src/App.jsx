@@ -8,10 +8,17 @@ import Billing from "./pages/Billing.jsx";
 import PromptBuilder from "./pages/PromptBuilder.jsx";
 import Overview from "./pages/Overview.jsx";
 import ChatWidget from "./components/ChatWidget.jsx";
-import { currentUser } from "./auth.js";
+import AdminCopilot from "./components/AdminCopilot.jsx";
+import { currentUser, isStaff } from "./auth.js";
 
 function Protected({ children }) {
   return currentUser() ? children : <Navigate to="/login" replace />;
+}
+
+// Trang quản trị chỉ dành cho CHỦ — nhân viên (staff) gõ URL thẳng cũng bị đẩy về "/"
+function OwnerOnly({ children }) {
+  if (!currentUser()) return <Navigate to="/login" replace />;
+  return isStaff() ? <Navigate to="/" replace /> : children;
 }
 
 // "/" = trang bán hàng cho khách lạ, bảng điều khiển (shell + sidebar) cho người đã đăng nhập
@@ -28,13 +35,14 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/app/:id" element={<Protected><AppDetail /></Protected>} />
         <Route path="/settings" element={<Protected><Settings /></Protected>} />
-        <Route path="/billing" element={<Protected><Billing /></Protected>} />
-        <Route path="/prompt" element={<Protected><PromptBuilder /></Protected>} />
+        <Route path="/billing" element={<OwnerOnly><Billing /></OwnerOnly>} />
+        <Route path="/prompt" element={<OwnerOnly><PromptBuilder /></OwnerOnly>} />
         <Route path="/overview" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      {/* Bong bóng chat tư vấn dịch vụ — hiện ở MỌI trang */}
-      <ChatWidget />
+      {/* Đã đăng nhập → Trợ lý QUẢN TRỊ (giúp chủ vận hành; nhân viên không có
+          quyền copilot — backend chặn nên ẩn luôn FAB); chưa → Mi tư vấn bán hàng */}
+      {currentUser() ? (!isStaff() && <AdminCopilot />) : <ChatWidget />}
     </BrowserRouter>
   );
 }

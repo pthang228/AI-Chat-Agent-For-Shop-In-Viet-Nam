@@ -21,8 +21,11 @@ from flask import Flask, request, jsonify
 from app.core.config import Config
 from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
 from app.web_api.stats_util import compute_stats
+from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
 log = logging.getLogger("tiktok_api")
+
+_dedup = DedupCache(500)   # nhớ message_id đã xử lý — TikTok gửi lại khi ta 200 chậm
 
 
 def _uid(business_id, user_open_id):
@@ -30,11 +33,11 @@ def _uid(business_id, user_open_id):
 
 
 def parse_event(payload: dict):
-    """Payload webhook TikTok → list[(business_id, user_open_id, text, name)].
+    """Payload webhook TikTok → list[(business_id, user_open_id, text, msg_id, name)].
 
     Mapping field gói gọn ở đây (spec TikTok có thể đổi khi được cấp quyền).
     Chấp nhận 2 dạng:
-      1. {"event": "message", "business_id", "sender_id", "text", "sender_name"?}
+      1. {"event": "message", "business_id", "sender_id", "text", "message_id"?, "sender_name"?}
       2. {"events": [ {như trên}, ... ]}  (TikTok gộp nhiều sự kiện 1 request)
     Bỏ qua tin echo (sender_id == business_id — chính mình gửi).
     """
@@ -53,15 +56,17 @@ def parse_event(payload: dict):
         raw_msg = ev.get("message")
         if isinstance(raw_msg, dict):
             text = str(raw_msg.get("text") or "")
+            msg_id = str(raw_msg.get("message_id") or raw_msg.get("msg_id") or raw_msg.get("id") or "")
         else:
             text = str(ev.get("text") or "")
+            msg_id = str(ev.get("message_id") or ev.get("msg_id") or "")
         text = text.strip()
         name = str(ev.get("sender_name") or ev.get("nickname") or "").strip()
         if not sender:
             continue
         if business_id and sender == business_id:   # echo tin chính mình gửi
             continue
-        out.append((business_id, sender, text, name))
+        out.append((business_id, sender, text, msg_id, name))
     return out
 
 
@@ -111,18 +116,26 @@ def handle_event(business_id, sender, text, name, brain, conv_manager, store=Non
             except Exception:
                 pass
 
-    threading.Thread(target=_run, daemon=True).start()
+    submit(_run)
 
 
 def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
     app = Flask(__name__)
+    install_cors(app)
+    install_auth_guard(
+        app,
+        public_exact={"/tiktok/webhook", "/tiktok/config"},
+        public_prefixes=("/media/outbox",),
+        # Nhân viên: chỉ hộp thư — cấm kết nối/ngắt account, đặt chủ
+        staff_deny=(
+            "/tiktok/connect", "DELETE /tiktok/accounts", "POST /tiktok/accounts",
+            "/tiktok/set-owner", "DELETE /tiktok/conversations",
+        ),
+    )
 
-    @app.after_request
-    def _cors(resp):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
+    # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
+    from app.web_api.chat_tools import register_chat_tools
+    register_chat_tools(app, "/tiktok", conv_manager, channel, account="tiktok")
 
     @app.route("/health")
     def health():
@@ -155,7 +168,10 @@ def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
         # Một số nền tảng xác minh bằng POST {"challenge": X} → echo lại
         if "challenge" in payload and "event" not in payload and "events" not in payload:
             return jsonify({"challenge": payload["challenge"]})
-        for business_id, sender, text, name in parse_event(payload):
+        for business_id, sender, text, msg_id, name in parse_event(payload):
+            if _dedup.seen(msg_id):
+                log.info(f"[TT] bỏ qua tin trùng msg_id={msg_id}")
+                continue
             handle_event(business_id, sender, text, name, brain, conv_manager, store)
         return {"ok": True}
 
@@ -294,8 +310,10 @@ def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
         return jsonify({
             "user_id": user_id,
             "name": getattr(conv, "name", ""),
+            "avatar": getattr(conv, "avatar", "") or "",
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
+            "assigned_to": getattr(conv, "assigned_to", "") or "",
             "messages": msgs,
         })
 
@@ -317,6 +335,9 @@ def create_tiktok_api(brain, conv_manager, channel, store=None) -> Flask:
         conv.add_assistant_message(text)
         conv.set_owner_active(True)
         conv_manager.save()
+        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
+        from app.core import knowledge_learn
+        submit(knowledge_learn.suggest_from_reply, user_id, "tiktok", list(conv.messages), text)
         return {"ok": True}
 
     @app.route("/tiktok/conversations/<user_id>/toggle-bot", methods=["POST"])

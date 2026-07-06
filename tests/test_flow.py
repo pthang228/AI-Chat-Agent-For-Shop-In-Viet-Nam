@@ -638,7 +638,7 @@ def test_ai_history_used():
     bot = TestBot(); uid = _uid()
     today = datetime.now().strftime("%d/%m/%Y")
     received_history = []
-    def fake_ai(text, history):
+    def fake_ai(text, history, *a, **kw):   # nhận thêm user_id/account (CRM memory)
         received_history.append(list(history))
         return {"intent":"other","reply":"ok"}
     conv = conv_manager.get(uid)

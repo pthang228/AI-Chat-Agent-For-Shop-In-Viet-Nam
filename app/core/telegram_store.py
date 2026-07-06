@@ -12,6 +12,7 @@ import logging
 import threading
 
 from app.core.config import Config
+from app.core.store_util import atomic_write_json
 
 log = logging.getLogger(__name__)
 
@@ -33,11 +34,7 @@ class TelegramStore:
 
     def save(self):
         with self._lock:
-            try:
-                self._file.write_text(
-                    json.dumps(self._bots, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception as e:
-                log.error(f"[TGStore] save lỗi: {e}")
+            atomic_write_json(self._file, self._bots, "TGStore")
 
     def upsert(self, bot_id, token=None, username=None, name=None, owner_username=None):
         bid = str(bot_id)

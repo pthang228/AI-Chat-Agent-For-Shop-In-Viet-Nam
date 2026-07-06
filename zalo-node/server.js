@@ -146,6 +146,42 @@ function saveConfig() {
 // status: idle | waiting_scan | scanned | logged_in | qr_expired | declined | error
 let state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
 
+// ── Avatar THẬT của khách: tin nhắn 1-1 không phải lúc nào cũng kèm avt →
+// gọi api.getUserInfo 1 LẦN/khách (cache), lấy đúng URL avatar tài khoản Zalo ──
+const avatarCache = new Map(); // uid → url ("" = đã hỏi nhưng không có)
+async function getAvatar(uid) {
+  if (!uid || !api) return "";
+  if (avatarCache.has(uid)) return avatarCache.get(uid);
+  let url = "";
+  try {
+    const info = await api.getUserInfo(uid);
+    // zca-js trả { changed_profiles: {uid: {...}} } hoặc { unchanged_profiles };
+    // key có thể là "uid" hoặc "uid_0" tuỳ phiên bản → quét mọi profile khớp uid
+    const buckets = [info?.changed_profiles, info?.unchanged_profiles, info?.profiles];
+    for (const b of buckets) {
+      if (!b) continue;
+      for (const [k, p] of Object.entries(b)) {
+        if (k === uid || k.startsWith(uid + "_") || String(p?.userId) === uid) {
+          url = p?.avatar || p?.avt || "";
+          if (url) break;
+        }
+      }
+      if (url) break;
+    }
+    if (!url)
+      console.log("[avatar] không thấy avatar cho", uid, "— raw keys:",
+        JSON.stringify({
+          top: Object.keys(info || {}),
+          changed: Object.keys(info?.changed_profiles || {}),
+          unchanged: Object.keys(info?.unchanged_profiles || {}),
+        }));
+  } catch (e) {
+    console.error("[avatar] getUserInfo lỗi:", e.message);
+  }
+  avatarCache.set(uid, url); // cache cả khi rỗng — không hỏi lại mỗi tin
+  return url;
+}
+
 // ── Sau khi đăng nhập: gắn listener, chuyển tiếp tin khách sang Python ──
 function attachListener(a) {
   api = a;
@@ -182,6 +218,11 @@ function attachListener(a) {
         ownerTyped,                          // true = chủ nhà tự nhắn khách
         isGroup,
         dName: message.data.dName,
+        // Avatar THẬT của khách: avt kèm tin (nếu có) → fallback getUserInfo (cache).
+        // Tin isSelf = avatar CHỦ, không phải khách → để rỗng.
+        avatar: message.isSelf
+          ? ""
+          : message.data.avt || (await getAvatar(message.threadId)) || "",
         ownId: state.ownId,
       };
       const r = await fetch(BRIDGE_URL, {
@@ -333,6 +374,17 @@ app.get("/groups", async (req, res) => {
       } catch { /* vẫn trả id dù không lấy được tên */ }
     }
     res.json({ ownId: state.ownId, groups: ids.map((id) => ({ groupId: id, name: names[id] || "" })) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Avatar THẬT của 1 khách (bridge backfill cho khách cũ chưa nhắn lại)
+app.get("/avatar/:uid", async (req, res) => {
+  if (!api) return res.status(409).json({ error: "chưa đăng nhập Zalo" });
+  try {
+    const url = await getAvatar(String(req.params.uid));
+    res.json({ uid: req.params.uid, avatar: url });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

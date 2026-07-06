@@ -33,3 +33,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/prompt_backups/
+
+test_db_*.sqlite*
+media/outbox/
+docs/*.mp4

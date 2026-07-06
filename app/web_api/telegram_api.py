@@ -20,6 +20,7 @@ from app.core.config import Config
 from app.core import telegram_owner, telegram_login
 from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary
 from app.web_api.stats_util import compute_stats
+from app.web_api.api_guard import install_cors, install_auth_guard, submit, DedupCache
 
 log = logging.getLogger("telegram_api")
 
@@ -139,7 +140,7 @@ def handle_update(update, brain, conv_manager, bot_id=None, store=None):
             except Exception:
                 pass
 
-    threading.Thread(target=_run, daemon=True).start()
+    submit(_run)
 
 
 def poll_loop(key, token, bot_id, brain, conv_manager, store=None, stop=None):
@@ -231,13 +232,21 @@ def stop_poller(key):
 
 def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
     app = Flask(__name__)
+    install_cors(app)
+    install_auth_guard(
+        app,
+        public_exact={"/tg/config"},
+        public_prefixes=("/tg/avatar", "/media/outbox"),   # <img>/<video> không gửi Bearer
+        # Nhân viên: chỉ hộp thư — cấm kết nối/ngắt bot, đặt chủ, acc gọi
+        staff_deny=(
+            "/tg/connect", "DELETE /tg/bots", "POST /tg/bots",
+            "/tg/set-owner", "/tg/caller", "DELETE /tg/conversations",
+        ),
+    )
 
-    @app.after_request
-    def _cors(resp):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
+    # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm (dashboard)
+    from app.web_api.chat_tools import register_chat_tools
+    register_chat_tools(app, "/tg", conv_manager, channel, account="telegram")
 
     @app.route("/health")
     def health():
@@ -416,8 +425,37 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
 
     # ── Hội thoại (lọc theo bot) ───────────────────────────────────────
 
+    AVATAR_DIR = Config.DATA_DIR / "avatars"
+    # uid đã hỏi avatar — DedupCache bounded (khách KHÔNG có ảnh sẽ mãi thiếu
+    # avatar; không cache thì poll 8s gọi getUserProfilePhotos lại vô hạn; set
+    # thường thì phình mãi theo tổng khách → dùng DedupCache co giãn có trần).
+    _av_asked = DedupCache(5000)
+
+    def _fetch_tg_avatar(token, bid, chat_id) -> str:
+        """Tải ảnh đại diện Telegram về local rồi trả đường dẫn tương đối
+        /tg/avatar/<file>. KHÔNG đưa URL Telegram thẳng ra frontend vì URL file
+        của Telegram chứa BOT TOKEN. Không có ảnh → ""."""
+        r = requests.get(f"https://api.telegram.org/bot{token}/getUserProfilePhotos",
+                         params={"user_id": chat_id, "limit": 1}, timeout=10)
+        photos = (r.json().get("result") or {}).get("photos") or [] if r.status_code == 200 else []
+        if not photos or not photos[0]:
+            return ""
+        file_id = photos[0][0].get("file_id")   # size nhỏ nhất (~160px) — đủ cho avatar
+        r = requests.get(f"https://api.telegram.org/bot{token}/getFile",
+                         params={"file_id": file_id}, timeout=10)
+        file_path = (r.json().get("result") or {}).get("file_path") if r.status_code == 200 else None
+        if not file_path:
+            return ""
+        r = requests.get(f"https://api.telegram.org/file/bot{token}/{file_path}", timeout=15)
+        if r.status_code != 200 or not r.content:
+            return ""
+        AVATAR_DIR.mkdir(exist_ok=True)
+        fname = f"tg_{bid}_{chat_id}.jpg"
+        (AVATAR_DIR / fname).write_bytes(r.content)
+        return f"/tg/avatar/{fname}"
+
     def _backfill_tg_names(missing):
-        """Gọi Telegram getChat để lấy tên cho các khách chưa có tên (chạy nền)."""
+        """Gọi Telegram lấy tên + avatar cho các khách còn thiếu (chạy nền)."""
         changed = False
         for uid in missing:
             parts = uid.split(":")
@@ -428,26 +466,38 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
             token = bot.get("token") if bot else None
             if not token:
                 continue
+            conv = conv_manager.get(uid)
             try:
-                r = requests.get(
-                    f"https://api.telegram.org/bot{token}/getChat",
-                    params={"chat_id": chat_id},
-                    timeout=10,
-                )
-                if r.status_code == 200:
-                    res = r.json().get("result", {})
-                    name = " ".join(x for x in [res.get("first_name"), res.get("last_name")] if x)
-                    if not name:
-                        name = res.get("username", "")
-                    if name:
-                        conv = conv_manager.get(uid)
-                        if not conv.name:
+                if not conv.name:
+                    r = requests.get(
+                        f"https://api.telegram.org/bot{token}/getChat",
+                        params={"chat_id": chat_id},
+                        timeout=10,
+                    )
+                    if r.status_code == 200:
+                        res = r.json().get("result", {})
+                        name = " ".join(x for x in [res.get("first_name"), res.get("last_name")] if x)
+                        if not name:
+                            name = res.get("username", "")
+                        if name:
                             conv.name = name
                             changed = True
+                if not getattr(conv, "avatar", ""):
+                    av = _fetch_tg_avatar(token, bid, chat_id)
+                    if av:
+                        conv.avatar = av
+                        changed = True
             except Exception as e:
-                log.debug(f"[tg name] {uid}: {e}")
+                log.debug(f"[tg profile] {uid}: {e}")
         if changed:
             conv_manager.save()
+
+    @app.route("/tg/avatar/<path:fname>")
+    def tg_avatar(fname):
+        """Serve ảnh đại diện đã tải về (công khai — chỉ là ảnh, không lộ token)."""
+        from flask import send_from_directory
+        from pathlib import Path as _P
+        return send_from_directory(AVATAR_DIR, _P(fname).name)
 
     @app.route("/tg/conversations")
     def tg_conversations():
@@ -467,7 +517,7 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
             if bot_id and uid_bot != bot_id:
                 continue
             rows.append(_conv_summary(uid, conv))
-            if not conv.name:
+            if (not conv.name or not getattr(conv, "avatar", "")) and not _av_asked.seen(uid):
                 missing_names.append(uid)
         if missing_names:
             threading.Thread(target=_backfill_tg_names, args=(missing_names,), daemon=True).start()
@@ -489,8 +539,10 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
         return jsonify({
             "user_id": user_id,
             "name": getattr(conv, "name", ""),
+            "avatar": getattr(conv, "avatar", "") or "",
             "owner_active": conv.is_owner_active(),
             "stage": conv.stage,
+            "assigned_to": getattr(conv, "assigned_to", "") or "",
             "messages": msgs,
         })
 
@@ -514,6 +566,9 @@ def create_telegram_api(brain, conv_manager, channel, store=None) -> Flask:
         conv.add_assistant_message(text)
         conv.set_owner_active(True)
         conv_manager.save()
+        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
+        from app.core import knowledge_learn
+        submit(knowledge_learn.suggest_from_reply, user_id, "telegram", list(conv.messages), text)
         return {"ok": True}
 
     @app.route("/tg/conversations/<user_id>/toggle-bot", methods=["POST"])

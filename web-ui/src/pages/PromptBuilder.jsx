@@ -4,7 +4,6 @@ import { currentUser } from "../auth.js";
 import { promptApi } from "../promptApi.js";
 import { IcHome, IcBack } from "../components/icons.jsx";
 import BackLink from "../components/BackLink.jsx";
-import BotTester from "../components/BotTester.jsx";
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -166,7 +165,6 @@ export default function PromptBuilder() {
   const [sources, setSources] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [showTester, setShowTester] = useState(false);
 
   async function load() {
     const r = await promptApi.current();
@@ -218,7 +216,7 @@ export default function PromptBuilder() {
       setMsg("❌ Điền ít nhất một ô (hoặc dán 1 link) rồi hãy tạo nhé.");
       return;
     }
-    setMsg(""); setDraft(null); setChunks([]); setGaps([]); setSources([]); setShowTester(false);
+    setMsg(""); setDraft(null); setChunks([]); setGaps([]); setSources([]);
     setBusy(true);
     const r = await promptApi.generate(linkList, instructions);
     setBusy(false);
@@ -238,9 +236,8 @@ export default function PromptBuilder() {
     setMsg("");
     const r = await promptApi.apply(draft, chunks.length ? chunks : null);
     if (r.ok) {
-      setMsg("✅ Đã lưu — bot đang dùng bộ não mới! Chat thử bên dưới xem bot trả lời ưng chưa.");
+      setMsg("✅ Đã lưu — bot đang dùng bộ não mới! Chat thử bằng nút 🧪 Test bot ở mục Chatbot.");
       setDraft(null); setChunks([]); setSources([]);
-      setShowTester(true);
       load();
     } else {
       setMsg("❌ " + (r.body?.error || "Lưu thất bại"));
@@ -295,9 +292,6 @@ export default function PromptBuilder() {
                   : <span className="badge stage">Mặc định hệ thống</span>}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn-mini" onClick={() => setShowTester((v) => !v)}>
-                  🧪 {showTester ? "Ẩn test bot" : "Test bot"}
-                </button>
                 <button className="btn-mini" onClick={() => setShowCur((v) => !v)}>
                   {showCur ? "Ẩn nội dung" : "Xem nội dung"}
                 </button>
@@ -314,9 +308,6 @@ export default function PromptBuilder() {
         )}
 
         {msg && <div className="savemsg" style={{ marginBottom: 14 }}>{msg}</div>}
-
-        {/* Test bot — chat thử với bộ não ĐANG DÙNG */}
-        {showTester && <div style={{ marginBottom: 16 }}><BotTester onClose={() => setShowTester(false)} /></div>}
 
         {/* Prompt mẫu chuẩn — shop chỉnh tay cho phù hợp */}
         {cur && cur !== "offline" && (
@@ -340,6 +331,9 @@ export default function PromptBuilder() {
             {showTpl && tpl && <pre className="prompt-pre">{tpl}</pre>}
           </div>
         )}
+
+        {/* Bot học từ hội thoại — đề xuất tri thức chờ chủ duyệt */}
+        {cur && cur !== "offline" && <SuggestionsCard onChanged={load} />}
 
         {/* Bước 1: kể về shop — form gợi ý theo 5 nhóm */}
         <div className="panel set-card" style={{ marginBottom: 16 }}>
@@ -475,6 +469,93 @@ export default function PromptBuilder() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+/*
+ * Bot học từ hội thoại: khi bạn TRẢ LỜI TAY một câu bot không biết (gửi từ web
+ * hoặc gõ trên điện thoại), AI bóc thành mẩu tri thức ĐỀ XUẤT. Duyệt ở đây thì
+ * mẩu mới vào kho — bot lần sau tự trả lời được. Sửa được nội dung trước khi duyệt.
+ */
+function SuggestionsCard({ onChanged }) {
+  const [sugs, setSugs] = useState(null);   // null=đang tải | mảng
+  const [edits, setEdits] = useState({});   // id → {title, content} chủ sửa trước khi duyệt
+  const [busyId, setBusyId] = useState(null);
+  const [note, setNote] = useState("");
+
+  async function loadSugs() {
+    const r = await promptApi.suggestions();
+    if (r.ok && Array.isArray(r.body?.suggestions)) setSugs(r.body.suggestions);
+    else setSugs([]);
+  }
+  useEffect(() => {
+    loadSugs();
+    const t = setInterval(loadSugs, 30000);   // chủ đang mở trang → thấy đề xuất mới
+    return () => clearInterval(t);
+  }, []);
+
+  function edited(s) {
+    return { title: edits[s.id]?.title ?? s.title, content: edits[s.id]?.content ?? s.content };
+  }
+  async function doApprove(s) {
+    setBusyId(s.id);
+    const r = await promptApi.approveSuggestion(s.id, edited(s));
+    setBusyId(null);
+    if (r.ok) { setNote("✅ Đã thêm vào kho tri thức — bot dùng ngay."); loadSugs(); onChanged?.(); }
+    else setNote("❌ " + (r.body?.error || "Duyệt thất bại"));
+  }
+  async function doReject(s) {
+    setBusyId(s.id);
+    const r = await promptApi.rejectSuggestion(s.id);
+    setBusyId(null);
+    if (r.ok) loadSugs();
+  }
+
+  if (!sugs || sugs.length === 0) return null;   // không có đề xuất → không chiếm chỗ
+
+  return (
+    <div className="panel set-card" style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, marginBottom: 4 }}>
+        💡 Bot học từ hội thoại <span className="badge bot">{sugs.length} đề xuất chờ duyệt</span>
+      </h3>
+      <p className="hint">
+        Bạn vừa trả lời tay mấy câu bot chưa biết — AI đã soạn sẵn thành tri thức.
+        Duyệt để lần sau bot tự trả lời (sửa nội dung trước khi duyệt nếu cần).
+      </p>
+      {note && <div className="savemsg" style={{ marginBottom: 8 }}>{note}</div>}
+      <div className="kn-list">
+        {sugs.map((s) => (
+          <div key={s.id} className="sug-item">
+            <div className="sug-qa">
+              <div><b>Khách hỏi:</b> {s.question}</div>
+              <div><b>Bạn trả lời:</b> {s.answer}</div>
+            </div>
+            <input
+              className="sug-title"
+              value={edited(s).title}
+              placeholder="Tiêu đề mẩu tri thức"
+              onChange={(e) => setEdits((m) => ({ ...m, [s.id]: { ...edited(s), title: e.target.value } }))}
+            />
+            <textarea
+              rows={3}
+              value={edited(s).content}
+              onChange={(e) => setEdits((m) => ({ ...m, [s.id]: { ...edited(s), content: e.target.value } }))}
+            />
+            {s.keywords?.length > 0 && (
+              <div className="kn-kw" style={{ marginTop: 4 }}>🔎 {s.keywords.slice(0, 6).join(" · ")}</div>
+            )}
+            <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+              <button className="btn-mini danger" disabled={busyId === s.id} onClick={() => doReject(s)}>
+                ✖ Bỏ qua
+              </button>
+              <button className="btn-primary sm" disabled={busyId === s.id} onClick={() => doApprove(s)}>
+                {busyId === s.id ? "Đang lưu…" : "✅ Duyệt vào kho"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

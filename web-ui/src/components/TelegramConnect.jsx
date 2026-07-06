@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { tg } from "../telegramApi.js";
 import GuideBox from "./GuideBox.jsx";
+import { ChannelTile } from "./ChannelIcon.jsx";
 
 // Kết nối Telegram ĐA KHÁCH ngay trong web: dán token bot (@BotFather) → tự động.
 // Mỗi bot tự đăng nhập "acc gọi" (Telethon) bằng QR để gọi điện cho chủ.
@@ -130,7 +131,7 @@ export default function TelegramConnect() {
 
   return (
     <div className="connect">
-      <div className="status ok">✈️ Kết nối Telegram</div>
+      <div className="status ok"><ChannelTile ch="telegram" size={22} /> Kết nối Telegram</div>
 
       <GuideBox
         title="📘 Hướng dẫn 3 bước — Telegram"

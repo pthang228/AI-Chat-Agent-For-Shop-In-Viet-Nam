@@ -3,7 +3,8 @@ import { shopee } from "../shopeeApi.js";
 import ChatSend from "./ChatSend.jsx";
 
 function displayName(c) {
-  return c.name ? `${c.name} (…${c.user_id.slice(-6)})` : `…${c.user_id.slice(-8)}`;
+  const uid = String(c.user_id || "");
+  return c.name ? `${c.name} (…${uid.slice(-6)})` : `…${uid.slice(-8)}`;
 }
 
 function relTime(iso) {
@@ -26,6 +27,7 @@ export default function ShopeeConversations() {
   const [sel, setSel] = useState(null);
   const [detail, setDetail] = useState(null);
   const timer = useRef(null);
+  const offRef = useRef(0);   // trang hiện tại — interval chỉ tự refresh khi ở trang đầu
 
   useEffect(() => {
     shopee.shops().then((r) => {
@@ -40,6 +42,7 @@ export default function ShopeeConversations() {
     setOffline(false);
     setTotal(body.total ?? 0);
     setOffset(off);
+    offRef.current = off;
     setList((prev) => append ? [...(prev ?? []), ...body.items] : body.items);
   }
 
@@ -47,7 +50,7 @@ export default function ShopeeConversations() {
     setSel(null); setDetail(null); setList(null); setOffset(0); setTotal(0);
     loadList(0);
     clearInterval(timer.current);
-    timer.current = setInterval(() => loadList(0), 8000);
+    timer.current = setInterval(() => { if (offRef.current === 0) loadList(0); }, 8000);
     return () => clearInterval(timer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId]);

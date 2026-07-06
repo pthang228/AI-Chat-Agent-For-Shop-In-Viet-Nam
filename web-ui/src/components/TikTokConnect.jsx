@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { tiktok } from "../tiktokApi.js";
 import GuideBox from "./GuideBox.jsx";
+import { ChannelTile } from "./ChannelIcon.jsx";
 
 // Kết nối TikTok ĐA KHÁCH trong web: dán access token TikTok Business + business ID.
 export default function TikTokConnect() {
@@ -73,7 +74,7 @@ export default function TikTokConnect() {
 
   return (
     <div className="connect">
-      <div className="status ok">🎵 Kết nối TikTok</div>
+      <div className="status ok"><ChannelTile ch="tiktok" size={22} /> Kết nối TikTok</div>
 
       <GuideBox
         title="📘 Hướng dẫn kết nối — TikTok"

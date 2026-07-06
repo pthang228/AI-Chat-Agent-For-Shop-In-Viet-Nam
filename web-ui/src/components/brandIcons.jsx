@@ -40,6 +40,36 @@ export const IcTikTok = (p) => (
   </svg>
 );
 
+// Shopee — túi mua sắm trắng + chữ "S" cam (nền tile cam Shopee)
+export const IcShopee = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" {...p}>
+    <path stroke="#fff" strokeWidth="1.7" fill="none" d="M8.7 7.6c0-2.2 1.5-4 3.3-4s3.3 1.8 3.3 4"/>
+    <path fill="#fff" d="M5.5 7.4h13l.9 11.3c.1 1.2-.9 2.3-2.1 2.3H6.7c-1.3 0-2.2-1-2.1-2.3l.9-11.3Z"/>
+    <path stroke="#EE4D2D" strokeWidth="1.7" strokeLinecap="round" fill="none"
+          d="M14.2 11.4c-.5-.6-1.3-1-2.2-1-1.2 0-2.2.7-2.2 1.7 0 2.3 4.5 1.2 4.5 3.5 0 1-1 1.8-2.3 1.8-1 0-1.8-.4-2.3-1.1"/>
+  </svg>
+);
+
+// Zalo OA — bong bóng Zalo + huy hiệu tick "chính chủ" (nền tile xanh Zalo OA)
+export const IcZaloOA = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" {...p}>
+    <path fill="#fff" d="M11 3.2c-4.5 0-8.2 2.9-8.2 6.6 0 2.1 1.2 4 3.2 5.2-.1.9-.5 1.8-.9 2.4-.2.4.1.7.5.6 1.2-.4 2.3-.9 3.2-1.4.7.1 1.4.2 2.2.2 4.5 0 8.2-2.9 8.2-6.6S15.5 3.2 11 3.2Z"/>
+    <path stroke="#005AE0" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" d="M8.5 7.9h4.6l-4.6 4.9h4.9"/>
+    <circle cx="17.6" cy="17.2" r="4.4" fill="#fff"/>
+    <path stroke="#005AE0" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" d="M15.8 17.2l1.3 1.3 2.4-2.5"/>
+  </svg>
+);
+
+// Kênh Website — quả địa cầu + bong bóng chat (widget nhúng web khách hàng)
+export const IcWebChat = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" {...p}>
+    <circle cx="10.5" cy="10.5" r="7.2" stroke="#fff" strokeWidth="1.7" />
+    <path stroke="#fff" strokeWidth="1.5" strokeLinecap="round" fill="none"
+          d="M3.5 10.5h14M10.5 3.3c-2.1 2-3.1 4.5-3.1 7.2s1 5.2 3.1 7.2c2.1-2 3.1-4.5 3.1-7.2s-1-5.2-3.1-7.2Z" />
+    <path fill="#fff" d="M14.2 14.1h6.3c.6 0 1 .4 1 1v4c0 .6-.4 1-1 1h-1.2l.2 1.9-2.5-1.9h-2.8c-.6 0-1-.4-1-1v-4c0-.6.4-1 1-1Z"/>
+  </svg>
+);
+
 // ── Glyph tính năng (nét trắng, đồng bộ style app) ──
 // AI / Dạy AI — tia sáng
 export const IcAI = (p) => (

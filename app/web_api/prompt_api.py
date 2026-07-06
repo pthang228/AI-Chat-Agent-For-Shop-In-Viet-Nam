@@ -7,6 +7,9 @@ API Prompt Builder — gắn vào bridge (5005). Tất cả cần Bearer token.
   POST /prompt/apply {prompt, chunks?}       → shop ĐỒNG Ý → lưu, bot dùng ngay
                                                (có chunks → chế độ LAI: persona + RAG)
   GET  /prompt/knowledge                     → danh sách mẩu tri thức đang dùng
+  GET  /prompt/suggestions                   → đề xuất tri thức bot học từ hội thoại (chờ duyệt)
+  POST /prompt/suggestions/<id>/approve {title?, content?, keywords?} → duyệt (sửa được trước khi vào kho)
+  POST /prompt/suggestions/<id>/reject       → bỏ đề xuất
   POST /prompt/test {message, history[]}     → chat THỬ với bot (AI thật + chẩn đoán;
                                                không lưu session, không gửi kênh nào)
   POST /prompt/restore-default               → quay về prompt mặc định (xoá tri thức lai)
@@ -18,7 +21,7 @@ from pathlib import Path
 
 from flask import request
 
-from app.core import prompt_builder, knowledge, claude_ai
+from app.core import prompt_builder, knowledge, knowledge_learn, claude_ai
 from app.core.config import Config
 from app.web_api.auth_api import _user_for_token, _bearer
 from app.core.db import get_db
@@ -129,6 +132,43 @@ def register_prompt_routes(app):
         if err:
             return err
         return {"ok": True, "chunks": knowledge.list_chunks()}
+
+    # ── Bot học từ hội thoại — hàng chờ duyệt ────────────────────────
+
+    @app.route("/prompt/suggestions")
+    def prompt_suggestions():
+        u, err = _auth_or_401()
+        if err:
+            return err
+        return {"ok": True,
+                "suggestions": knowledge_learn.list_suggestions("pending"),
+                "pending": knowledge_learn.count_pending()}
+
+    @app.route("/prompt/suggestions/<int:sid>/approve", methods=["POST"])
+    def prompt_suggestion_approve(sid):
+        u, err = _auth_or_401()
+        if err:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        try:
+            s = knowledge_learn.approve(
+                sid, title=data.get("title"), content=data.get("content"),
+                keywords=data.get("keywords") if isinstance(data.get("keywords"), list) else None)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        log.info(f"[prompt] {u['username']} duyệt đề xuất tri thức #{sid}")
+        return {"ok": True, "suggestion": s, "pending": knowledge_learn.count_pending()}
+
+    @app.route("/prompt/suggestions/<int:sid>/reject", methods=["POST"])
+    def prompt_suggestion_reject(sid):
+        u, err = _auth_or_401()
+        if err:
+            return err
+        try:
+            knowledge_learn.reject(sid)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return {"ok": True, "pending": knowledge_learn.count_pending()}
 
     @app.route("/prompt/test", methods=["POST"])
     def prompt_test():

@@ -29,10 +29,12 @@ class ConversationState:
     user_id: str
     messages: list[dict] = field(default_factory=list)   # lịch sử chat gửi cho AI
     name: str = ""                                        # tên hiển thị của khách
+    avatar: str = ""                                      # URL ảnh đại diện (kênh cung cấp)
     checkin:  Optional[str] = None                        # dd/mm/yyyy
     checkout: Optional[str] = None
     selected_room: Optional[str] = None
     stage: str = "greeting"  # greeting | checking | offering | confirmed | owner_notified
+    assigned_to: str = ""               # nhân viên được phân công (username, rỗng = chưa gán)
     owner_active: bool = False          # True khi chủ nhà đang tự xử lý
     owner_active_since: Optional[datetime] = None   # Thời điểm bật owner_active
     last_updated: datetime = field(default_factory=datetime.now)
@@ -117,10 +119,11 @@ class ConversationManager:
                         s.get("owner_active_since"),
                         s.get("last_updated") or datetime.now().isoformat(),
                         json.dumps(s.get("messages", []), ensure_ascii=False),
+                        "",   # avatar — JSON cũ không có
+                        "",   # assigned_to — JSON cũ không có
                     ))
                 if rows:
-                    self._db.executemany(
-                        "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+                    self._db.executemany(self._INSERT_SQL, rows)
                 # replace (không phải rename): Windows không cho rename đè file có sẵn
                 self._file.replace(self._file.with_suffix(".json.migrated"))
                 print(f"[Sessions] Migrate {len(rows)} session(s) JSON → SQLite ({self._db.path})")
@@ -155,10 +158,12 @@ class ConversationManager:
                     user_id       = r["user_id"],
                     messages      = json.loads(r["messages"] or "[]"),
                     name          = r["name"] or "",
+                    avatar        = (r["avatar"] if "avatar" in r.keys() else "") or "",
                     checkin       = r["checkin"],
                     checkout      = r["checkout"],
                     selected_room = r["selected_room"],
                     stage         = r["stage"] or "greeting",
+                    assigned_to   = (r["assigned_to"] if "assigned_to" in r.keys() else "") or "",
                     owner_active  = bool(r["owner_active"]),
                     owner_active_since = datetime.fromisoformat(oas) if oas else None,
                     last_updated  = datetime.fromisoformat(lu) if lu else datetime.now(),
@@ -166,6 +171,13 @@ class ConversationManager:
             print(f"[Sessions] Load {len(self._sessions)} session(s) account={self._account} từ {self._db.path}")
         except Exception as e:
             print(f"[Sessions] Lỗi load: {e}")
+
+    # Ghi TÊN CỘT tường minh: cột avatar thêm sau (ALTER) nên thứ tự cột có thể
+    # khác nhau giữa DB cũ và DB tạo mới — insert positional sẽ lệch cột.
+    _INSERT_SQL = (
+        "INSERT OR REPLACE INTO sessions (account, user_id, name, checkin, checkout,"
+        " selected_room, stage, owner_active, owner_active_since, last_updated,"
+        " messages, avatar, assigned_to) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
     def _row(self, s: ConversationState):
         return (
@@ -175,6 +187,8 @@ class ConversationManager:
             s.owner_active_since.isoformat() if s.owner_active_since else None,
             s.last_updated.isoformat(),
             json.dumps(s.messages, ensure_ascii=False),
+            s.avatar or "",
+            s.assigned_to or "",
         )
 
     def save(self):
@@ -186,8 +200,7 @@ class ConversationManager:
         if not rows:
             return
         try:
-            self._db.executemany(
-                "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+            self._db.executemany(self._INSERT_SQL, rows)
         except Exception as e:
             print(f"[Sessions] Lỗi save: {e}")
             with self._lock:
@@ -238,12 +251,13 @@ class ConversationManager:
 
     def get(self, user_id: str) -> ConversationState:
         """Lấy (hoặc tạo) session. Caller thường mutate sau khi get →
-        đánh dấu dirty để save() ghi xuống DB."""
-        if user_id not in self._sessions:
-            self._sessions[user_id] = ConversationState(user_id=user_id)
+        đánh dấu dirty để save() ghi xuống DB. Tạo session + mark dirty trong
+        CÙNG lock để không đua với cleanup_old (thread autosave) pop cùng lúc."""
         with self._lock:
+            if user_id not in self._sessions:
+                self._sessions[user_id] = ConversationState(user_id=user_id)
             self._dirty.add(user_id)
-        return self._sessions[user_id]
+            return self._sessions[user_id]
 
     def reset(self, user_id: str):
         self._sessions.pop(user_id, None)
@@ -266,9 +280,14 @@ class ConversationManager:
             if (now - s.last_updated).total_seconds() > hours * 3600
         ]
         for uid in expired:
-            self._archive_session(self._sessions[uid])   # giữ số liệu cho /stats
-            self._sessions.pop(uid, None)
             with self._lock:
+                s = self._sessions.get(uid)
+                # Tin mới vừa đến (get() cập nhật last_updated) trong lúc dọn →
+                # không còn "hết hạn" nữa → BỎ QUA, không xoá nhầm session sống.
+                if s is None or (now - s.last_updated).total_seconds() <= hours * 3600:
+                    continue
+                self._archive_session(s)              # giữ số liệu cho /stats
+                self._sessions.pop(uid, None)
                 self._dirty.discard(uid)
         if expired:
             try:

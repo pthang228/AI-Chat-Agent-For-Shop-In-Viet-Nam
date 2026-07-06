@@ -12,6 +12,7 @@ import logging
 import threading
 
 from app.core.config import Config
+from app.core.store_util import atomic_write_json
 
 log = logging.getLogger(__name__)
 
@@ -33,11 +34,7 @@ class TikTokStore:
 
     def save(self):
         with self._lock:
-            try:
-                self._file.write_text(
-                    json.dumps(self._accounts, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception as e:
-                log.error(f"[TTStore] save lỗi: {e}")
+            atomic_write_json(self._file, self._accounts, "TTStore")
 
     def upsert(self, business_id, access_token=None, name=None, username=None, owner_username=None):
         bid = str(business_id)

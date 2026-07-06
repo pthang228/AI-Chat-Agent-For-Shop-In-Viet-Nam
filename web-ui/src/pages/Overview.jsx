@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { currentUser } from "../auth.js";
+import { currentUser, isStaff } from "../auth.js";
 import { logoutAndStopBots } from "../session.js";
 import { billing as billingApi } from "../billingApi.js";
 import { IcLogout } from "../components/icons.jsx";
@@ -8,6 +8,10 @@ import Sidebar from "../components/Sidebar.jsx";
 import OverviewCharts from "../components/OverviewCharts.jsx";
 import ChatbotSection from "../components/ChatbotSection.jsx";
 import InboxSection from "../components/InboxSection.jsx";
+import OrdersSection from "../components/OrdersSection.jsx";
+import PostsSection from "../components/PostsSection.jsx";
+import CustomersSection from "../components/CustomersSection.jsx";
+import BroadcastSection from "../components/BroadcastSection.jsx";
 
 const PERIODS = [
   { key: "today", label: "Hôm nay" },
@@ -36,7 +40,9 @@ function Kpi({ icon, label, value, accent }) {
 const SECTION_TITLE = {
   overview:  "Tổng quan",
   chat:      "Hội thoại",
+  customers: "Khách hàng",
   chatbot:   "Chatbot",
+  orders:    "Đơn hàng",
   broadcast: "Tin nhắn hàng loạt",
   posts:     "Bài viết & bình luận (Facebook + TikTok)",
   stats:     "Thống kê",
@@ -45,12 +51,24 @@ const SECTION_TITLE = {
 export default function Overview() {
   const nav = useNavigate();
   const user = currentUser();
+  const staff = isStaff(user);
   const hostName = user?.homestay || user?.username || "";
-  const [section, setSection] = useState(() => {
+  const [section, setSectionRaw] = useState(() => {
     // Cho phép mở thẳng 1 mục qua URL ?s=chatbot (vd nút "Về danh sách app")
     const s = new URLSearchParams(window.location.search).get("s");
-    return ["overview", "chat", "chatbot", "broadcast", "posts", "stats"].includes(s) ? s : "overview";
+    const valid = ["overview", "chat", "customers", "chatbot", "orders", "broadcast", "posts", "stats"];
+    if (staff) { // nhân viên không có mục quản trị
+      const i = valid.indexOf("chatbot"); valid.splice(i, 1);
+      valid.splice(valid.indexOf("broadcast"), 1);
+    }
+    return valid.includes(s) ? s : "overview";
   });
+  // Đổi mục ⇒ ĐỒNG BỘ vào URL (?s=) để history-back từ trang app quay về ĐÚNG
+  // mục đang xem (không rơi về Tổng quan). replace: không tạo entry lịch sử thừa.
+  function setSection(key) {
+    setSectionRaw(key);
+    nav(key === "overview" ? "/" : `/?s=${key}`, { replace: true });
+  }
   const [collapsed, setCollapsed] = useState(false);
   const [period, setPeriod] = useState("30d");
   const [stats, setStats] = useState(null);
@@ -80,6 +98,7 @@ export default function Overview() {
         onSelect={setSection}
         collapsed={collapsed}
         onToggle={() => setCollapsed((v) => !v)}
+        staff={staff}
       />
 
       <div className="shell-main">
@@ -138,8 +157,16 @@ export default function Overview() {
             </>
           ) : section === "chat" ? (
             <InboxSection />
+          ) : section === "customers" ? (
+            <CustomersSection />
           ) : section === "chatbot" ? (
             <ChatbotSection />
+          ) : section === "orders" ? (
+            <OrdersSection />
+          ) : section === "broadcast" && !staff ? (
+            <BroadcastSection />
+          ) : section === "posts" ? (
+            <PostsSection />
           ) : (
             <div className="ov-placeholder">
               <div className="ov-ph-ic">🚧</div>

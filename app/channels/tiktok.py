@@ -30,6 +30,7 @@ import requests
 
 from app.core.config import Config
 from app.core.channel import Channel
+from app.core.http_util import post_with_retry
 from app.core import owner_call
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,9 @@ class TikTokChannel(Channel):
 
     def set_ctx(self, business_id):
         self._ctx.business_id = business_id
+
+    def get_ctx(self):
+        return getattr(self._ctx, "business_id", None)
 
     def _cur_account(self):
         return getattr(self._ctx, "business_id", None)
@@ -110,18 +114,17 @@ class TikTokChannel(Channel):
         else:
             payload["message_type"] = "text"
             payload["text"] = message.get("text", "")
-        try:
-            r = requests.post(
-                f"{self.api_base}/business/message/send/",
-                headers={"Access-Token": token},
-                json=payload, timeout=30,
-            )
-            if r.status_code >= 400:
-                log.error(f"[TT] send {r.status_code}: {r.text[:300]}")
-            return r
-        except Exception as e:
-            log.error(f"[TT] lỗi gửi: {e}")
+        r = post_with_retry(
+            f"{self.api_base}/business/message/send/",
+            headers={"Access-Token": token},
+            json=payload, timeout=30,
+            retries=Config.SEND_RETRIES, log_tag="TT",
+        )
+        if r is None:
             return None
+        if r.status_code >= 400:
+            log.error(f"[TT] send {r.status_code}: {r.text[:300]}")
+        return r
 
     def _public_url(self, path: Path):
         """Đường dẫn file trong MEDIA_DIR → URL công khai để TikTok tải về."""
@@ -159,6 +162,12 @@ class TikTokChannel(Channel):
     def send_photo_folder(self, user_id: str, folder, caption: str) -> bool:
         business_id, uid = self._parse(user_id)
         return self._send_dir(business_id, uid, Path(folder), caption)
+
+    def send_image_url(self, user_id: str, url: str, caption: str = "") -> None:
+        business_id, uid = self._parse(user_id)
+        if caption:
+            self._send_api(business_id, uid, {"text": caption})
+        self._send_api(business_id, uid, {"image_url": url})
 
     def send_room_photos(self, user_id: str, room_names: list) -> None:
         business_id, uid = self._parse(user_id)

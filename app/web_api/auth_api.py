@@ -87,6 +87,34 @@ def current_username(db=None):
     return u["username"] if u else None
 
 
+# ── TEAM: vai trò + workspace ────────────────────────────────────────
+# role: owner (chủ shop, toàn quyền) | staff (nhân viên — chỉ hộp thư/khách/đơn).
+# Staff thuộc workspace của owner_username: billing/kênh/app đều tính theo CHỦ.
+
+def role_of(row) -> str:
+    """Vai trò của user row — DB cũ chưa có cột role → coi là owner."""
+    try:
+        return (row["role"] if "role" in row.keys() else "") or "owner"
+    except Exception:
+        return "owner"
+
+
+def workspace_of(row) -> str:
+    """Username CHỦ workspace: staff → owner_username, owner → chính mình."""
+    try:
+        own = (row["owner_username"] if "owner_username" in row.keys() else "") or ""
+    except Exception:
+        own = ""
+    return own if (role_of(row) == "staff" and own) else row["username"]
+
+
+def current_workspace(db=None):
+    """Username chủ workspace của request hiện tại (staff quy về chủ), hoặc None."""
+    from app.core.db import get_db
+    u = _user_for_token(db or get_db(), _bearer())
+    return workspace_of(u) if u else None
+
+
 def _public_user(row) -> dict:
     return {
         "username": row["username"],
@@ -96,6 +124,8 @@ def _public_user(row) -> dict:
         "picture": row["picture"],
         # Cho frontend biết acc Google thuần (chưa đặt mật khẩu) → ẩn form đổi pw
         "has_password": bool(row["password_hash"]),
+        "role": role_of(row),
+        "workspace": workspace_of(row),
     }
 
 
@@ -239,6 +269,116 @@ def register_auth_routes(app):
                    (hash_password(new_pw), u["username"]))
         return {"ok": True}
 
+    # ── TEAM: quản lý nhân viên (chỉ CHỦ) ───────────────────────────
+
+    def _owner_or_403():
+        u, err = _auth_or_401()
+        if err:
+            return None, err
+        if role_of(u) != "owner":
+            return None, ({"ok": False, "error": "Chỉ chủ shop mới quản lý nhân viên"}, 403)
+        return u, None
+
+    def _member_row(r):
+        return {"username": r["username"], "name": r["homestay"],
+                "role": role_of(r), "created_at": r["created_at"]}
+
+    @app.route("/team")
+    def team_list():
+        u, err = _owner_or_403()
+        if err:
+            return err
+        rows = db.query(
+            "SELECT * FROM users WHERE owner_username=? ORDER BY created_at",
+            (u["username"],))
+        return jsonify([_member_row(r) for r in rows])
+
+    @app.route("/team", methods=["POST"])
+    def team_add():
+        u, err = _owner_or_403()
+        if err:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        name = (data.get("name") or "").strip()
+        password = data.get("password") or ""
+        if not email or "@" not in email:
+            return {"ok": False, "error": "Email nhân viên không hợp lệ"}, 400
+        if len(password) < 4:
+            return {"ok": False, "error": "Mật khẩu tối thiểu 4 ký tự"}, 400
+        if db.query("SELECT 1 FROM users WHERE username=?", (email,)):
+            return {"ok": False, "error": "Email này đã có tài khoản"}, 409
+        # Staff KHÔNG có billing riêng — quota/gói tính theo chủ workspace
+        db.execute(
+            "INSERT INTO users(username, password_hash, homestay, email, provider, picture,"
+            " role, owner_username, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (email, hash_password(password), name or email, "", "password", "",
+             "staff", u["username"], datetime.now().isoformat()))
+        log.info(f"[team] {u['username']} thêm nhân viên {email}")
+        r = db.query("SELECT * FROM users WHERE username=?", (email,))[0]
+        return {"ok": True, "member": _member_row(r)}
+
+    def _member_of(owner_username, member):
+        rows = db.query("SELECT * FROM users WHERE username=? AND owner_username=?",
+                        ((member or "").strip().lower(), owner_username))
+        return rows[0] if rows else None
+
+    @app.route("/team/<member>", methods=["PATCH"])
+    def team_update(member):
+        u, err = _owner_or_403()
+        if err:
+            return err
+        m = _member_of(u["username"], member)
+        if m is None:
+            return {"ok": False, "error": "Không tìm thấy nhân viên này"}, 404
+        data = request.get_json(force=True, silent=True) or {}
+        name = data.get("name")
+        password = data.get("password")
+        if name is not None:
+            db.execute("UPDATE users SET homestay=? WHERE username=?",
+                       ((name or "").strip(), m["username"]))
+        if password:
+            if len(password) < 4:
+                return {"ok": False, "error": "Mật khẩu tối thiểu 4 ký tự"}, 400
+            db.execute("UPDATE users SET password_hash=? WHERE username=?",
+                       (hash_password(password), m["username"]))
+            # Đổi mật khẩu → huỷ mọi phiên đang đăng nhập của nhân viên đó
+            db.execute("DELETE FROM auth_tokens WHERE username=?", (m["username"],))
+        r = db.query("SELECT * FROM users WHERE username=?", (m["username"],))[0]
+        return {"ok": True, "member": _member_row(r)}
+
+    @app.route("/team/<member>", methods=["DELETE"])
+    def team_remove(member):
+        u, err = _owner_or_403()
+        if err:
+            return err
+        m = _member_of(u["username"], member)
+        if m is None:
+            return {"ok": False, "error": "Không tìm thấy nhân viên này"}, 404
+        db.execute("DELETE FROM auth_tokens WHERE username=?", (m["username"],))
+        db.execute("DELETE FROM users WHERE username=?", (m["username"],))
+        log.info(f"[team] {u['username']} xoá nhân viên {m['username']}")
+        return {"ok": True}
+
+    @app.route("/teammates")
+    def teammates():
+        """Danh sách thành viên workspace (chủ + nhân viên) — CẢ staff đọc được
+        (khác /team owner-only) để hiện dropdown phân công hội thoại."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        ws = workspace_of(u)
+        out = []
+        owner_rows = db.query("SELECT * FROM users WHERE username=?", (ws,))
+        if owner_rows:
+            r = owner_rows[0]
+            out.append({"username": r["username"], "name": r["homestay"] or r["username"],
+                        "role": "owner"})
+        for r in db.query("SELECT * FROM users WHERE owner_username=? ORDER BY created_at", (ws,)):
+            out.append({"username": r["username"], "name": r["homestay"] or r["username"],
+                        "role": role_of(r)})
+        return jsonify(out)
+
     # ── App (kênh chat) của user — thay localStorage hb_apps ────────
 
     @app.route("/auth/apps")
@@ -246,9 +386,10 @@ def register_auth_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        # Staff xem app của CHỦ workspace (chỉ đọc — thêm/xoá bị chặn bên dưới)
         rows = db.query(
             "SELECT id, name, channel, created_at FROM user_apps WHERE username=? ORDER BY created_at",
-            (u["username"],))
+            (workspace_of(u),))
         return jsonify([
             {"id": r["id"], "name": r["name"], "channel": r["channel"], "createdAt": r["created_at"]}
             for r in rows
@@ -259,6 +400,8 @@ def register_auth_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        if role_of(u) != "owner":
+            return {"ok": False, "error": "Nhân viên không được thêm kênh"}, 403
         data = request.get_json(force=True, silent=True) or {}
         name = (data.get("name") or "").strip() or "App chưa đặt tên"
         channel = (data.get("channel") or "zalo").strip()
@@ -280,6 +423,8 @@ def register_auth_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        if role_of(u) != "owner":
+            return {"ok": False, "error": "Nhân viên không được xoá kênh"}, 403
         db.execute("DELETE FROM user_apps WHERE username=? AND id=?", (u["username"], app_id))
         return {"ok": True}
 

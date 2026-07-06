@@ -24,6 +24,8 @@ sys.modules.update({
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
 os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
+os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
 
 import hashlib
@@ -33,6 +35,7 @@ from app.core.conversation import ConversationManager
 from app.core.shopee_store import ShopeeStore
 from app.channels.shopee import ShopeeChannel, SEND_PATH
 import app.web_api.shopee_api as sp
+import app.core.http_util as httputil   # send đi qua đây → patch requests.post ở đây
 
 PASS = FAIL = 0
 def check(cond, name, detail=""):
@@ -73,12 +76,12 @@ check(ch2._sign(SEND_PATH, 1700000000, "TOK777", "888") == expected, "A4 sign_hm
 
 # A5: gửi thật dùng token store (patch requests) → đúng URL + params + body
 store.upsert("888", access_token="TOK777", name="Nắng Store")
-with patch.object(__import__('app.channels.shopee', fromlist=['requests']), 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, params=None, json=None, timeout=None):
         calls.append((url, params, json)); m = MagicMock(); m.status_code = 200
         m.content = b"{}"; m.json = lambda: {}; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch2.send_text("sp:888:12399", "hi")
     check(calls and SEND_PATH in calls[-1][0], "A5 send_url", f"{calls}")
     check(calls and calls[-1][1]["access_token"] == "TOK777"
@@ -109,8 +112,8 @@ evs = sp.parse_event({
     "code": 10, "shop_id": 888,
     "data": {"type": "message", "content": {
         "from_id": 12399, "to_id": 888, "message_type": "text",
-        "content": {"text": "còn hàng không?"}, "from_user_name": "Khách A"}}})
-check(evs == [("888", "12399", "còn hàng không?", "Khách A")], "B1 push_code10", f"{evs}")
+        "content": {"text": "còn hàng không?"}, "message_id": "spm1", "from_user_name": "Khách A"}}})
+check(evs == [("888", "12399", "còn hàng không?", "spm1", "Khách A")], "B1 push_code10", f"{evs}")
 
 # B2: push code khác 10 (vd đơn hàng) → bỏ
 check(sp.parse_event({"code": 3, "shop_id": 888, "data": {}}) == [], "B2 other_code_skip")
@@ -118,14 +121,18 @@ check(sp.parse_event({"code": 3, "shop_id": 888, "data": {}}) == [], "B2 other_c
 # B3: dạng phẳng (mock/test)
 evs = sp.parse_event({"event": "message", "shop_id": "S1", "sender_id": "U1",
                       "text": "giá?", "sender_name": "Khách B"})
-check(evs == [("S1", "U1", "giá?", "Khách B")], "B3 flat_event", f"{evs}")
+check(evs == [("S1", "U1", "giá?", "", "Khách B")], "B3 flat_event", f"{evs}")
 
 # B4: gộp events + lọc sự kiện không phải message
 evs = sp.parse_event({"events": [
     {"event": "message", "shop_id": "S1", "sender_id": "U2", "message": {"text": "ship?"}},
     {"event": "order", "shop_id": "S1", "sender_id": "U3"},
 ]})
-check(evs == [("S1", "U2", "ship?", "")], "B4 events_list_filter", f"{evs}")
+check(evs == [("S1", "U2", "ship?", "", "")], "B4 events_list_filter", f"{evs}")
+
+# B4b: dedup theo message_id (Shopee gửi lại push) — lần 2 cùng id bị bỏ
+sp._dedup.clear()
+check(not sp._dedup.seen("dz1") and sp._dedup.seen("dz1"), "B4b dedup_msg_id")
 
 # B5: echo (from_id == shop_id) → bỏ
 evs = sp.parse_event({"code": 10, "shop_id": 888,

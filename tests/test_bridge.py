@@ -22,6 +22,8 @@ sys.modules.update({
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
 os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
+os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -30,6 +32,7 @@ from app.core.conversation import ConversationManager
 from app.core.brain import Brain
 import app.web_api.bridge as bridge_mod
 import app.channels.zalo_node as znc_mod
+import app.core.http_util as httputil   # send đi qua đây → patch requests.post ở đây
 
 PASS = FAIL = 0
 def check(cond, name, detail=""):
@@ -143,11 +146,11 @@ with patch.object(bridge_mod, 'threading') as mth, \
     check(any("Haru AI" in t for t in fc.texts), "C5 reply_resumed", f"texts={fc.texts}")
 
 print("\n── B. ZaloNodeChannel gọi Node đúng ──")
-with patch.object(znc_mod, 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls=[]
     def fake_post(url, json=None, timeout=None):
         calls.append((url, json)); m=MagicMock(); m.status_code=200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch = znc_mod.ZaloNodeChannel(node_url="http://127.0.0.1:4000", conv_manager=cm)
 
     # B1: send_text → POST /send

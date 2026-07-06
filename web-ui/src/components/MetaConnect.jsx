@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { meta, loadFbSdk, fbLogin, buildScope } from "../metaApi.js";
 import GuideBox from "./GuideBox.jsx";
+import { ChannelTile } from "./ChannelIcon.jsx";
 
 // Màn "Kết nối Facebook" cho 1 app kênh Messenger/Instagram.
 // Khách bấm đăng nhập FB → chọn Page → backend lưu token + subscribe webhook.
@@ -74,7 +75,7 @@ export default function MetaConnect() {
 
   return (
     <div className="connect">
-      <div className="status ok">🔗 Kết nối Facebook{cfg.enable_ig ? " / Instagram" : ""}</div>
+      <div className="status ok"><ChannelTile ch="meta" size={22} /> Kết nối Facebook{cfg.enable_ig ? " / Instagram" : ""}</div>
 
       <GuideBox
         title="📘 Hướng dẫn nhanh — Messenger / Instagram"

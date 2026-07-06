@@ -24,6 +24,8 @@ sys.modules.update({
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
 os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
+os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -33,6 +35,7 @@ from app.core.tiktok_store import TikTokStore
 from app.channels.tiktok import TikTokChannel
 from app.web_api.stats_util import compute_stats
 import app.web_api.tiktok_api as tt
+import app.core.http_util as httputil   # send đi qua đây → patch requests.post ở đây
 
 PASS = FAIL = 0
 def check(cond, name, detail=""):
@@ -64,11 +67,11 @@ check(len(ch._sent) == 3, "A3 long_text_split", f"n={len(ch._sent)}")
 
 # A4: gửi thật dùng token store (patch requests) → đúng URL + payload
 store.upsert("BIZ1", access_token="TTTOKEN", name="Haru TikTok")
-with patch.object(__import__('app.channels.tiktok', fromlist=['requests']), 'requests') as mreq:
+with patch.object(httputil.requests, 'post') as mreq:
     calls = []
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append((url, headers, json)); m = MagicMock(); m.status_code = 200; return m
-    mreq.post.side_effect = fake_post
+    mreq.side_effect = fake_post
     ch.send_text("tt:BIZ1:U77", "hi")
     check(calls and "/business/message/send/" in calls[-1][0], "A4 send_url", f"{calls}")
     check(calls and calls[-1][1]["Access-Token"] == "TTTOKEN", "A4 send_token", f"{calls}")
@@ -76,9 +79,12 @@ with patch.object(__import__('app.channels.tiktok', fromlist=['requests']), 'req
           "A4 send_payload", f"{calls}")
 
 # A5: notify_owner theo ngữ cảnh account (owner đã set trong store)
+# BIZ1 có token → không mock; patch requests.post để không gọi mạng
 store.set_owner("BIZ1", "OWNER_OPEN_ID", "Chủ Haru")
-ch._sent.clear(); ch.set_ctx("BIZ1"); ch.notify_owner("báo chủ")
-# BIZ1 có token → không mock; patch lại để không gọi mạng
+ch._sent.clear(); ch.set_ctx("BIZ1")
+with patch.object(httputil.requests, 'post') as _mp:
+    _mp.return_value = MagicMock(status_code=200, content=b"{}")
+    ch.notify_owner("báo chủ")
 check(ch._sent and ch._sent[-1][0] == "OWNER_OPEN_ID", "A5 notify_owner_ctx", f"{ch._sent}")
 
 # A6: notify_owner không có chủ → bỏ qua, không crash
@@ -91,17 +97,17 @@ check(any("Bảng giá" in d.get("text", "") for _, d in ch._sent), "A7 price_fa
 
 print("\n── B. parse_event ──")
 
-# B1: 1 sự kiện phẳng
+# B1: 1 sự kiện phẳng (tuple 5 phần: +msg_id)
 evs = tt.parse_event({"event": "message", "business_id": "B1", "sender_id": "U1",
-                      "text": "còn phòng?", "sender_name": "Khách A"})
-check(evs == [("B1", "U1", "còn phòng?", "Khách A")], "B1 flat_event", f"{evs}")
+                      "text": "còn phòng?", "message_id": "m1", "sender_name": "Khách A"})
+check(evs == [("B1", "U1", "còn phòng?", "m1", "Khách A")], "B1 flat_event", f"{evs}")
 
 # B2: gộp nhiều events + message dạng dict
 evs = tt.parse_event({"events": [
     {"event": "message", "business_id": "B1", "sender_id": "U2", "message": {"text": "giá?"}},
     {"event": "follow", "business_id": "B1", "sender_id": "U3"},
 ]})
-check(evs == [("B1", "U2", "giá?", "")], "B2 events_list_filter", f"{evs}")
+check(evs == [("B1", "U2", "giá?", "", "")], "B2 events_list_filter", f"{evs}")
 
 # B3: echo (sender == business) → bỏ
 evs = tt.parse_event({"event": "message", "business_id": "B1", "sender_id": "B1", "text": "echo"})
@@ -109,6 +115,10 @@ check(evs == [], "B3 echo_skip", f"{evs}")
 
 # B4: thiếu sender → bỏ, không crash
 check(tt.parse_event({"event": "message", "text": "x"}) == [], "B4 no_sender_skip")
+
+# B5: dedup theo message_id (webhook gộp gửi lại) — lần 2 cùng id bị bỏ
+tt._dedup.clear()
+check(not tt._dedup.seen("mmm") and tt._dedup.seen("mmm"), "B5 dedup_msg_id")
 
 print("\n── C. handle_event (gate bật/tắt + owner-takeover) ──")
 
@@ -211,8 +221,10 @@ r = api.get("/tiktok/conversations?business_id=B9")
 items = r.get_json()["items"]
 check(len(items) == 1 and items[0]["user_id"] == "tt:B9:U55", "D8 conv_filter", f"{items}")
 
-# D9: send từ dashboard → gửi + lưu + owner_active
-r = api.post("/tiktok/conversations/tt:B9:U55/send", json={"text": "chủ nhắn tay"})
+# D9: send từ dashboard → gửi + lưu + owner_active (B9 có token → patch mạng)
+with patch.object(httputil.requests, 'post') as _mp:
+    _mp.return_value = MagicMock(status_code=200, content=b"{}")
+    r = api.post("/tiktok/conversations/tt:B9:U55/send", json={"text": "chủ nhắn tay"})
 check(r.status_code == 200, "D9 send_ok", f"{r.get_json()}")
 conv = cm.get("tt:B9:U55")
 check(conv.messages[-1] == {"role": "assistant", "content": "chủ nhắn tay"}, "D9 msg_saved")
