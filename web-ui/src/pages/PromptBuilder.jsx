@@ -174,6 +174,7 @@ export default function PromptBuilder() {
   const [sources, setSources] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [svcEmail, setSvcEmail] = useState("");  // email service account để shop share Google Sheet
 
   async function load() {
     const r = await promptApi.current();
@@ -186,6 +187,10 @@ export default function PromptBuilder() {
     billingApi.me().then((r) => {
       if (r.ok && Array.isArray(r.body?.ai_models)) setModels(r.body.ai_models);
     });
+    // Email service account (để shop share Google Sheet lịch đặt chỗ cho bot đọc)
+    fetch(HOST.bridge + "/sheets", { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json()).then((b) => { if (b?.service_email) setSvcEmail(b.service_email); })
+      .catch(() => {});
   }, []);
 
   async function loadTemplate() {
@@ -440,7 +445,7 @@ export default function PromptBuilder() {
         {/* Bước 2: link dữ liệu (tuỳ chọn) */}
         <div className="panel set-card" style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>2️⃣ Link dữ liệu <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn — có link thì AI đọc thêm)</span></h3>
-          <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets đã "Xuất bản lên web"… Link phải mở được công khai.
+          <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets… <b>Link phải để CÔNG KHAI</b> (ai mở cũng xem được, không cần đăng nhập) thì AI mới đọc được — xem hướng dẫn ở dưới.
             Ô bên cạnh: <b>tự ghi mục đích / nội dung link</b> để AI hiểu link đó dùng làm gì (vd "bảng giá phòng", "menu"). Nếu là <b>Google Sheet lịch đặt chỗ</b>, hệ thống tự nhận ra và nối để bot <b>tra lịch trực tiếp</b>.</p>
           {links.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
@@ -455,11 +460,42 @@ export default function PromptBuilder() {
             </div>
           ))}
           {links.some((l) => isSheetUrl(l.url)) && (
-            <p className="hint" style={{ marginTop: 8, color: "var(--brand, #7C3AED)" }}>
-              📅 Có link Google Sheet — sẽ tự nối làm lịch đặt chỗ khi bấm tạo bộ não.
-            </p>
+            <div className="prompt-help" style={{ marginTop: 10, borderColor: "var(--brand, #7C3AED)" }}>
+              <b style={{ color: "var(--brand, #7C3AED)" }}>📅 Có link Google Sheet — sẽ tự nối làm lịch đặt chỗ.</b>
+              {svcEmail
+                ? <p className="hint" style={{ margin: "6px 0 0" }}>
+                    Để bot đọc được, mở Google Sheet → <b>Share</b> → thêm email này (quyền <b>Người xem</b>):{" "}
+                    <code style={{ wordBreak: "break-all" }}>{svcEmail}</code>{" "}
+                    <button type="button" className="btn-mini"
+                            onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg("✅ Đã copy email service account."); }}>
+                      📋 Copy
+                    </button>
+                  </p>
+                : <p className="hint" style={{ margin: "6px 0 0" }}>
+                    ⚠️ Máy chủ chưa cấu hình Google service account — tính năng tra lịch chưa dùng được, liên hệ quản trị NovaChat.
+                  </p>}
+            </div>
           )}
           <button className="btn-mini" style={{ marginTop: 10 }} onClick={addLink}>＋ Thêm link</button>
+
+          {/* Hướng dẫn công khai link — bấm mở khi cần */}
+          <details className="prompt-help" style={{ marginTop: 12 }}>
+            <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13.5 }}>
+              ❓ Link không đọc được? Cách mở CÔNG KHAI link cho AI đọc
+            </summary>
+            <div className="hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
+              AI chỉ đọc được link <b>ai mở cũng xem được</b> (không cần đăng nhập). Cách mở:
+              <br />• <b>Google Docs / Sheets:</b> File → Share → Chia sẻ chung → đổi thành
+              <b> "Bất kỳ ai có đường liên kết"</b> (quyền Người xem). Hoặc File → Chia sẻ →
+              <b> Xuất bản lên web</b> rồi dán link vừa tạo.
+              <br />• <b>Google Sheet lịch đặt chỗ:</b> ngoài bước trên, còn phải <b>Share</b> thêm cho
+              email service account ở trên (bot cần quyền đọc trực tiếp để tra lịch).
+              <br />• <b>Website / bài viết Facebook:</b> để ở chế độ công khai (mở bằng cửa sổ ẩn danh
+              thử — nếu xem được là ổn).
+              <br />• <b>Facebook cá nhân / trang riêng tư, file Drive giới hạn:</b> AI KHÔNG đọc được —
+              hãy dán thẳng nội dung vào ô "Hướng dẫn thêm" bên dưới.
+            </div>
+          </details>
         </div>
 
         {/* ⚙️ Cấu hình bot — AI ĐỌC các mục này khi tạo bộ não nên đặt TRƯỚC nút tạo.
