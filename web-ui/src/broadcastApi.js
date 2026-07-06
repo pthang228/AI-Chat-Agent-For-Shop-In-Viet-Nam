@@ -1,7 +1,8 @@
 // TIN NHẮN HÀNG LOẠT (broadcast/remarketing) — bridge 5005, chỉ CHỦ (owner).
 import { withAuth } from "./apiAuth.js";
 
-const BASE = "http://127.0.0.1:5005";
+import { HOST } from "./apiConfig.js";
+const BASE = HOST.bridge;
 
 async function j(path, opts) {
   try {

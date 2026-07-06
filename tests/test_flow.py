@@ -522,7 +522,10 @@ def test_booking_confirmed_available():
     check(any("đặt" in t or "xác nhận" in t or "ghi nhận" in t for t in bot.sent_texts),
           "F1 booking_reply", "phải có reply xác nhận booking")
     check(len(bot.owner_msgs) > 0, "F1 owner_notified", "chủ nhà phải được thông báo")
-    check(bot.call_fired, "F1 call_fired", "_zalo_call phải được gọi")
+    # ĐỔI HÀNH VI (2026-07-06): booking KHÔNG còn tự gọi điện — sự kiện 'new_order'
+    # mặc định chỉ NHẮN TIN (notify), tránh 10k khách = 10k cuộc gọi. Chủ muốn gọi
+    # thì bật 'call' trong Cài đặt. Xem notify.EVENTS + tests/test_notify.py E3/E4.
+    check(not bot.call_fired, "F1 no_auto_call", "booking mặc định KHÔNG tự gọi (chỉ nhắn)")
 
 def test_booking_confirmed_all_taken():
     """Khách chốt đặt + sheet hết phòng → từ chối, KHÔNG thông báo chủ."""

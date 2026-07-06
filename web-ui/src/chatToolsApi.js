@@ -1,13 +1,9 @@
 // Công cụ chat: gửi ảnh/video/ghi âm, chốt đơn 1 chạm, câu trả lời mẫu.
 // Mỗi kênh 1 server riêng (prefix + cổng khác nhau); canned dùng chung ở bridge 5005.
 import { getToken } from "./auth.js";
+import { CH_HOST, HOST } from "./apiConfig.js";
 
-const BASE = {
-  zalo: "http://127.0.0.1:5005", meta: "http://127.0.0.1:5006",
-  telegram: "http://127.0.0.1:5007", tiktok: "http://127.0.0.1:5008",
-  shopee: "http://127.0.0.1:5009", zalooa: "http://127.0.0.1:5010",
-  webchat: "http://127.0.0.1:5011",
-};
+const BASE = CH_HOST;
 const PREFIX = {
   zalo: "", meta: "/meta", telegram: "/tg",
   tiktok: "/tiktok", shopee: "/shopee", zalooa: "/zalooa", webchat: "/webchat",
@@ -54,7 +50,7 @@ export async function assignConv(ch, uid, username) {
 }
 
 // Câu trả lời mẫu (kho chung ở bridge 5005)
-const CANNED = "http://127.0.0.1:5005/canned";
+const CANNED = HOST.bridge + "/canned";
 async function cj(path, opts = {}) {
   try {
     const r = await fetch(CANNED + path, {

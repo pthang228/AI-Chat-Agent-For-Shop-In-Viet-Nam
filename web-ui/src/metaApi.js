@@ -1,6 +1,7 @@
 // Gọi server Meta (meta_webhook Flask, cổng 5006) — đã bật CORS.
 import { withAuth } from "./apiAuth.js";
-const META_URL = "http://127.0.0.1:5006";
+import { HOST } from "./apiConfig.js";
+const META_URL = HOST.meta;
 
 async function j(path, opts) {
   try {

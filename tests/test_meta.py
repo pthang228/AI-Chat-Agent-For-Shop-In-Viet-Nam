@@ -239,6 +239,60 @@ check("messages" in f_off and "messaging_postbacks" in f_off, "D1 fields_has_mes
 check(f_on == f_off, "D1 fields_stable_regardless_of_ig", f"{f_on} vs {f_off}")
 check("instagram" not in f_on and "reaction" not in f_on, "D1 fields_no_invalid_ig", f_on)
 
+print("\n── E. Data Deletion + Deauthorize (App Review Meta) ──")
+import base64 as _b64mod, json as _jsonmod, hmac as _hmac, hashlib as _hash
+
+def _make_signed(payload: dict, secret: str) -> str:
+    p = _b64mod.urlsafe_b64encode(_jsonmod.dumps(payload).encode()).decode().rstrip("=")
+    sig = _hmac.new(secret.encode(), p.encode(), _hash.sha256).digest()
+    s = _b64mod.urlsafe_b64encode(sig).decode().rstrip("=")
+    return f"{s}.{p}"
+
+# _parse_signed_request đúng/sai chữ ký
+SECRET = "app_secret_test"
+good = _make_signed({"user_id": "PSID_DEL"}, SECRET)
+check(meta_mod._parse_signed_request(good, SECRET)["user_id"] == "PSID_DEL", "E1 parse_valid_sig")
+check(meta_mod._parse_signed_request(good, "sai_secret") is None, "E2 reject_bad_sig")
+check(meta_mod._parse_signed_request("rác", SECRET) is None, "E3 reject_malformed")
+
+# Xoá dữ liệu theo PSID: seed 1 hội thoại fb + hồ sơ CRM rồi xoá
+from app.core.db import get_db
+_db = get_db()
+ACC = cm._account   # 'meta-test' trong test (production dùng 'meta')
+cm.get("fb:PAGE9:PSID_DEL").add_user_message("hi"); cm.save()
+_db.execute("INSERT OR REPLACE INTO customers(account,user_id,name) VALUES(?,'fb:PAGE9:PSID_DEL','X')", (ACC,))
+_db.execute("INSERT INTO customer_memory(account,user_id,content,source,created_at) "
+            "VALUES(?,'fb:PAGE9:PSID_DEL','thích phòng 301','ai','2026-01-01')", (ACC,))
+n = meta_mod._delete_meta_user_data(cm, "PSID_DEL")
+check(n == 1, "E4 deleted_count", n)
+check("fb:PAGE9:PSID_DEL" not in cm._sessions, "E5 session_gone_cache")
+check(not _db.query("SELECT 1 FROM sessions WHERE account=? AND user_id='fb:PAGE9:PSID_DEL'", (ACC,)),
+      "E6 session_gone_db")
+check(not _db.query("SELECT 1 FROM customers WHERE account=? AND user_id='fb:PAGE9:PSID_DEL'", (ACC,)),
+      "E7 customer_gone")
+check(not _db.query("SELECT 1 FROM customer_memory WHERE account=? AND user_id='fb:PAGE9:PSID_DEL'", (ACC,)),
+      "E8 memory_gone")
+
+# Endpoint /meta/data-deletion + /meta/deauthorize + status page
+with patch.object(meta_mod.Config, "FB_APP_SECRET", SECRET), \
+     patch.object(meta_mod.Config, "PUBLIC_BASE_URL", "https://shop.example"):
+    dclient = meta_mod.create_meta_webhook(FakeBrain(), cm, store).test_client()
+    cm.get("fb:PAGE9:PSID_E9").add_user_message("hi"); cm.save()
+    r = dclient.post("/meta/data-deletion",
+                     data={"signed_request": _make_signed({"user_id": "PSID_E9"}, SECRET)})
+    body = r.get_json()
+    check(r.status_code == 200 and body.get("confirmation_code") and
+          body["url"].startswith("https://shop.example/meta/deletion-status"),
+          "E9 data_deletion_response", body)
+    check("fb:PAGE9:PSID_E9" not in cm._sessions, "E10 endpoint_deleted_data")
+    r = dclient.post("/meta/data-deletion", data={"signed_request": "sai"})
+    check(r.status_code == 400, "E11 bad_signed_request_400")
+    r = dclient.get("/meta/deletion-status?code=abc123")
+    check(r.status_code == 200 and "abc123" in r.get_data(as_text=True), "E12 status_page")
+    r = dclient.post("/meta/deauthorize",
+                     data={"signed_request": _make_signed({"user_id": "PSID_X"}, SECRET)})
+    check(r.status_code == 200 and r.get_json().get("ok"), "E13 deauthorize_ok")
+
 print(f"\n{'='*40}\n  KẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 for _f in ("test_meta_tmp.json", "test_meta_store_tmp.json", "test_meta_store2_tmp.json"):
     try: Path(_f).unlink()

@@ -1,7 +1,8 @@
 // Gọi API gói dịch vụ & nạp tiền (bridge 5005) — kèm Bearer token.
 import { getToken } from "./auth.js";
 
-const URL = "http://127.0.0.1:5005";
+import { HOST } from "./apiConfig.js";
+const URL = HOST.bridge;
 
 async function j(path, opts = {}) {
   try {

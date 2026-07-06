@@ -1,6 +1,7 @@
 // Gọi server Telegram (telegram_api Flask, cổng 5007) — đã bật CORS.
 import { withAuth } from "./apiAuth.js";
-const TG_URL = "http://127.0.0.1:5007";
+import { HOST } from "./apiConfig.js";
+const TG_URL = HOST.telegram;
 
 async function j(path, opts) {
   try {

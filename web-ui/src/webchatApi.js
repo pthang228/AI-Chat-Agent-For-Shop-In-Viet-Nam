@@ -1,6 +1,7 @@
 // Gọi API kênh Webchat — widget nhúng website khách hàng (Flask cổng 5011).
 import { withAuth } from "./apiAuth.js";
-const URL = "http://127.0.0.1:5011";
+import { HOST } from "./apiConfig.js";
+const URL = HOST.webchat;
 
 async function j(path, opts) {
   try {

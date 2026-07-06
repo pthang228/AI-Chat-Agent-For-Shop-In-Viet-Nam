@@ -61,7 +61,10 @@ def main():
     print("🤖 Đang chờ tin nhắn khách... Ctrl+C để dừng.\n")
 
     from app.web_api.serve import run
-    run(app, host="127.0.0.1", port=bridge_port)
+    # Windows dev: 127.0.0.1 (an toàn). Docker/production: đặt BRIDGE_HOST=0.0.0.0
+    # để reverse proxy (Caddy) trong mạng container gọi tới được.
+    host = os.getenv("BRIDGE_HOST", "127.0.0.1")
+    run(app, host=host, port=bridge_port)
 
 
 if __name__ == "__main__":

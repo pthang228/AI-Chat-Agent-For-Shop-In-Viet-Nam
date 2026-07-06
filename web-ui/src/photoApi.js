@@ -1,7 +1,8 @@
 // API Thư viện ảnh (bridge 5005) — bộ ảnh đặt tên để bot gửi khách.
 import { getToken } from "./auth.js";
 
-export const PHOTO_BASE = "http://127.0.0.1:5005";
+import { HOST } from "./apiConfig.js";
+export const PHOTO_BASE = HOST.bridge;
 
 async function j(path, opts = {}) {
   try {

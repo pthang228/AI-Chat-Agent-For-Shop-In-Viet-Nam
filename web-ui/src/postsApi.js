@@ -1,6 +1,7 @@
 // API "Bài viết & bình luận" Facebook (meta_webhook Flask, cổng 5006) — kèm Bearer.
 import { withAuth } from "./apiAuth.js";
-const URL = "http://127.0.0.1:5006";
+import { HOST } from "./apiConfig.js";
+const URL = HOST.meta;
 
 async function j(path, opts) {
   try {

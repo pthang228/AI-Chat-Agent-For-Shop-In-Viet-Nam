@@ -5,11 +5,12 @@ import GuideBox from "./GuideBox.jsx";
 const LABELS = {
   checking: ["Đang kiểm tra kết nối…", "muted"],
   offline: ["Chưa chạy dịch vụ Zalo", "warn"],
-  idle: ["Chưa kết nối", "muted"],
+  idle: ["Đang chuẩn bị mã QR…", "muted"],
   waiting_scan: ["Đang chờ quét mã QR…", "muted"],
   scanned: ["Đã quét! Xác nhận trên điện thoại…", "ok"],
   logged_in: ["✅ Đã kết nối Zalo", "ok"],
-  qr_expired: ["Mã QR hết hạn, tạo lại nhé", "warn"],
+  qr_expired: ["Đang làm mới mã QR…", "muted"],
+  disconnected: ["Đã tạm ngắt (vẫn giữ đăng nhập)", "muted"],
   declined: ["Bạn đã từ chối đăng nhập", "warn"],
   error: ["Có lỗi xảy ra, thử lại", "warn"],
 };
@@ -21,7 +22,9 @@ export default function ZaloConnect() {
   const [groups, setGroups] = useState([]);
   const [selGroup, setSelGroup] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
+  const [hasBackup, setHasBackup] = useState(false);   // có tài khoản trước để khôi phục
   const timer = useRef(null);
+  const autoRef = useRef("");   // trạng thái đã tự-khởi-động QR (chống gọi lặp mỗi 2s)
 
   function stopPoll() { if (timer.current) clearInterval(timer.current); timer.current = null; }
   function startPoll() { stopPoll(); timer.current = setInterval(poll, 2000); }
@@ -35,7 +38,18 @@ export default function ZaloConnect() {
       setStatus(body.status);
       setQr(body.qr || null);
       setOwnId(body.ownId || null);
-      if (body.status === "logged_in") { stopPoll(); loadGroups(); }
+      setHasBackup(!!body.hasBackup);
+      if (body.status === "logged_in") { stopPoll(); autoRef.current = ""; loadGroups(); return; }
+      // Đã TẠM NGẮT chủ ý → KHÔNG tự mở QR (giữ nguyên để user bấm "Kết nối lại").
+      if (body.status === "disconnected") { autoRef.current = ""; return; }
+      // TỰ mở/làm mới QR: chưa đăng nhập mà đang "idle" (vd sau đăng xuất, hoặc
+      // Node vừa dừng chuỗi tự-làm-mới) → gọi startQR để luôn có mã sống, KHÔNG
+      // bắt user bấm nút. Chỉ gọi 1 lần cho mỗi lần rơi vào trạng thái đó.
+      if ((body.status === "idle" || body.status === "qr_expired") && autoRef.current !== body.status) {
+        autoRef.current = body.status;
+        zalo.startQR().catch(() => {});
+      }
+      if (body.status === "waiting_scan" || body.status === "scanned") autoRef.current = "";
     } catch {
       setStatus("offline");
     }
@@ -60,11 +74,30 @@ export default function ZaloConnect() {
     setSaveMsg(ok ? "✅ Đã lưu nhóm nhận thông báo" : "❌ Lưu thất bại");
   }
 
+  async function onDisconnect() {
+    // Tạm ngắt: GIỮ đăng nhập, không xoá session → kết nối lại không cần QR
+    try { await zalo.disconnect(); } catch { /* ignore */ }
+    setGroups([]); setSelGroup(""); setStatus("disconnected");
+    startPoll(); poll();
+  }
+
+  async function onReconnect() {
+    try { await zalo.reconnect(); } catch { /* ignore */ }
+    setStatus("checking"); startPoll(); poll();
+  }
+
+  async function onRestore() {
+    try { await zalo.restoreSession(); } catch { /* ignore */ }
+    autoRef.current = ""; setStatus("checking"); startPoll(); poll();
+  }
+
   async function onLogout() {
-    if (!confirm("Đăng xuất tài khoản Zalo hiện tại để đăng nhập lại?")) return;
+    if (!confirm("ĐỔI TÀI KHOẢN: đăng xuất tài khoản Zalo hiện tại và đăng nhập tài khoản KHÁC?\n\n" +
+                 "Việc này cần QUÉT LẠI QR. Nếu chỉ muốn tạm dừng bot mà giữ đăng nhập, hãy dùng \"Tạm ngắt\".")) return;
     try { await zalo.logout(); } catch { /* ignore */ }
+    autoRef.current = "";   // cho phép tự mở lại QR ngay sau đăng xuất
     setStatus("idle"); setQr(null); setOwnId(null); setGroups([]); setSelGroup("");
-    poll();
+    startPoll(); poll();
   }
 
   useEffect(() => { startPoll(); poll(); return stopPoll; }, []);
@@ -110,8 +143,27 @@ export default function ZaloConnect() {
           {saveMsg && <div className="savemsg">{saveMsg}</div>}
         </div>
 
-        <div className="logout-row">
+        <div className="logout-row" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <button className="btn-ghost" onClick={onDisconnect}>⏸ Tạm ngắt (giữ đăng nhập)</button>
           <button className="link-danger" onClick={onLogout}>↩ Đăng xuất / đổi tài khoản</button>
+        </div>
+        <p className="hint" style={{ marginTop: 8 }}>
+          <b>Tạm ngắt</b>: dừng bot nhưng vẫn nhớ đăng nhập — bật lại KHÔNG cần quét QR.
+          <br /><b>Đăng xuất</b>: chỉ dùng khi muốn đổi sang tài khoản Zalo khác (phải quét lại).
+        </p>
+      </div>
+    );
+  }
+
+  // ── Đã tạm ngắt: kết nối lại không cần QR ──
+  if (status === "disconnected") {
+    return (
+      <div className="connect">
+        <div className="status muted">⏸ Đã tạm ngắt Zalo (vẫn giữ đăng nhập)</div>
+        <p className="hint">Bot đang tạm dừng. Bấm dưới để kết nối lại — <b>không cần quét QR</b>.</p>
+        <button className="btn-primary" onClick={onReconnect}>▶ Kết nối lại</button>
+        <div className="logout-row" style={{ marginTop: 10 }}>
+          <button className="link-danger" onClick={onLogout}>↩ Đăng xuất / đổi tài khoản khác</button>
         </div>
       </div>
     );
@@ -130,14 +182,21 @@ export default function ZaloConnect() {
         ]}
         note={<>Bot tự trả lời khách 24/7. Quản lý từng khách ở tab <b>Khách hàng</b>.</>}
       />
-      <p className="hint">Quét mã QR bằng app Zalo trên điện thoại để bot tự trả lời khách.</p>
+      <p className="hint">Quét mã QR bằng app Zalo trên điện thoại để bot tự trả lời khách. Mã <b>tự làm mới</b> khi hết hạn — cứ mở app Zalo quét là được.</p>
       <div className="qrbox">
-        {qrSrc ? <img src={qrSrc} alt="QR" /> : <span className="muted">Nhấn nút bên dưới để tạo mã QR</span>}
+        {qrSrc ? <img src={qrSrc} alt="QR" /> : <span className="muted">Đang tạo mã QR…</span>}
       </div>
       <div className={"status " + cls}>{label}</div>
-      <button className="btn-primary" onClick={onStartQR} disabled={status === "waiting_scan" || status === "scanned"}>
-        {qrSrc ? "Tạo mã QR mới" : "Tạo mã QR đăng nhập"}
-      </button>
+      <div className="row" style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+        <button className="btn-ghost" onClick={onStartQR} disabled={status === "waiting_scan" || status === "scanned"}>
+          ↻ Làm mới mã QR
+        </button>
+        {hasBackup && (
+          <button className="btn-primary sm" onClick={onRestore}>
+            ↩ Dùng lại tài khoản trước (không cần quét)
+          </button>
+        )}
+      </div>
     </div>
   );
 }

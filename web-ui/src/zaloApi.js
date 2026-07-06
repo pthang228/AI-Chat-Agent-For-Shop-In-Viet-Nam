@@ -1,6 +1,7 @@
 // Gọi trực tiếp Node service (zca-js) — đã bật CORS nên fetch từ React được.
 // Sau này multi-tenant sẽ đổi URL theo từng app/tenant.
-const NODE_URL = "http://127.0.0.1:4000";
+import { HOST } from "./apiConfig.js";
+const NODE_URL = HOST.node;
 
 async function j(path, opts) {
   const r = await fetch(NODE_URL + path, opts);
@@ -21,5 +22,8 @@ export const zalo = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ownerGroupId }),
     }),
-  logout: () => j("/logout", { method: "POST" }),
+  logout: () => j("/logout", { method: "POST" }),          // đổi tài khoản (cần quét lại)
+  disconnect: () => j("/disconnect", { method: "POST" }),  // tạm ngắt, GIỮ đăng nhập
+  reconnect: () => j("/reconnect", { method: "POST" }),    // kết nối lại, KHÔNG cần QR
+  restoreSession: () => j("/restore-session", { method: "POST" }),  // khôi phục tài khoản trước
 };

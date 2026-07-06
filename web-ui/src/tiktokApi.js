@@ -1,6 +1,7 @@
 // Gọi server TikTok (tiktok_api Flask, cổng 5008) — đã bật CORS.
 import { withAuth } from "./apiAuth.js";
-const TT_URL = "http://127.0.0.1:5008";
+import { HOST } from "./apiConfig.js";
+const TT_URL = HOST.tiktok;
 
 async function j(path, opts) {
   try {

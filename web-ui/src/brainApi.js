@@ -1,6 +1,7 @@
 // Gọi "não bộ" Python (bridge Flask, cổng 5005) — đã bật CORS.
 import { withAuth } from "./apiAuth.js";
-const BRIDGE_URL = "http://127.0.0.1:5005";
+import { HOST } from "./apiConfig.js";
+const BRIDGE_URL = HOST.bridge;
 
 async function j(path, opts) {
   try {

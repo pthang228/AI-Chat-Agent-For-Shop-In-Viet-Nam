@@ -257,6 +257,20 @@ CREATE TABLE IF NOT EXISTS broadcast_log (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bclog_bid ON broadcast_log(broadcast_id);
+
+-- LIÊN HỆ KHẨN CẤP & THÔNG BÁO CHỦ SHOP (thay cơ chế tự-gọi-điện không scale).
+-- 1 dòng / chủ shop. emergency_* = liên hệ bot ĐƯA CHO KHÁCH khi cần gấp;
+-- share_mode = khi nào bot đưa (off|strict|ask|greeting); events = JSON
+-- {sự_kiện: off|notify|call} quyết định báo chủ thế nào cho từng loại.
+CREATE TABLE IF NOT EXISTS notify_config (
+    username        TEXT PRIMARY KEY,
+    emergency_phone TEXT NOT NULL DEFAULT '',
+    emergency_zalo  TEXT NOT NULL DEFAULT '',
+    emergency_tele  TEXT NOT NULL DEFAULT '',
+    share_mode      TEXT NOT NULL DEFAULT 'ask',   -- off|strict|ask|greeting
+    events          TEXT NOT NULL DEFAULT '{}',    -- JSON {event: off|notify|call}
+    updated_at      TEXT
+);
 """
 
 

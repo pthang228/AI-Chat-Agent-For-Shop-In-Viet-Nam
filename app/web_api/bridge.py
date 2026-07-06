@@ -412,6 +412,10 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.web_api.broadcast_api import register_broadcast_routes
     register_broadcast_routes(app)
 
+    # Liên hệ khẩn cấp & thông báo chủ shop (thay tự-gọi-điện) — chỉ chủ
+    from app.web_api.notify_api import register_notify_routes
+    register_notify_routes(app)
+
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm + câu trả lời mẫu
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "", conv_manager, getattr(brain, "channel", None),
@@ -431,7 +435,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         public_prefixes=("/photos/file", "/photos/media", "/media"),
         # Nhân viên (role=staff) chỉ làm hộp thư/khách/đơn — cấm phần quản trị
         staff_deny=(
-            "/billing", "/prompt", "/team", "/broadcasts", "/copilot",
+            "/billing", "/prompt", "/team", "/broadcasts", "/copilot", "/notify",
             "/orders/bank", "/bot-toggle",
             "POST /photos/sets", "DELETE /photos/sets",
             "DELETE /conversations",     # xoá hội thoại: chỉ chủ

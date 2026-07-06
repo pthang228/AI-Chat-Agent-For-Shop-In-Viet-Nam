@@ -1,0 +1,20 @@
+# Ảnh WEB: build dashboard React (Vite) rồi phục vụ tĩnh + reverse proxy bằng Caddy
+# (Caddy tự cấp HTTPS Let's Encrypt cho DOMAIN). 1 ảnh lo cả TLS + static + định tuyến.
+
+# ── Stage 1: build dashboard ──
+FROM node:20-slim AS build
+WORKDIR /web
+COPY web-ui/package*.json ./
+RUN npm install
+COPY web-ui/ ./
+# VITE_GOOGLE_CLIENT_ID (tùy chọn) truyền qua build-arg để bật đăng nhập Google.
+# KHÔNG cần VITE_API_BASE: frontend tự dùng origin của domain (apiConfig.js).
+ARG VITE_GOOGLE_CLIENT_ID=""
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+RUN npm run build
+
+# ── Stage 2: Caddy phục vụ static + reverse proxy ──
+FROM caddy:2-alpine
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /web/dist /srv
+EXPOSE 80 443

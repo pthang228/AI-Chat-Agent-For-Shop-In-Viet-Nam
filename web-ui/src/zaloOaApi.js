@@ -1,6 +1,7 @@
 // Gọi API kênh Zalo OA (Flask cổng 5010).
 import { withAuth } from "./apiAuth.js";
-const URL = "http://127.0.0.1:5010";
+import { HOST } from "./apiConfig.js";
+const URL = HOST.zalooa;
 
 async function j(path, opts) {
   try {

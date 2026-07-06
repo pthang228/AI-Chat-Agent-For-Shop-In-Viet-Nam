@@ -1,0 +1,23 @@
+# Không copy vào image (dùng volume lúc chạy / không cần)
+.git
+.gitignore
+**/node_modules
+web-ui/dist
+data/
+media/
+*.log
+data/*.out.log
+data/*.err.log
+**/*.session
+**/zalo-session.json
+**/zalo-session.bak
+test_db_*.sqlite*
+docs/*.mp4
+__pycache__/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+!deploy/.env.production.example
+zalo-node/zalo-session.json
+scratchpad/

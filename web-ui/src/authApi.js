@@ -1,5 +1,6 @@
 // Gọi API auth thật (nằm trong bridge Flask, cổng 5005) — users/token/apps trong SQLite.
-const AUTH_URL = "http://127.0.0.1:5005";
+import { HOST } from "./apiConfig.js";
+const AUTH_URL = HOST.bridge;
 
 async function j(path, opts = {}) {
   try {

@@ -1,6 +1,7 @@
 // Gọi API kênh Shopee (Flask cổng 5009).
 import { withAuth } from "./apiAuth.js";
-const URL = "http://127.0.0.1:5009";
+import { HOST } from "./apiConfig.js";
+const URL = HOST.shopee;
 
 async function j(path, opts) {
   try {

@@ -21,8 +21,20 @@ from app.core.conversation import ConversationManager
 from app.core.channel import Channel
 from app.core.sheets import format_availability_for_ai
 from app.core.claude_ai import analyze_message
+from app.core import notify
 
 log = logging.getLogger(__name__)
+
+
+def _with_contact(text: str, intent: str) -> str:
+    """Chèn dòng liên hệ khẩn (SĐT/Zalo/Telegram chủ shop) vào cuối câu trả lời
+    NẾU chủ đã bật cho intent này (xem notify.contact_for). CRM/notify lỗi thì
+    trả nguyên text — không được làm chết luồng trả lời khách."""
+    try:
+        line = notify.contact_for(intent)
+    except Exception:
+        line = ""
+    return f"{text}\n\n{line}" if line else text
 
 
 FIRST_MESSAGE_GREETING = (
@@ -115,8 +127,9 @@ class Brain:
         # Sticker / media không có text → chỉ đến đây nếu là khách mới
         if not text:
             log.info(f"[Handle] Sticker từ khách mới {user_id} → gửi greeting")
-            self.channel.send_text(user_id, FIRST_MESSAGE_GREETING)
-            conv.add_assistant_message(FIRST_MESSAGE_GREETING)
+            greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting")
+            self.channel.send_text(user_id, greeting)
+            conv.add_assistant_message(greeting)
             time.sleep(0.5)
             self.channel.send_price_photos(user_id)
             return
@@ -341,8 +354,9 @@ class Brain:
         # ── Câu đầu tiên với mỗi khách mới → LUÔN gửi greeting + bảng giá ──
         if is_first_message:
             log.info(f"[FirstMsg] Gửi greeting cố định cho user {user_id}")
-            self.channel.send_text(user_id, FIRST_MESSAGE_GREETING)
-            conv.add_assistant_message(FIRST_MESSAGE_GREETING)
+            greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting")
+            self.channel.send_text(user_id, greeting)
+            conv.add_assistant_message(greeting)
             time.sleep(0.5)
             self.channel.send_price_photos(user_id)
             time.sleep(0.5)
@@ -549,34 +563,34 @@ class Brain:
                 "Mình đã báo chủ nhà rồi, chủ nhà sẽ phản hồi bạn sớm nhé! "
                 "Bạn còn câu hỏi gì khác không ạ? 😊"
             )
+            fixed = _with_contact(fixed, "unknown_question")   # bot bí → đưa số nếu bật
             self.channel.send_text(user_id, fixed)
             conv.add_assistant_message(fixed)
-            # Gửi câu hỏi vào nhóm để chủ nhà biết
+            # Báo chủ theo cấu hình (mặc định chỉ nhắn tin, không gọi)
             unknown_msg = (
                 f"❓ KHÁCH HỎI CHƯA TRẢ LỜI ĐƯỢC\n\n"
                 f"👤 ID khách: {user_id}\n"
                 f"💬 Câu hỏi: \"{text[:200]}\"\n\n"
                 f"Bot chưa có thông tin để trả lời — chủ nhà vui lòng phản hồi khách nhé!"
             )
-            self.channel.notify_owner(unknown_msg)
+            notify.alert(self.channel, "unknown", unknown_msg)
             self.conv_manager.save()
             return
 
         # Khi khách muốn gặp chủ nhà trực tiếp
         if intent == "contact_request":
             fixed = "Mình đã báo chủ nhà rồi nha, chủ nhà sẽ liên hệ lại với bạn trong giây lát! 📞"
+            fixed = _with_contact(fixed, "contact_request")   # đưa số cho khách chủ động gọi
             self.channel.send_text(user_id, fixed)
             conv.add_assistant_message(fixed)
-            # Thông báo + gọi chủ nhà
+            # Báo chủ theo cấu hình (mặc định 'call' cho việc này; chủ chỉnh được)
             contact_msg = (
                 f"📞 KHÁCH CẦN GẶP CHỦ NHÀ!\n\n"
                 f"👤 ID khách: {user_id}\n"
                 f"💬 Tin nhắn: \"{text[:100]}\"\n\n"
                 f"Vui lòng liên hệ lại khách ngay!"
             )
-            self.channel.notify_owner(contact_msg)
-            time.sleep(1)
-            self.channel.call_owner()
+            notify.alert(self.channel, "contact_request", contact_msg)
             return
 
         # Khi khách chốt đặt phòng
@@ -633,7 +647,8 @@ class Brain:
             self.channel.send_text(user_id, reply)
             conv.add_assistant_message(reply)
 
-        # Thông báo chủ nhà
+        # Thông báo chủ nhà theo cấu hình sự kiện 'new_order'
+        # (mặc định chỉ nhắn tin; chủ muốn gọi thì bật 'call' trong Cài đặt)
         owner_msg = (
             f"🔔 KHÁCH MUỐN ĐẶT PHÒNG!\n\n"
             f"👤 ID khách: {user_id}\n"
@@ -642,7 +657,7 @@ class Brain:
             f"🏠 Phòng:     {conv.selected_room or 'chưa chọn'}\n\n"
             f"Vui lòng liên hệ lại khách để xác nhận và hướng dẫn đặt cọc!"
         )
-        self.channel.notify_owner(owner_msg)
+        notify.alert(self.channel, "new_order", owner_msg)
 
         # Tự tạo ĐƠN NHÁP từ hội thoại (chạy nền — AI bóc tách hơi chậm,
         # không được chặn luồng trả lời khách). Lỗi cũng không ảnh hưởng booking.
@@ -681,7 +696,6 @@ class Brain:
                 log.error(f"[Orders] tạo đơn nháp lỗi: {e}")
 
         _threading.Thread(target=_make_order, daemon=True).start()
-
-        # Gọi chủ nhà
-        time.sleep(1)
-        self.channel.call_owner()
+        # (Việc gọi/nhắn chủ đã do notify.alert("new_order") ở trên xử lý theo
+        # cấu hình — KHÔNG gọi call_owner() vô điều kiện nữa: 10k khách đặt =
+        # 10k cuộc gọi chồng nhau là điểm chết của cơ chế cũ.)

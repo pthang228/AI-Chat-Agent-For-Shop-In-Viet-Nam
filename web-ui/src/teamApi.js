@@ -2,7 +2,8 @@
 // Backend: bridge 5005 (auth_api). /team* chỉ CHỦ; /teammates cả nhân viên đọc được.
 import { withAuth } from "./apiAuth.js";
 
-const BASE = "http://127.0.0.1:5005";
+import { HOST } from "./apiConfig.js";
+const BASE = HOST.bridge;
 
 async function j(path, opts) {
   try {

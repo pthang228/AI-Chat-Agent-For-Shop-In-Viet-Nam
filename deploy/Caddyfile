@@ -1,0 +1,45 @@
+# Caddy — TLS tự động (Let's Encrypt) + reverse proxy + phục vụ dashboard tĩnh.
+# Mọi dịch vụ chung 1 DOMAIN; định tuyến theo path prefix mà từng service đã
+# namespace. Biến {$DOMAIN}, {$ACME_EMAIL} lấy từ .env.production.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	# ── Kênh Meta (Messenger + Instagram) + webhook + đối soát tiền + bình luận ──
+	handle /meta/* { reverse_proxy meta:5006 }
+	handle /fb/webhook* { reverse_proxy meta:5006 }
+	handle /payhook* { reverse_proxy meta:5006 }
+	handle /posts* { reverse_proxy meta:5006 }
+	handle /comments/* { reverse_proxy meta:5006 }
+	# Ảnh/media công khai (PUBLIC_BASE_URL/media/...) — meta phục vụ từ volume dùng chung
+	handle /media/* { reverse_proxy meta:5006 }
+
+	# ── Các kênh khác (đã namespace path riêng) ──
+	handle /tg/* { reverse_proxy telegram:5007 }
+	handle /tiktok/* { reverse_proxy tiktok:5008 }
+	handle /shopee/* { reverse_proxy shopee:5009 }
+	handle /zalooa/* { reverse_proxy zalooa:5010 }
+	handle /webchat/* { reverse_proxy webchat:5011 }
+	handle /widget.js { reverse_proxy webchat:5011 }
+
+	# ── Zalo Node (đăng nhập QR) dưới tiền tố /zalo-node (strip khi chuyển tiếp) ──
+	handle_path /zalo-node/* { reverse_proxy zalo-node:4000 }
+
+	# ── API dashboard (bridge sở hữu namespace gốc) ──
+	@bridge path /auth/* /conversations /conversations/* /billing/* /orders /orders/* \
+		/prompt/* /notify/* /broadcasts /broadcasts/* /team /team/* /teammates \
+		/customers /customers/* /copilot/* /canned /canned/* /support/* /incoming \
+		/bot-status /bot-toggle /stats /stats/* /health /photos/*
+	handle @bridge { reverse_proxy bridge:5005 }
+
+	# ── Còn lại = dashboard React (SPA): file tĩnh nếu có, không thì index.html ──
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

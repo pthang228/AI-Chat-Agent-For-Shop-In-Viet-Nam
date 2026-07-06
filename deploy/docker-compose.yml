@@ -1,0 +1,92 @@
+# NovaChat — triển khai production trên 1 VPS Linux (Docker + Caddy TLS).
+# Chạy TỪ thư mục deploy/:  docker compose up -d --build
+#
+# Kiến trúc: 7 dịch vụ Flask (chung 1 ảnh Python) + Zalo Node + Caddy (TLS + static
+# + reverse proxy). Tất cả chung mạng nội bộ; chỉ Caddy mở cổng 80/443 ra internet.
+
+x-app: &app
+  image: novachat-app:latest
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.py
+  env_file: .env.production
+  restart: unless-stopped
+  volumes:
+    - dbdata:/app/data      # SQLite dùng chung (WAL, đa tiến trình)
+    - media:/app/media      # ảnh/file dùng chung
+  networks: [nova]
+
+services:
+  bridge:                    # 5005 — não bộ Zalo + API dashboard
+    <<: *app
+    command: python -m app.main_node
+    environment:
+      BRIDGE_HOST: "0.0.0.0"
+      ZALO_NODE_URL: "http://zalo-node:4000"
+
+  meta:                      # 5006 — Messenger + Instagram + webhook + payhook
+    <<: *app
+    command: python -m app.main_meta
+
+  telegram:                  # 5007
+    <<: *app
+    command: python -m app.main_telegram
+
+  tiktok:                    # 5008
+    <<: *app
+    command: python -m app.main_tiktok
+
+  shopee:                    # 5009
+    <<: *app
+    command: python -m app.main_shopee
+
+  zalooa:                    # 5010 — Zalo OA
+    <<: *app
+    command: python -m app.main_zalo_oa
+
+  webchat:                   # 5011 — widget website
+    <<: *app
+    command: python -m app.main_webchat
+
+  zalo-node:                 # 4000 — zca-js (đăng nhập QR Zalo cá nhân)
+    image: novachat-node:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.node
+    env_file: .env.production
+    environment:
+      PY_BRIDGE_URL: "http://bridge:5005/incoming"
+      ZALO_NODE_PORT: "4000"
+      ZALO_SESSION_FILE: "/data/zalo-session.json"   # giữ phiên qua restart
+    restart: unless-stopped
+    volumes:
+      - zalosession:/data
+    networks: [nova]
+
+  web:                       # 80/443 — Caddy: TLS + dashboard tĩnh + reverse proxy
+    image: novachat-web:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        VITE_GOOGLE_CLIENT_ID: "${VITE_GOOGLE_CLIENT_ID:-}"
+    env_file: .env.production
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    depends_on: [bridge, meta, telegram, tiktok, shopee, zalooa, webchat, zalo-node]
+    volumes:
+      - caddydata:/data      # chứng chỉ TLS Let's Encrypt (giữ qua restart)
+      - caddyconfig:/config
+    networks: [nova]
+
+volumes:
+  dbdata:
+  media:
+  zalosession:
+  caddydata:
+  caddyconfig:
+
+networks:
+  nova:

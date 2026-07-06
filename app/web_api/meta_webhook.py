@@ -12,7 +12,9 @@ user_id đưa vào brain có tiền tố "fb:" / "ig:" (xem app/channels/meta.py
 Tôn trọng nút BẬT/TẮT bot toàn cục (đọc data/bot_state.json mỗi tin) và owner-takeover.
 """
 
+import base64
 import hmac
+import json
 import time
 import hashlib
 import logging
@@ -71,6 +73,49 @@ def _fetch_meta_name(user_id, sender, page_id, platform, brain, conv_manager):
         log.warning(f"[meta name] {sender}: {e}")
 
 
+def _parse_signed_request(signed_request: str, secret: str) -> dict | None:
+    """Giải mã signed_request Meta gửi (data deletion / deauthorize).
+    Định dạng '<sig>.<payload>' base64url; sig = HMAC-SHA256(payload, app_secret).
+    Trả payload dict nếu chữ ký hợp lệ, None nếu sai/hỏng."""
+    try:
+        sig_b64, payload_b64 = signed_request.split(".", 1)
+        def _b64(s):  # base64url + thêm padding
+            return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+        expected = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(_b64(sig_b64), expected):
+            return None
+        return json.loads(_b64(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _delete_meta_user_data(conv_manager, psid: str) -> int:
+    """Xoá MỌI dữ liệu của 1 người dùng Meta (PSID/IGSID) khỏi hệ thống — hội thoại
+    (fb:/ig:) + hồ sơ CRM + trí nhớ AI + lịch sử. Dùng cho data-deletion callback."""
+    if not psid:
+        return 0
+    from app.core.db import get_db
+    db = get_db()
+    account = str(getattr(conv_manager, "_account", "meta"))
+    # user_id kênh Meta có dạng 'fb:<page>:<psid>' / 'ig:<page>:<igsid>' → khớp đuôi
+    rows = db.query(
+        "SELECT user_id FROM sessions WHERE account=? AND user_id LIKE ?",
+        (account, f"%:{psid}"))
+    uids = [r["user_id"] for r in rows]
+    for uid in uids:
+        try:
+            conv_manager.reset(uid)   # xoá session (DB + cache RAM)
+        except Exception:
+            pass
+        for tbl in ("customers", "customer_memory", "customer_history"):
+            try:
+                db.execute(f"DELETE FROM {tbl} WHERE account=? AND user_id=?", (account, uid))
+            except Exception:
+                pass
+    log.info(f"[data-deletion] xoá {len(uids)} hội thoại Meta của psid={psid}")
+    return len(uids)
+
+
 def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> Flask:
     app = Flask(__name__)
 
@@ -103,7 +148,9 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
     # internet qua ngrok nên đây là lỗ hổng cần bịt nhất.
     install_auth_guard(
         app,
-        public_exact={"/fb/webhook", "/meta/config", "/payhook"},
+        # Meta gọi thẳng (không token): webhook + data-deletion + deauthorize callback
+        public_exact={"/fb/webhook", "/meta/config", "/payhook",
+                      "/meta/data-deletion", "/meta/deauthorize", "/meta/deletion-status"},
         public_prefixes=("/media",),
         # Nhân viên: chỉ hộp thư + trả lời bình luận — cấm kết nối/ngắt Page,
         # cài đặt tự động hoá, xoá hội thoại
@@ -115,6 +162,50 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
 
     @app.route("/health")
     def health():
+        return {"ok": True}
+
+    # ── Data Deletion + Deauthorize (BẮT BUỘC cho App Review Meta) ──────
+    # App Review đòi 2 callback này để duyệt khách LẠ dùng được (pages_messaging /
+    # instagram_manage_messages). Meta POST signed_request khi user gỡ app / yêu
+    # cầu xoá dữ liệu. Khai URL ở Meta Developers → Settings → Basic.
+
+    @app.route("/meta/data-deletion", methods=["POST"])
+    def meta_data_deletion():
+        """Meta gọi khi user yêu cầu xoá dữ liệu → xoá thật + trả URL trạng thái."""
+        signed = request.form.get("signed_request", "")
+        data = _parse_signed_request(signed, Config.FB_APP_SECRET) if Config.FB_APP_SECRET else None
+        if data is None:
+            return {"error": "signed_request không hợp lệ"}, 400
+        psid = str(data.get("user_id") or "")
+        submit(_delete_meta_user_data, conv_manager, psid)   # xoá nền, trả lời Meta ngay
+        # Mã xác nhận để user tra cứu trạng thái (Meta hiển thị cho user)
+        code = hashlib.sha256(f"{psid}:{int(time.time())}".encode()).hexdigest()[:16]
+        base = (Config.PUBLIC_BASE_URL or request.host_url).rstrip("/")
+        return {"url": f"{base}/meta/deletion-status?code={code}", "confirmation_code": code}
+
+    @app.route("/meta/deletion-status")
+    def meta_deletion_status():
+        """Trang trạng thái xoá dữ liệu (Meta/khách mở để xác nhận)."""
+        code = request.args.get("code", "")
+        return (
+            "<!doctype html><meta charset=utf-8>"
+            "<title>Yêu cầu xoá dữ liệu — NovaChat</title>"
+            "<div style='font-family:sans-serif;max-width:560px;margin:60px auto;padding:0 20px'>"
+            "<h2>✅ Đã xử lý yêu cầu xoá dữ liệu</h2>"
+            "<p>Toàn bộ dữ liệu hội thoại và hồ sơ liên quan tới tài khoản của bạn "
+            "trên NovaChat đã được xoá khỏi hệ thống.</p>"
+            f"<p style='color:#888'>Mã xác nhận: <code>{code}</code></p>"
+            "<p>Nếu cần hỗ trợ thêm, vui lòng liên hệ quản trị viên shop.</p></div>"
+        )
+
+    @app.route("/meta/deauthorize", methods=["POST"])
+    def meta_deauthorize():
+        """Meta gọi khi user gỡ ứng dụng → dọn dữ liệu người đó (best-effort)."""
+        signed = request.form.get("signed_request", "")
+        data = _parse_signed_request(signed, Config.FB_APP_SECRET) if Config.FB_APP_SECRET else None
+        if data is None:
+            return {"error": "signed_request không hợp lệ"}, 400
+        submit(_delete_meta_user_data, conv_manager, str(data.get("user_id") or ""))
         return {"ok": True}
 
     # ── Luồng "Kết nối Facebook" (OAuth) cho khách tự gắn Page ──────────

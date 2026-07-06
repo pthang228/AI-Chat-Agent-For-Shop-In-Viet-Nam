@@ -1633,3 +1633,18 @@ a.stats-icon-btn { text-decoration: none; }
 .bc-errors { margin-top: 8px; max-height: 200px; overflow: auto; }
 .bc-err { font-size: 12.5px; padding: 4px 0; border-top: 1px dashed var(--line); color: #a33; }
 .bc-err code { color: #666; margin-right: 6px; }
+
+/* ── LIÊN HỆ KHẨN & THÔNG BÁO (Settings) ───────────────────────── */
+.nt-modes { display: flex; flex-direction: column; gap: 6px; }
+.nt-radio { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer;
+  padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 12px; transition: all .15s var(--ease, ease); }
+.nt-radio.on { border-color: var(--green); background: color-mix(in srgb, var(--green) 6%, #fff); }
+.nt-radio input[type="radio"] { width: auto; padding: 0; margin: 0; accent-color: var(--green); }
+.nt-events { display: flex; flex-direction: column; gap: 8px; }
+.nt-event { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; flex-wrap: wrap; }
+.nt-event-lbl { font-size: 14px; font-weight: 500; }
+.nt-event-modes { display: flex; gap: 6px; }
+.nt-chip { padding: 6px 12px; font-size: 12.5px; border: 1.5px solid var(--line); border-radius: 999px;
+  background: #fff; cursor: pointer; white-space: nowrap; transition: all .15s var(--ease, ease); }
+.nt-chip.on { border-color: var(--green); background: var(--green); color: #fff; }

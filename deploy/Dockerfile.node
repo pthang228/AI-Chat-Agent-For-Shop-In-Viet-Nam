@@ -1,0 +1,17 @@
+# Ảnh Node cho dịch vụ Zalo (zca-js — đăng nhập QR + gửi/nhận Zalo cá nhân).
+FROM node:20-slim
+
+WORKDIR /app
+
+# Cài deps trước (cache layer)
+COPY zalo-node/package*.json ./
+RUN npm install --omit=dev
+
+# Copy mã Node
+COPY zalo-node/ ./
+
+# Session lưu vào /data (volume) qua ZALO_SESSION_FILE (đặt trong compose)
+RUN mkdir -p /data
+
+EXPOSE 4000
+CMD ["node", "server.js"]

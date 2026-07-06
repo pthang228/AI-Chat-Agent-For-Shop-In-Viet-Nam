@@ -33,7 +33,10 @@ async function imageMetadataGetter(filePath) {
 
 const PORT = process.env.ZALO_NODE_PORT || 4000;
 const BRIDGE_URL = process.env.PY_BRIDGE_URL || "http://127.0.0.1:5005/incoming";
-const SESSION_FILE = "./zalo-session.json";
+// Đường dẫn session cấu hình qua env (Docker: trỏ vào volume /data để GIỮ phiên
+// qua restart mà không che code container). Mặc định thư mục hiện tại (Windows dev).
+const SESSION_FILE = process.env.ZALO_SESSION_FILE || "./zalo-session.json";
+const SESSION_BAK  = SESSION_FILE + ".bak";   // bản sao lưu — khôi phục khi lỡ đăng xuất
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -244,6 +247,8 @@ function attachListener(a) {
 function saveSession(cred) {
   try {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(cred, null, 2), "utf-8");
+    // Luôn giữ 1 bản sao lưu → lỡ mất/hỏng file chính vẫn khôi phục được
+    try { fs.copyFileSync(SESSION_FILE, SESSION_BAK); } catch {}
     console.log("[zalo] đã lưu session →", SESSION_FILE);
   } catch (e) {
     console.error("[zalo] lưu session lỗi:", e.message);
@@ -252,7 +257,8 @@ function saveSession(cred) {
 
 async function tryResumeSession() {
   if (!fs.existsSync(SESSION_FILE)) {
-    console.log("[zalo] chưa có session — chờ đăng nhập QR");
+    console.log("[zalo] chưa có session — tự mở luồng QR để đăng nhập");
+    startQrLogin(false);   // chưa có phiên → hiện QR ngay, khỏi bấm nút
     return;
   }
   try {
@@ -261,34 +267,48 @@ async function tryResumeSession() {
     attachListener(a);
     console.log("[zalo] khôi phục session thành công");
   } catch (e) {
-    console.error("[zalo] không khôi phục được session:", e.message);
+    // Resume lỗi (có thể chỉ do mạng thoáng qua) → KHÔNG xoá session (giữ để lần
+    // boot sau thử lại), chỉ mở QR để user đăng nhập lại nếu muốn. Khi user quét
+    // thành công, saveSession sẽ tự ghi đè phiên mới.
+    console.error("[zalo] không khôi phục được session:", e.message, "→ mở QR (giữ session cũ)");
     state.status = "idle";
+    startQrLogin(false);
   }
 }
 
 // ── API ───────────────────────────────────────────────────────────
 
-// Bắt đầu đăng nhập QR (chạy nền, trả về ngay; QR lấy qua /status)
-app.post("/login/qr", (req, res) => {
-  if (state.status === "logged_in") {
-    return res.json({ status: "logged_in", ownId: state.ownId });
-  }
+// Đăng nhập QR với TỰ LÀM MỚI khi mã hết hạn (zca-js không tự tái sinh QR):
+// mã Zalo hết hạn ~vài chục giây → trước đây user phải bấm "tạo lại" thủ công.
+// Giờ khi hết hạn/lỗi tạm mà chưa đăng nhập & chưa bị từ chối → tự sinh mã mới,
+// tối đa MAX_QR_REGEN lần (chống chạy nền vô tận nếu không ai quét).
+let qrLoopActive = false;   // chống chạy chồng nhiều vòng loginQR cùng lúc
+let qrRegenCount = 0;
+let qrLoopStartAt = 0;      // mốc thời gian vòng QR hiện tại bắt đầu (để tính backoff)
+const MAX_QR_REGEN = 20;    // ~ vài phút liên tục có mã sống; hết thì dừng, user bấm lại
+
+async function startQrLogin(isRetry = false) {
+  if (state.status === "logged_in") return;
+  if (qrLoopActive) return;               // đã có 1 vòng đang chạy → thôi
+  if (!isRetry) qrRegenCount = 0;         // user chủ động bắt đầu → reset bộ đếm
+  qrLoopActive = true;
+  qrLoopStartAt = Date.now();
   state.status = "waiting_scan";
   state.qrImage = null;
   state.userInfo = null;
-  res.json({ status: "starting" });
 
-  zalo = new Zalo(ZALO_OPTS);
-  zalo
-    .loginQR({ userAgent: USER_AGENT }, (ev) => {
+  try {
+    zalo = new Zalo(ZALO_OPTS);
+    const a = await zalo.loginQR({ userAgent: USER_AGENT }, (ev) => {
       switch (ev.type) {
         case 0: // QRCodeGenerated
           state.qrImage = ev.data.image; // base64 PNG
           state.status = "waiting_scan";
           console.log("[qr] đã sinh mã QR");
           break;
-        case 1: // QRCodeExpired
+        case 1: // QRCodeExpired — sẽ tự tạo lại ở nhánh catch/finally
           state.status = "qr_expired";
+          console.log("[qr] mã hết hạn → sẽ tự làm mới");
           break;
         case 2: // QRCodeScanned
           state.status = "scanned";
@@ -306,12 +326,46 @@ app.post("/login/qr", (req, res) => {
           });
           break;
       }
-    })
-    .then((a) => { if (a) attachListener(a); })
-    .catch((e) => {
-      console.error("[qr] lỗi:", e.message);
-      state.status = "error";
     });
+    qrLoopActive = false;
+    if (a) { attachListener(a); return; }
+    // loginQR kết thúc mà không có API (hết hạn) → tự làm mới
+    _maybeRegenQr();
+  } catch (e) {
+    qrLoopActive = false;
+    // Đã đăng nhập ở nơi khác / user từ chối → dừng, không tái sinh
+    if (state.status === "logged_in" || state.status === "declined") {
+      if (state.status === "declined") console.log("[qr] user từ chối đăng nhập");
+      return;
+    }
+    console.log("[qr] vòng QR kết thúc (", e.message, ") → làm mới");
+    _maybeRegenQr();
+  }
+}
+
+function _maybeRegenQr() {
+  if (state.status === "logged_in" || state.status === "declined") return;
+  if (qrRegenCount >= MAX_QR_REGEN) {
+    state.status = "qr_expired";   // dừng chuỗi tự làm mới, chờ user bấm lại
+    console.log("[qr] đã làm mới", MAX_QR_REGEN, "lần chưa ai quét → tạm dừng");
+    return;
+  }
+  qrRegenCount++;
+  // BACKOFF chống dồn dập (Zalo throttle nếu xin QR liên tục): mã QR bình thường
+  // sống ~40s. Nếu vòng vừa rồi kết thúc QUÁ NHANH (<5s) → khả năng lỗi/bị chặn →
+  // chờ lâu (8s) trước khi thử lại; kết thúc do hết hạn bình thường → làm mới nhanh (1.5s).
+  const lived = Date.now() - qrLoopStartAt;
+  const delay = lived < 5000 ? 8000 : 1500;
+  setTimeout(() => startQrLogin(true), delay);
+}
+
+// Bắt đầu đăng nhập QR (chạy nền, trả về ngay; QR lấy qua /status)
+app.post("/login/qr", (req, res) => {
+  if (state.status === "logged_in") {
+    return res.json({ status: "logged_in", ownId: state.ownId });
+  }
+  startQrLogin(false);
+  res.json({ status: "starting" });
 });
 
 // Trạng thái đăng nhập + ảnh QR hiện tại
@@ -321,6 +375,8 @@ app.get("/status", (req, res) => {
     qr: state.qrImage,
     ownId: state.ownId,
     userInfo: state.userInfo,
+    hasSession: fs.existsSync(SESSION_FILE),   // có thể /reconnect không cần QR
+    hasBackup: fs.existsSync(SESSION_BAK),      // có thể /restore-session (tài khoản trước)
   });
 });
 
@@ -440,13 +496,54 @@ app.post("/notify-owner", async (req, res) => {
   }
 });
 
-// Đăng xuất / xoá session
+// TẠM NGẮT — dừng bot nhưng GIỮ đăng nhập (không xoá session). Kết nối lại
+// sau này KHÔNG cần quét QR (dùng /reconnect). Dùng khi chỉ muốn tạm dừng.
+app.post("/disconnect", (req, res) => {
+  try { if (api) api.listener.stop(); } catch {}
+  api = null;
+  qrLoopActive = false;
+  state = { status: "disconnected", qrImage: null, ownId: null, userInfo: null };
+  console.log("[zalo] tạm ngắt (giữ session)");
+  res.json({ ok: true });
+});
+
+// KẾT NỐI LẠI từ session đã lưu — KHÔNG cần QR.
+app.post("/reconnect", (req, res) => {
+  if (state.status === "logged_in") return res.json({ ok: true, status: "logged_in" });
+  if (!fs.existsSync(SESSION_FILE)) {
+    return res.status(409).json({ error: "chưa có phiên đã lưu — cần quét QR" });
+  }
+  qrLoopActive = false;
+  res.json({ ok: true, status: "reconnecting" });
+  tryResumeSession();   // resume; nếu phiên hỏng sẽ tự mở QR
+});
+
+// ĐĂNG XUẤT / ĐỔI TÀI KHOẢN — SAO LƯU session (khôi phục được) rồi xoá + mở QR
+// cho tài khoản mới. Khác /disconnect: đây là ĐỔI người, cần quét lại.
 app.post("/logout", (req, res) => {
   try { if (api) api.listener.stop(); } catch {}
   api = null;
+  qrLoopActive = false;
+  // Sao lưu TRƯỚC khi xoá → lỡ bấm nhầm vẫn "Dùng lại tài khoản trước" được
+  try { if (fs.existsSync(SESSION_FILE)) fs.copyFileSync(SESSION_FILE, SESSION_BAK); } catch {}
   state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
-  if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
+  if (fs.existsSync(SESSION_FILE)) { try { fs.unlinkSync(SESSION_FILE); } catch {} }
   res.json({ ok: true });
+  startQrLogin(false);   // sinh QR mới luôn cho lần đăng nhập kế tiếp
+});
+
+// KHÔI PHỤC tài khoản vừa đăng xuất (dùng bản .bak) — KHÔNG cần quét lại.
+app.post("/restore-session", (req, res) => {
+  if (!fs.existsSync(SESSION_BAK)) {
+    return res.status(409).json({ error: "không có bản sao lưu để khôi phục" });
+  }
+  try { fs.copyFileSync(SESSION_BAK, SESSION_FILE); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  qrLoopActive = false;
+  state = { status: "idle", qrImage: null, ownId: null, userInfo: null };
+  console.log("[zalo] khôi phục session từ bản sao lưu");
+  res.json({ ok: true, status: "reconnecting" });
+  tryResumeSession();
 });
 
 // ── Trang web cơ bản hiển thị QR (bản tạm, sẽ thay bằng React) ──

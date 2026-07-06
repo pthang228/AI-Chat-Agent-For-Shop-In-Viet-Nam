@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { currentUser } from "../auth.js";
 import { teamApi } from "../teamApi.js";
 import { getApps } from "../store.js";
+import { CH_HOST } from "../apiConfig.js";
 import { brain } from "../brainApi.js";
 import { meta } from "../metaApi.js";
 import { tg } from "../telegramApi.js";
@@ -43,12 +44,7 @@ const API = {
 
 // Avatar tương đối ("/tg/avatar/x.jpg") → prefix host của server kênh đó;
 // URL đầy đủ (CDN Meta/Zalo) → dùng thẳng.
-const API_BASE = {
-  zalo: "http://127.0.0.1:5005", meta: "http://127.0.0.1:5006",
-  telegram: "http://127.0.0.1:5007", tiktok: "http://127.0.0.1:5008",
-  shopee: "http://127.0.0.1:5009", zalooa: "http://127.0.0.1:5010",
-  webchat: "http://127.0.0.1:5011",
-};
+const API_BASE = CH_HOST;
 function avatarSrc(c, ch) {
   const a = c?.avatar || "";
   if (!a) return "";

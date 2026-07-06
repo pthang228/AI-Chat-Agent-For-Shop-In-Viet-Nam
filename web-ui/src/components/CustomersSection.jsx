@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { customersApi } from "../customersApi.js";
+import { CH_HOST } from "../apiConfig.js";
 import { ChannelTile } from "./ChannelIcon.jsx";
 import { vnd } from "../ordersApi.js";
 
@@ -29,12 +30,6 @@ function relTime(iso) {
   return `${Math.floor(diff / 86400)} ngày trước`;
 }
 // Avatar tương đối ("/tg/avatar/x.jpg") → prefix host server kênh đó; URL đầy đủ dùng thẳng
-const CH_HOST = {
-  zalo: "http://127.0.0.1:5005", meta: "http://127.0.0.1:5006",
-  telegram: "http://127.0.0.1:5007", tiktok: "http://127.0.0.1:5008",
-  shopee: "http://127.0.0.1:5009", zalooa: "http://127.0.0.1:5010",
-  webchat: "http://127.0.0.1:5011",
-};
 function avatarSrc(c) {
   const a = c?.avatar || "";
   if (!a) return "";

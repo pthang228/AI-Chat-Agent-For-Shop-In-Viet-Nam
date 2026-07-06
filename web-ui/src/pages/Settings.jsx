@@ -4,6 +4,7 @@ import { currentUser, isStaff, updateProfile, changePassword } from "../auth.js"
 import { logoutAndStopBots } from "../session.js";
 import { ordersApi } from "../ordersApi.js";
 import { teamApi } from "../teamApi.js";
+import { notifyApi } from "../notifyApi.js";
 import { canned as cannedApi } from "../chatToolsApi.js";
 import { IcHome, IcBack, IcLogout, IcUser, IcMail, IcLock } from "../components/icons.jsx";
 import BackLink from "../components/BackLink.jsx";
@@ -139,6 +140,9 @@ export default function Settings() {
           </div>
         </form>
 
+        {/* Liên hệ khẩn cấp & Thông báo — chỉ CHỦ shop */}
+        {!staff && <NotifyCard />}
+
         {/* Nhân viên (team) — chỉ CHỦ shop thấy */}
         {!staff && <TeamCard />}
 
@@ -205,6 +209,126 @@ export default function Settings() {
           </button>
         </div>
       </main>
+    </div>
+  );
+}
+
+/* 📞 Liên hệ khẩn cấp & Thông báo — thay cơ chế bot tự gọi điện chủ (không scale).
+   (1) SĐT/Zalo/Telegram để KHÁCH chủ động gọi khi cần gấp + chọn khi nào bot đưa số.
+   (2) Với mỗi loại sự kiện, chủ chọn: không báo / chỉ nhắn tin / nhắn + gọi. */
+const SHARE_LABELS = {
+  off:      "Không bao giờ đưa số cho khách",
+  strict:   "Chỉ khi khách hỏi thẳng (xin số / gặp chủ)",
+  ask:      "Khi khách xin gặp người HOẶC bot bí",
+  greeting: "Luôn kèm ở tin chào đầu tiên",
+};
+const EVENT_MODE_LABELS = {
+  off:    "Không báo",
+  notify: "Chỉ nhắn tin",
+  call:   "Nhắn + Gọi điện",
+};
+
+function NotifyCard() {
+  const [cfg, setCfg] = useState(null);        // null=tải | object | "offline"
+  const [meta, setMeta] = useState({});        // event key → nhãn
+  const [modes, setModes] = useState([]);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    notifyApi.get().then((r) => {
+      if (r.ok && r.body?.ok) { setCfg(r.body.config); setMeta(r.body.events_meta || {}); setModes(r.body.share_modes || []); }
+      else setCfg("offline");
+    });
+  }, []);
+
+  const setField = (k) => (e) => setCfg((c) => ({ ...c, [k]: e.target.value }));
+  const setEvent = (k, v) => setCfg((c) => ({ ...c, events: { ...c.events, [k]: v } }));
+
+  async function save() {
+    if (busy) return;
+    setMsg(""); setBusy(true);
+    const r = await notifyApi.set(cfg);
+    setBusy(false);
+    if (r.ok && r.body?.ok) { setCfg(r.body.config); setMsg("✅ Đã lưu cấu hình thông báo."); }
+    else setMsg("❌ " + (r.body?.error || "Lưu thất bại (server 5005 cần restart bản mới?)"));
+  }
+
+  return (
+    <div className="panel set-card" style={{ marginTop: 16 }}>
+      <h3 style={{ fontSize: 17, marginBottom: 4 }}>📞 Liên hệ khẩn cấp & Thông báo</h3>
+      <p className="hint" style={{ marginBottom: 12 }}>
+        Thay cho việc bot tự gọi điện mỗi lần có khách (không kham nổi khi đông khách).
+        Đặt <b>số liên hệ khẩn</b> để khách chủ động gọi khi cần gấp, và chọn <b>khi nào
+        hệ thống báo/gọi bạn</b> cho từng loại việc.
+      </p>
+      {cfg === "offline" ? (
+        <p className="hint">⚠️ Chưa kết nối máy chủ (cổng 5005) — hoặc server cần restart bản mới.</p>
+      ) : cfg === null ? (
+        <p className="hint">Đang tải…</p>
+      ) : (
+        <>
+          {/* Liên hệ khẩn cho khách */}
+          <div className="bank-form">
+            <div>
+              <label>Số điện thoại khẩn</label>
+              <input placeholder="VD: 0901234567" value={cfg.emergency_phone} onChange={setField("emergency_phone")} />
+            </div>
+            <div>
+              <label>Zalo (SĐT/link)</label>
+              <input placeholder="VD: 0901234567" value={cfg.emergency_zalo} onChange={setField("emergency_zalo")} />
+            </div>
+            <div>
+              <label>Telegram (@username)</label>
+              <input placeholder="VD: @tenshop" value={cfg.emergency_tele} onChange={setField("emergency_tele")} />
+            </div>
+          </div>
+          <div className="field" style={{ marginTop: 10 }}>
+            <label className="field-label">Khi nào bot đưa số này cho khách?</label>
+            <div className="nt-modes">
+              {(modes.length ? modes : ["off", "strict", "ask", "greeting"]).map((m) => (
+                <label key={m} className={"nt-radio" + (cfg.share_mode === m ? " on" : "")}>
+                  <input type="radio" name="share_mode" checked={cfg.share_mode === m}
+                         onChange={() => setCfg((c) => ({ ...c, share_mode: m }))} />
+                  <span>{SHARE_LABELS[m] || m}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Quy tắc báo chủ theo sự kiện */}
+          <label className="field-label" style={{ marginTop: 14, display: "block" }}>
+            Khi nào báo/gọi bạn?
+          </label>
+          <div className="nt-events">
+            {Object.entries(meta).map(([k, label]) => (
+              <div key={k} className="nt-event">
+                <span className="nt-event-lbl">{label}</span>
+                <div className="nt-event-modes">
+                  {["off", "notify", "call"].map((v) => (
+                    <button key={v} type="button"
+                            className={"nt-chip" + ((cfg.events?.[k] || "notify") === v ? " on" : "")}
+                            onClick={() => setEvent(k, v)}>
+                      {EVENT_MODE_LABELS[v]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="hint" style={{ marginTop: 8 }}>
+            💡 <b>Chỉ nhắn tin</b> = bot gửi thông báo qua kênh của bạn (Telegram = tin bot,
+            tức thì & miễn phí). <b>Gọi điện</b> chỉ nên bật cho việc thật khẩn.
+          </p>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>
+            <button className="btn-primary sm" style={{ width: "auto" }} disabled={busy} onClick={save}>
+              {busy ? "Đang lưu…" : "💾 Lưu cấu hình"}
+            </button>
+            {msg && <span className="savemsg" style={{ margin: 0 }}>{msg}</span>}
+          </div>
+        </>
+      )}
     </div>
   );
 }
