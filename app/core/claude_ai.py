@@ -230,24 +230,20 @@ def _call_ai(messages: list, owner: str | None = None, account: str | None = Non
         except Exception as e:
             print(f"[AI] DeepSeek lỗi ({e}), chuyển sang Groq...")
 
-    # Fallback: Groq (nếu máy chủ có cài + có key). Không có → báo lỗi rõ ràng
-    # thay vì "No module named 'groq'" khó hiểu.
-    try:
-        from groq import Groq
-    except ModuleNotFoundError:
-        raise RuntimeError(
-            "Không gọi được AI: model mặc định (DeepSeek) lỗi/thiếu API key và máy chủ "
-            "chưa cài Groq. Hãy đặt DEEPSEEK_API_KEY (hoặc OPENAI_API_KEY) trong .env, "
-            "hoặc chọn một model đã có API key.")
+    # Fallback: Groq — API TƯƠNG THÍCH OpenAI nên dùng luôn openai SDK, KHÔNG cần
+    # package 'groq' (giống prompt_builder). Thiếu key → báo lỗi tiếng Việt rõ ràng.
     if not Config.GROQ_API_KEY:
         raise RuntimeError(
-            "Không gọi được AI: chưa cấu hình API key nào (DEEPSEEK_API_KEY / "
-            "OPENAI_API_KEY / GROQ_API_KEY). Kiểm tra .env.")
+            "Không gọi được AI: model mặc định (DeepSeek) lỗi hoặc thiếu API key, và "
+            "chưa có key dự phòng. Kiểm tra DEEPSEEK_API_KEY / OPENAI_API_KEY / "
+            "GROQ_API_KEY trong .env (key có thể đã hết hạn/hết tiền).")
     models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"]
     last_error = None
     for model in models:
         try:
-            client = Groq(api_key=Config.GROQ_API_KEY, timeout=Config.AI_TIMEOUT)
+            client = OpenAI(api_key=Config.GROQ_API_KEY,
+                            base_url="https://api.groq.com/openai/v1",
+                            timeout=Config.AI_TIMEOUT)
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
