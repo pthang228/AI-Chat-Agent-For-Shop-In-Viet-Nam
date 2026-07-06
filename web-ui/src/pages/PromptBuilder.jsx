@@ -47,7 +47,6 @@ const GUIDE_SECTIONS = [
     { key: "tone",     label: "Xưng hô & giọng điệu",    ph: 'VD: xưng "em"/"mình", thân thiện như bạn bè, câu ngắn, emoji vừa phải 😊' },
     { key: "greeting", label: "Tin nhắn chào ĐẦU TIÊN (bot gửi đúng đoạn này)",
       ph: "VD: Admin có thể đang bận nên chưa rep được, để AI tư vấn trước cho mình nhen 😊\nMình có thể giúp bạn: 📅 xem lịch trống · 💰 bảng giá · 📸 xin ảnh · 🏠 đặt chỗ", rows: 3 },
-    { key: "handoff",  label: "Khi nào CHUYỂN CHO CHỦ shop", ph: "VD: Khách muốn gặp người thật · Khiếu nại · Đổi lịch đã chốt · Hỏi ngoài kiến thức → báo đã nhắn chủ, chủ sẽ liên hệ sớm", rows: 2 },
     { key: "rules",    label: "Điều bot KHÔNG được làm",  ph: "VD: Không tự xác nhận booking cuối (chủ chốt) · Không nhận tiền cọc trực tiếp · Không tự giảm giá ngoài chính sách · Không bịa thông tin", rows: 2 },
     { key: "faq",      label: "Câu hỏi thường gặp & cách trả lời",
       ph: "Mỗi dòng 1 cặp:\nCó chỗ để xe không? → Có bãi riêng cả ô tô lẫn xe máy\nGần trường ĐH không? → Cách KTX Làng Đại học 2km", rows: 4 },
