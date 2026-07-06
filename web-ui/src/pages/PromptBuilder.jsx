@@ -485,6 +485,16 @@ export default function PromptBuilder() {
             <div className="hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
               Link phải để <b>công khai</b> (ai có link cũng xem được, không cần đăng nhập).
               <br />• <b>Google Docs / Sheets:</b> bấm <b>Share</b> → đổi sang <b>"Bất kỳ ai có đường liên kết"</b>.
+              {svcEmail && (
+                <>
+                  <br />• <b>Google Sheet lịch đặt chỗ:</b> <b>Share</b> cho email này (quyền Người xem):{" "}
+                  <code style={{ wordBreak: "break-all" }}>{svcEmail}</code>{" "}
+                  <button type="button" className="btn-mini"
+                          onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg("✅ Đã copy email service account."); }}>
+                    📋 Copy
+                  </button>
+                </>
+              )}
               <br />• <b>Link riêng tư</b> (Facebook cá nhân, Drive giới hạn…): AI không đọc được — dán thẳng nội dung vào ô hướng dẫn bên dưới.
             </div>
           </details>
