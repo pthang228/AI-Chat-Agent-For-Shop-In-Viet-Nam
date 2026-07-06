@@ -110,6 +110,17 @@ def suggest_from_reply(user_id: str, channel: str, messages: list, answer: str,
         if len(question) < MIN_QUESTION_CHARS:
             return None
         db = get_db()
+        # MULTI-TENANT: caller (8 hook send) không truyền shop → tự tra tenant
+        # của hội thoại để đề xuất vào ĐÚNG kho tri thức của shop đó.
+        if shop == knowledge.DEFAULT_SHOP:
+            try:
+                from app.core import tenant as _tenant
+                rows = db.query("SELECT tenant FROM sessions WHERE user_id=? LIMIT 1",
+                                (user_id,))
+                if rows:
+                    shop = _tenant.shop_key((rows[0]["tenant"] or "") or None)
+            except Exception:
+                pass
         pending = db.query(
             "SELECT COUNT(*) AS n FROM knowledge_suggestions WHERE shop=? AND status='pending'",
             (shop,))[0]["n"]

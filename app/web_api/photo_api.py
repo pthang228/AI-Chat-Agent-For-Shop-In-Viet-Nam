@@ -42,12 +42,21 @@ def register_photo_routes(app):
             return None, ({"ok": False, "error": "Phiên hết hạn — đăng nhập lại"}, 401)
         return u, None
 
+    def _pws(u):
+        """Workspace (shop) của user — multi-tenant bộ ảnh."""
+        from app.web_api.auth_api import workspace_of
+        return workspace_of(u)
+
+    def _owned(slug, u):
+        """Bộ ảnh thuộc shop của user? (không tồn tại/của shop khác → False)"""
+        return pl.get_set(slug, tenant_ws=_pws(u)) is not None
+
     @app.route("/photos/sets")
     def photos_list():
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, "sets": pl.list_sets()}
+        return {"ok": True, "sets": pl.list_sets(tenant_ws=_pws(u))}
 
     @app.route("/photos/sets", methods=["POST"])
     def photos_create():
@@ -56,7 +65,7 @@ def register_photo_routes(app):
             return err
         data = request.get_json(force=True, silent=True) or {}
         try:
-            s = pl.create_set(data.get("name") or "", data.get("keywords") or [])
+            s = pl.create_set(data.get("name") or "", data.get("keywords") or [], tenant_ws=_pws(u))
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         log.info(f"[photos] {u['username']} tạo bộ ảnh '{s['name']}'")
@@ -67,6 +76,8 @@ def register_photo_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        if not _owned(slug, u):
+            return {"ok": False, "error": "Bộ ảnh không tồn tại"}, 404
         data = request.get_json(force=True, silent=True) or {}
         s = pl.update_keywords(slug, data.get("keywords") or [])
         if not s:
@@ -78,6 +89,8 @@ def register_photo_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        if not _owned(slug, u):
+            return {"ok": False, "error": "Bộ ảnh không tồn tại"}, 404
         pl.delete_set(slug)
         log.info(f"[photos] {u['username']} xoá bộ ảnh '{slug}'")
         return {"ok": True}
@@ -87,6 +100,8 @@ def register_photo_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        if not _owned(slug, u):
+            return {"ok": False, "error": "Bộ ảnh không tồn tại"}, 404
         files = request.files.getlist("files")
         if not files:
             return {"ok": False, "error": "Chưa chọn file nào"}, 400
@@ -104,6 +119,8 @@ def register_photo_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        if not _owned(slug, u):
+            return {"ok": False, "error": "Bộ ảnh không tồn tại"}, 404
         pl.remove_photo(slug, name)
         return {"ok": True, "set": pl.get_set(slug)}
 

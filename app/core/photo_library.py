@@ -60,28 +60,56 @@ def _row(r) -> dict:
 
 # ── CRUD ─────────────────────────────────────────────────────────────
 
-def list_sets() -> list:
-    return [_row(r) for r in get_db().query("SELECT * FROM photo_sets ORDER BY created_at")]
+def _tenant_where(tenant_ws):
+    """Mảnh WHERE multi-tenant (chủ nền tảng thấy cả bộ ảnh cũ tenant='')."""
+    from app.core import tenant as _t
+    if not tenant_ws:
+        return "", ()
+    if tenant_ws == _t.default_owner():
+        return " WHERE (tenant=? OR tenant='')", (tenant_ws,)
+    return " WHERE tenant=?", (tenant_ws,)
 
 
-def get_set(slug: str) -> dict | None:
+def list_sets(tenant_ws: str = None) -> list:
+    tw, tp = _tenant_where(tenant_ws)
+    return [_row(r) for r in get_db().query(
+        f"SELECT * FROM photo_sets{tw} ORDER BY created_at", tp)]
+
+
+def get_set(slug: str, tenant_ws: str = None) -> dict | None:
     rows = get_db().query("SELECT * FROM photo_sets WHERE slug=?", (slug,))
-    return _row(rows[0]) if rows else None
+    if not rows:
+        return None
+    if tenant_ws:
+        from app.core import tenant as _t
+        row_tenant = (rows[0]["tenant"] if "tenant" in rows[0].keys() else "") or ""
+        if not _t.visible(row_tenant, tenant_ws):
+            return None
+    return _row(rows[0])
 
 
-def create_set(name: str, keywords: list = None) -> dict:
+def create_set(name: str, keywords: list = None, tenant_ws: str = None) -> dict:
     name = (name or "").strip()
     if not name:
         raise ValueError("Tên bộ ảnh trống")
-    if len(list_sets()) >= MAX_SETS:
+    if len(list_sets(tenant_ws)) >= MAX_SETS:
         raise ValueError(f"Tối đa {MAX_SETS} bộ ảnh")
     slug = slugify(name)
-    if get_set(slug):
+    # slug là PK TOÀN CỤC: 2 shop cùng đặt "Bảng giá" → shop sau thêm hậu tố
+    # (thư mục ảnh media/photo_library/<slug> tách theo slug nên không lẫn file)
+    base_slug, i = slug, 2
+    while get_db().query("SELECT 1 FROM photo_sets WHERE slug=?", (slug,)):
+        owner_row = get_db().query("SELECT tenant FROM photo_sets WHERE slug=?", (slug,))
+        row_tenant = (owner_row[0]["tenant"] if owner_row and "tenant" in owner_row[0].keys() else "") or ""
+        if tenant_ws and row_tenant != tenant_ws:
+            slug = f"{base_slug}-{i}"; i += 1
+            continue
         raise ValueError(f"Bộ ảnh '{name}' đã tồn tại")
     kw = [str(k).strip() for k in (keywords or []) if str(k).strip()][:20]
     get_db().execute(
-        "INSERT INTO photo_sets (slug, name, keywords, created_at) VALUES (?,?,?,?)",
-        (slug, name, json.dumps(kw, ensure_ascii=False), datetime.now().isoformat()))
+        "INSERT INTO photo_sets (slug, name, keywords, created_at, tenant) VALUES (?,?,?,?,?)",
+        (slug, name, json.dumps(kw, ensure_ascii=False), datetime.now().isoformat(),
+         tenant_ws or ""))
     set_dir(slug).mkdir(parents=True, exist_ok=True)
     return get_set(slug)
 
@@ -147,15 +175,16 @@ def remove_photo(slug: str, filename: str):
 
 # ── Match với tin nhắn khách ─────────────────────────────────────────
 
-def find_sets(text: str, limit: int = 2) -> list:
+def find_sets(text: str, limit: int = 2, tenant_ws: str = None) -> list:
     """Bộ ảnh match tin nhắn khách — CHỈ nhận khi tên bộ hoặc 1 keyword nằm NGUYÊN
     CỤM (bỏ dấu) trong câu (an toàn: không match vu vơ theo từng từ).
+    tenant_ws: MULTI-TENANT — chỉ tìm trong bộ ảnh của shop này.
     Trả list set (có files), điểm cao trước."""
     q = " ".join(re.findall(r"[a-z0-9]+", _norm(text)))
     if not q:
         return []
     scored = []
-    for s in list_sets():
+    for s in list_sets(tenant_ws):
         if not s["files"]:
             continue
         score = 0

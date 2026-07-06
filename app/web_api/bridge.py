@@ -233,6 +233,17 @@ def create_bridge(brain, conv_manager) -> Flask:
         channel = _norm_channel(data.get("channel") or "")
         app_name = _norm_text(data.get("app_name") or "")
 
+        # MULTI-TENANT: công tắc GLOBAL / kênh cha trần (zalo, meta…) ảnh hưởng
+        # MỌI shop → chỉ CHỦ NỀN TẢNG được bấm. Key per-bot "kênh:<id>" (bot/page/
+        # site của riêng shop) thì shop nào cũng dùng được.
+        if ":" not in channel:
+            from app.core import tenant as _t
+            ws = _ws()
+            if ws and ws != _t.default_owner():
+                return {"ok": False,
+                        "error": "Chỉ quản trị nền tảng mới bật/tắt bot toàn cục — "
+                                 "hãy bật/tắt từng kênh của shop bạn"}, 403
+
         state = _load_bot_state()   # đọc TƯƠI rồi sửa → không đua với ghi từ copilot
         chans = state.setdefault("channels", {})
         if not channel or channel == "all":
@@ -491,6 +502,10 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.web_api.notify_api import register_notify_routes
     register_notify_routes(app)
 
+    # Quản trị NỀN TẢNG (danh sách mọi shop) — chỉ chủ nền tảng
+    from app.web_api.admin_api import register_admin_routes
+    register_admin_routes(app)
+
     # Công cụ chat: gửi ảnh/video/ghi âm + chốt đơn 1 chạm + câu trả lời mẫu
     from app.web_api.chat_tools import register_chat_tools
     register_chat_tools(app, "", conv_manager, getattr(brain, "channel", None),
@@ -514,7 +529,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         # Nhân viên (role=staff) chỉ làm hộp thư/khách/đơn — cấm phần quản trị
         staff_deny=(
             "/billing", "/prompt", "/team", "/broadcasts", "/copilot", "/notify",
-            "/orders/bank", "/bot-toggle",
+            "/admin", "/orders/bank", "/bot-toggle",
             "POST /photos/sets", "DELETE /photos/sets",
             "DELETE /conversations",     # xoá hội thoại: chỉ chủ
         ),

@@ -196,5 +196,106 @@ a = broadcast.audience(["telegram"], {"type": "all"}, tenant_ws="shopa@x.vn")
 ids = [x["user_id"] for x in a]
 check("tg:BOTA:1" in ids and "tg:BOTB:2" not in ids, "H2 audience A không dính khách B")
 
+# ═══ PHASE 2: NÃO BOT PER-TENANT ════════════════════════════════════
+print("I. shop_key")
+check(tenant.shop_key("shopa@x.vn") == "default", "I1 chủ nền tảng → não 'default' (giữ não cũ)")
+check(tenant.shop_key("shopb@x.vn") == "shopb@x.vn", "I2 shop khác → não riêng")
+check(tenant.shop_key(None) == "default", "I3 không ws → default")
+
+print("J. Persona prompt per-shop")
+from app.core import prompt_builder, claude_ai
+# Patch file não default + backup sang file TẠM (house style test_prompt) —
+# tuyệt đối không đụng data/custom_prompt.txt THẬT của máy dev
+prompt_builder.CUSTOM_FILE = Path("test_tenant_custom_tmp.txt")
+prompt_builder.BACKUP_DIR = Path("test_tenant_backups_tmp")
+Path("test_tenant_custom_tmp.txt").unlink(missing_ok=True)
+PERSONA_B = "#PERSONA-B " + "Shop B chuyên bán trà sữa, xưng em ngọt ngào. " * 6
+prompt_builder.apply(PERSONA_B, shop="shopb@x.vn")
+check(claude_ai._load_system_prompt("shopb@x.vn").startswith("#PERSONA-B"),
+      "J1 shop B đọc đúng persona B")
+check(not claude_ai._load_system_prompt("default").startswith("#PERSONA-B"),
+      "J2 não default KHÔNG bị B đè")
+check(claude_ai._custom_prompt_file("shopb@x.vn").name != "custom_prompt.txt",
+      "J3 file persona B nằm riêng (data/prompts/)")
+cur_b = prompt_builder.current(shop="shopb@x.vn")
+check(cur_b["source"] == "custom", "J4 current(B) = custom")
+cur_d = prompt_builder.current(shop="default")
+check(cur_d["source"] == "default", "J5 current(default) vẫn mặc định")
+prompt_builder.restore_default(shop="shopb@x.vn")
+check(prompt_builder.current(shop="shopb@x.vn")["source"] == "default", "J6 restore chỉ đụng B")
+
+print("K. Knowledge per-shop")
+from app.core import knowledge
+knowledge.ingest([{"title": "Giá trà sữa", "content": "Trà sữa 35k", "keywords": ["trà sữa"]}],
+                 shop="shopb@x.vn")
+hits_b, _ = knowledge.context_chunks("trà sữa giá nhiêu", shop="shopb@x.vn")
+hits_d, _ = knowledge.context_chunks("trà sữa giá nhiêu", shop="default")
+check(any("35k" in h["content"] for h in hits_b), "K1 shop B tra được tri thức B")
+check(not any("35k" in (h.get("content") or "") for h in hits_d), "K2 não default không dính tri thức B")
+check(knowledge.count("shopb@x.vn") == 1 and knowledge.count("default") == 0,
+      "K3 kho đếm riêng từng shop")
+
+print("L. Photo library per-shop")
+from app.core import photo_library as pl
+s_a = pl.create_set("Bảng giá", ["gia"], tenant_ws="shopa@x.vn")
+s_b = pl.create_set("Bảng giá", ["gia"], tenant_ws="shopb@x.vn")
+check(s_a["slug"] != s_b["slug"], "L1 2 shop cùng tên bộ ảnh → slug khác nhau",
+      (s_a["slug"], s_b["slug"]))
+names_b = [x["slug"] for x in pl.list_sets(tenant_ws="shopb@x.vn")]
+check(names_b == [s_b["slug"]], "L2 list B chỉ thấy bộ của B", names_b)
+check(pl.get_set(s_a["slug"], tenant_ws="shopb@x.vn") is None, "L3 B mở bộ ảnh A → None")
+
+print("M. Bot học (suggestions) theo shop của hội thoại")
+from app.core import knowledge_learn
+import app.core.claude_ai as _cai2
+_cai2_orig = _cai2._call_ai
+_cai2._call_ai = lambda msgs: '{"title":"Ship","content":"Shop B ship toàn quốc 20k","keywords":["ship"]}'
+try:
+    sug = knowledge_learn.suggest_from_reply(
+        "tg:BOTB:2", "telegram",
+        [{"role": "user", "content": "shop có ship không vậy ạ?"}],
+        "Bên mình ship toàn quốc, phí 20k bạn nhé!")
+finally:
+    _cai2._call_ai = _cai2_orig
+check(sug and sug.get("shop") == "shopb@x.vn", "M1 đề xuất rơi vào kho shop B (resolve từ conv)", sug)
+
+print("N. Notify per-shop")
+from app.core import notify
+notify.save_config("shopb@x.vn", {"emergency_phone": "0988888888", "share_mode": "ask"})
+cfg_b = notify.get_config("shopb@x.vn")
+cfg_a = notify.get_config("shopa@x.vn")
+check(cfg_b["emergency_phone"] == "0988888888" and cfg_a["emergency_phone"] == "",
+      "N1 liên hệ khẩn riêng từng shop")
+from app.core.brain import _with_contact
+out = _with_contact("Đã báo shop!", "contact_request", "shopb@x.vn")
+check("0988888888" in out, "N2 khách của shop B nhận đúng số shop B", out)
+out_a = _with_contact("Đã báo shop!", "contact_request", "shopa@x.vn")
+check("0988888888" not in out_a, "N3 khách shop A KHÔNG nhận số shop B")
+
+print("O. Admin API — chỉ chủ nền tảng")
+from app.web_api.admin_api import register_admin_routes
+adm = Flask(__name__)
+register_admin_routes(adm)
+ax = adm.test_client()
+r = ax.get("/admin/shops", headers=HA)
+check(r.status_code == 200 and r.json["total"] >= 2, "O1 chủ nền tảng xem được mọi shop", r.text[:80])
+shops = {s["username"]: s for s in r.json["shops"]}
+check(shops["shopb@x.vn"]["conversations"] == 1, "O2 đếm hội thoại đúng theo shop",
+      shops["shopb@x.vn"])
+r = ax.get("/admin/shops", headers=HB)
+check(r.status_code == 403, "O3 shop thường bị 403")
+r = ax.get("/admin/shops")
+check(r.status_code == 401, "O4 không token → 401")
+
+# dọn file persona + ảnh test + file tạm
+try:
+    import shutil
+    claude_ai._custom_prompt_file("shopb@x.vn").unlink(missing_ok=True)
+    pl.delete_set(s_a["slug"]); pl.delete_set(s_b["slug"])
+    Path("test_tenant_custom_tmp.txt").unlink(missing_ok=True)
+    shutil.rmtree("test_tenant_backups_tmp", ignore_errors=True)
+except Exception:
+    pass
+
 print(f"\nKẾT QUẢ: {PASS} pass, {FAIL} fail")
 sys.exit(1 if FAIL else 0)

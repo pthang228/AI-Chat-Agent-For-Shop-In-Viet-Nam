@@ -26,15 +26,24 @@ from app.core import notify
 log = logging.getLogger(__name__)
 
 
-def _with_contact(text: str, intent: str) -> str:
-    """Chèn dòng liên hệ khẩn (SĐT/Zalo/Telegram chủ shop) vào cuối câu trả lời
-    NẾU chủ đã bật cho intent này (xem notify.contact_for). CRM/notify lỗi thì
-    trả nguyên text — không được làm chết luồng trả lời khách."""
+def _with_contact(text: str, intent: str, tenant: str = "") -> str:
+    """Chèn dòng liên hệ khẩn (SĐT/Zalo/Telegram CỦA SHOP sở hữu hội thoại) vào
+    cuối câu trả lời NẾU shop đã bật cho intent này (xem notify.contact_for).
+    CRM/notify lỗi thì trả nguyên text — không được làm chết luồng trả lời khách."""
     try:
-        line = notify.contact_for(intent)
+        cfg = notify.get_config(tenant or None)   # multi-tenant: config của shop
+        line = notify.contact_for(intent, cfg)
     except Exception:
         line = ""
     return f"{text}\n\n{line}" if line else text
+
+
+def _notify_cfg(conv):
+    """Config thông báo của SHOP sở hữu hội thoại (lỗi → None = mặc định)."""
+    try:
+        return notify.get_config(getattr(conv, "tenant", "") or None)
+    except Exception:
+        return None
 
 
 FIRST_MESSAGE_GREETING = (
@@ -127,7 +136,7 @@ class Brain:
         # Sticker / media không có text → chỉ đến đây nếu là khách mới
         if not text:
             log.info(f"[Handle] Sticker từ khách mới {user_id} → gửi greeting")
-            greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting")
+            greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting", getattr(conv, "tenant", ""))
             self.channel.send_text(user_id, greeting)
             conv.add_assistant_message(greeting)
             time.sleep(0.5)
@@ -354,7 +363,7 @@ class Brain:
         # ── Câu đầu tiên với mỗi khách mới → LUÔN gửi greeting + bảng giá ──
         if is_first_message:
             log.info(f"[FirstMsg] Gửi greeting cố định cho user {user_id}")
-            greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting")
+            greeting = _with_contact(FIRST_MESSAGE_GREETING, "greeting", getattr(conv, "tenant", ""))
             self.channel.send_text(user_id, greeting)
             conv.add_assistant_message(greeting)
             time.sleep(0.5)
@@ -369,7 +378,9 @@ class Brain:
         # không match / kênh chưa hỗ trợ → rơi xuống cơ chế cũ y nguyên.
         if intent in ("photo_request", "price_list_request"):
             from app.core import photo_library
-            matched = photo_library.find_sets(text)
+            # multi-tenant: chỉ tìm trong bộ ảnh của SHOP sở hữu hội thoại
+            matched = photo_library.find_sets(
+                text, tenant_ws=getattr(conv, "tenant", "") or None)
             if matched:
                 sent_any = False
                 for s in matched:
@@ -563,7 +574,7 @@ class Brain:
                 "Mình đã báo chủ nhà rồi, chủ nhà sẽ phản hồi bạn sớm nhé! "
                 "Bạn còn câu hỏi gì khác không ạ? 😊"
             )
-            fixed = _with_contact(fixed, "unknown_question")   # bot bí → đưa số nếu bật
+            fixed = _with_contact(fixed, "unknown_question", getattr(conv, "tenant", ""))   # bot bí → đưa số nếu bật
             self.channel.send_text(user_id, fixed)
             conv.add_assistant_message(fixed)
             # Báo chủ theo cấu hình (mặc định chỉ nhắn tin, không gọi)
@@ -573,14 +584,14 @@ class Brain:
                 f"💬 Câu hỏi: \"{text[:200]}\"\n\n"
                 f"Bot chưa có thông tin để trả lời — chủ nhà vui lòng phản hồi khách nhé!"
             )
-            notify.alert(self.channel, "unknown", unknown_msg)
+            notify.alert(self.channel, "unknown", unknown_msg, cfg=_notify_cfg(conv))
             self.conv_manager.save()
             return
 
         # Khi khách muốn gặp chủ nhà trực tiếp
         if intent == "contact_request":
             fixed = "Mình đã báo chủ nhà rồi nha, chủ nhà sẽ liên hệ lại với bạn trong giây lát! 📞"
-            fixed = _with_contact(fixed, "contact_request")   # đưa số cho khách chủ động gọi
+            fixed = _with_contact(fixed, "contact_request", getattr(conv, "tenant", ""))   # đưa số cho khách chủ động gọi
             self.channel.send_text(user_id, fixed)
             conv.add_assistant_message(fixed)
             # Báo chủ theo cấu hình (mặc định 'call' cho việc này; chủ chỉnh được)
@@ -590,7 +601,7 @@ class Brain:
                 f"💬 Tin nhắn: \"{text[:100]}\"\n\n"
                 f"Vui lòng liên hệ lại khách ngay!"
             )
-            notify.alert(self.channel, "contact_request", contact_msg)
+            notify.alert(self.channel, "contact_request", contact_msg, cfg=_notify_cfg(conv))
             return
 
         # Khi khách chốt đặt phòng
@@ -657,7 +668,7 @@ class Brain:
             f"🏠 Phòng:     {conv.selected_room or 'chưa chọn'}\n\n"
             f"Vui lòng liên hệ lại khách để xác nhận và hướng dẫn đặt cọc!"
         )
-        notify.alert(self.channel, "new_order", owner_msg)
+        notify.alert(self.channel, "new_order", owner_msg, cfg=_notify_cfg(conv))
 
         # Tự tạo ĐƠN NHÁP từ hội thoại (chạy nền — AI bóc tách hơi chậm,
         # không được chặn luồng trả lời khách). Lỗi cũng không ảnh hưởng booking.

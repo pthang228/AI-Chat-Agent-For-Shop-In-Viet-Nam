@@ -238,11 +238,22 @@ def generate(links: list, instructions: str) -> dict:
     }
 
 
-# ── Lưu / khôi phục ─────────────────────────────────────────────────
+# ── Lưu / khôi phục (MULTI-TENANT: mỗi shop 1 file persona riêng) ────
+
+def _shop_file(shop: str):
+    """File persona của shop. QUAN TRỌNG: 'default' phải trả CUSTOM_FILE (module
+    attr) — tests monkeypatch pb.CUSTOM_FILE/BACKUP_DIR sang file tạm; bỏ qua attr
+    này từng làm test GHI ĐÈ + XOÁ MẤT file não THẬT data/custom_prompt.txt."""
+    if not shop or shop == knowledge.DEFAULT_SHOP:
+        return CUSTOM_FILE
+    from app.core.claude_ai import _custom_prompt_file
+    return _custom_prompt_file(shop)
+
 
 def current(shop: str = knowledge.DEFAULT_SHOP) -> dict:
-    if CUSTOM_FILE.exists():
-        text = CUSTOM_FILE.read_text(encoding="utf-8")
+    f = _shop_file(shop)
+    if f.exists():
+        text = f.read_text(encoding="utf-8")
         hybrid = text.startswith(HYBRID_MARKER)
         if hybrid:  # bỏ dòng marker khi hiển thị cho shop
             text = text[len(HYBRID_MARKER):].lstrip("\n")
@@ -251,7 +262,7 @@ def current(shop: str = knowledge.DEFAULT_SHOP) -> dict:
             "source": "custom",
             "mode": "hybrid" if hybrid else "legacy",
             "chunk_count": knowledge.count(shop) if hybrid else 0,
-            "updated_at": datetime.fromtimestamp(CUSTOM_FILE.stat().st_mtime).isoformat(),
+            "updated_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
         }
     return {
         "prompt": DEFAULT_FILE.read_text(encoding="utf-8") if DEFAULT_FILE.exists() else "",
@@ -262,32 +273,40 @@ def current(shop: str = knowledge.DEFAULT_SHOP) -> dict:
     }
 
 
+def _backup_name(shop: str, stamp: str) -> str:
+    safe = "default" if shop == knowledge.DEFAULT_SHOP else str(shop).replace("@", "_at_")
+    return f"custom_prompt-{safe}-{stamp}.txt"
+
+
 def apply(text: str, chunks: list = None, shop: str = knowledge.DEFAULT_SHOP) -> dict:
-    """Lưu bộ não mới. Có chunks → chế độ lai: persona (kèm marker) + ingest tri thức.
-    Không chunks → y hệt hành vi cũ (1 prompt lớn)."""
+    """Lưu bộ não mới CỦA SHOP. Có chunks → chế độ lai: persona (kèm marker) +
+    ingest tri thức theo shop. Không chunks → 1 prompt lớn (legacy)."""
     text = (text or "").strip()
     if len(text) < 200:
         raise ValueError("Prompt quá ngắn (<200 ký tự) — có vẻ chưa đúng")
+    f = _shop_file(shop)
+    f.parent.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(exist_ok=True)
-    if CUSTOM_FILE.exists():
+    if f.exists():
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        (BACKUP_DIR / f"custom_prompt-{stamp}.txt").write_text(
-            CUSTOM_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+        (BACKUP_DIR / _backup_name(shop, stamp)).write_text(
+            f.read_text(encoding="utf-8"), encoding="utf-8")
     if chunks:
         n = knowledge.ingest(chunks, shop)
-        CUSTOM_FILE.write_text(HYBRID_MARKER + "\n" + text, encoding="utf-8")
-        log.info(f"[PromptBuilder] đã lưu bộ não LAI (persona {len(text)} ký tự + {n} mẩu tri thức)")
+        f.write_text(HYBRID_MARKER + "\n" + text, encoding="utf-8")
+        log.info(f"[PromptBuilder] [{shop}] lưu bộ não LAI (persona {len(text)} ký tự + {n} mẩu)")
     else:
-        CUSTOM_FILE.write_text(text, encoding="utf-8")
-        log.info(f"[PromptBuilder] đã lưu prompt tuỳ chỉnh ({len(text)} ký tự)")
+        f.write_text(text, encoding="utf-8")
+        log.info(f"[PromptBuilder] [{shop}] lưu prompt tuỳ chỉnh ({len(text)} ký tự)")
     return current(shop)
 
 
 def restore_default(shop: str = knowledge.DEFAULT_SHOP) -> dict:
-    if CUSTOM_FILE.exists():
+    f = _shop_file(shop)
+    if f.exists():
         BACKUP_DIR.mkdir(exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        CUSTOM_FILE.replace(BACKUP_DIR / f"custom_prompt-{stamp}.txt")
-        log.info("[PromptBuilder] đã khôi phục prompt mặc định")
+        f.replace(BACKUP_DIR / _backup_name(shop, stamp))
+        log.info(f"[PromptBuilder] [{shop}] đã khôi phục prompt mặc định")
     knowledge.clear(shop)   # tri thức lai đi kèm prompt tuỳ chỉnh → dọn cùng
     return current(shop)

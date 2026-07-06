@@ -63,6 +63,26 @@ def visible(row_tenant: str, workspace: str | None) -> bool:
     return row_tenant == workspace
 
 
+def shop_key(workspace: str | None) -> str:
+    """Khoá 'shop' cho NÃO BOT (knowledge_chunks.shop, file persona, photo...).
+    Chủ nền tảng (hoặc không xác định) → 'default' (giữ nguyên não/tri thức cũ
+    tạo trước multi-tenant); shop khác → chính username của shop đó."""
+    if not workspace or workspace == default_owner():
+        return "default"
+    return workspace
+
+
+def tenant_of_conv(account: str, user_id: str) -> str:
+    """Tra tenant của 1 hội thoại từ DB (cho tiến trình không giữ conv object)."""
+    try:
+        rows = get_db().query(
+            "SELECT tenant FROM sessions WHERE account=? AND user_id=?",
+            (str(account), str(user_id)))
+        return (rows[0]["tenant"] if rows else "") or ""
+    except Exception:
+        return ""
+
+
 def current_workspace_or_none():
     """Workspace của request hiện tại (None khi không có token — vd test)."""
     try:

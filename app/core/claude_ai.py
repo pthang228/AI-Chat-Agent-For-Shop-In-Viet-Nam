@@ -58,11 +58,21 @@ def _today_context() -> str:
 HYBRID_MARKER = "#NOVACHAT-HYBRID-V1"
 
 
-def _load_system_prompt() -> str:
-    # Prompt TUỲ CHỈNH (shop tạo bằng AI trong web → data/custom_prompt.txt) được
-    # ưu tiên; chưa có → dùng prompt mặc định đi kèm code. Đọc lại MỖI request
-    # nên lưu prompt mới trong web là áp dụng ngay, không cần restart.
-    custom = Config.DATA_DIR / "custom_prompt.txt"
+def _custom_prompt_file(shop: str = "default"):
+    """File persona theo SHOP (multi-tenant). 'default' = chủ nền tảng — giữ
+    đường dẫn cũ data/custom_prompt.txt; shop khác → data/prompts/<shop>.txt."""
+    if not shop or shop == "default":
+        return Config.DATA_DIR / "custom_prompt.txt"
+    import re as _re
+    safe = _re.sub(r"[^A-Za-z0-9._@-]", "_", str(shop))[:80]
+    return Config.DATA_DIR / "prompts" / f"{safe}.txt"
+
+
+def _load_system_prompt(shop: str = "default") -> str:
+    # Prompt TUỲ CHỈNH của TỪNG SHOP được ưu tiên; chưa có → prompt mặc định đi
+    # kèm code (KHÔNG rơi về prompt của shop khác — cách ly não bot). Đọc lại MỖI
+    # request nên lưu prompt mới trong web là áp dụng ngay, không cần restart.
+    custom = _custom_prompt_file(shop)
     try:
         if custom.exists():
             text = custom.read_text(encoding="utf-8").strip()
@@ -95,14 +105,31 @@ def _memory_block(user_id: str, account: str) -> str:
         return ""
 
 
+def _resolve_shop(user_id: str = None, account: str = None, shop: str = None) -> str:
+    """Khoá não bot theo SHOP: shop truyền thẳng (trang Test bot theo workspace)
+    thắng; không có → tra tenant của hội thoại (multi-tenant). Lỗi → 'default'."""
+    if shop:
+        return shop
+    if not user_id:
+        return "default"
+    try:
+        from app.core import tenant as _tenant
+        return _tenant.shop_key(_tenant.tenant_of_conv(account or "", user_id))
+    except Exception:
+        return "default"
+
+
 def _compose_system(user_message: str, history: list,
-                    user_id: str = None, account: str = None) -> tuple:
+                    user_id: str = None, account: str = None,
+                    shop: str = None) -> tuple:
     """Ghép system prompt + thông tin chẩn đoán (cho trang Test bot).
     Chế độ LAI: persona (ngắn) + DỮ LIỆU SHOP tra theo câu hỏi (RAG) + TRÍ NHỚ
     KHÁCH (CRM) + quy ước kỹ thuật. Prompt cũ (không marker): giữ nguyên + memory.
+    MULTI-TENANT: persona + tri thức lấy theo SHOP của hội thoại.
     Trả (system_str, debug) — debug = {mode, chunks[], system_chars}."""
+    shop = _resolve_shop(user_id, account, shop)
     memory = _memory_block(user_id, account)
-    base = _load_system_prompt()
+    base = _load_system_prompt(shop)
     if not base.startswith(HYBRID_MARKER):
         system = _today_context() + base + (("\n\n" + memory) if memory else "")
         return system, {"mode": "legacy", "chunks": [], "system_chars": len(system)}
@@ -117,7 +144,7 @@ def _compose_system(user_message: str, history: list,
             prev_user = str(m.get("content") or "")
             break
     # Kho nhỏ → nhồi TOÀN BỘ (0 tra trượt); kho lớn → retrieve top-k liên quan.
-    hits, kb_mode = knowledge.context_chunks(f"{prev_user}\n{user_message}".strip())
+    hits, kb_mode = knowledge.context_chunks(f"{prev_user}\n{user_message}".strip(), shop=shop)
     kb_block = knowledge.format_block(hits)
     parts = [_today_context() + persona]
     if kb_block:
@@ -131,6 +158,7 @@ def _compose_system(user_message: str, history: list,
     return system, {
         "mode": "hybrid",
         "kb_mode": kb_mode,   # 'full' (nhồi hết) | 'retrieval' (tra top-k) | 'empty'
+        "shop": shop,         # não bot của shop nào (multi-tenant)
         "chunks": [{"title": h.get("title") or "(không tiêu đề)"} for h in hits],
         "system_chars": len(system),
     }
@@ -222,10 +250,11 @@ def analyze_message(user_message: str, history: list[dict],
     return _parse_ai_output(_call_ai(messages))
 
 
-def analyze_with_debug(user_message: str, history: list[dict]) -> dict:
+def analyze_with_debug(user_message: str, history: list[dict], shop: str = None) -> dict:
     """Như analyze_message nhưng kèm 'debug' (mode, mẩu tri thức đã tra, cỡ context)
-    — dùng cho trang Test bot của shop, KHÔNG lưu session, không gửi kênh nào."""
-    system, dbg = _compose_system(user_message, history)
+    — dùng cho trang Test bot của shop, KHÔNG lưu session, không gửi kênh nào.
+    shop: multi-tenant — test bằng NÃO của shop đang đăng nhập."""
+    system, dbg = _compose_system(user_message, history, shop=shop)
     messages = [{"role": "system", "content": system}]
     messages += list(history)
     messages.append({"role": "user", "content": user_message})

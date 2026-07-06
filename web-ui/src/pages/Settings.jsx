@@ -141,6 +141,9 @@ export default function Settings() {
           </div>
         </form>
 
+        {/* Quản trị nền tảng — chỉ CHỦ NỀN TẢNG (tự ẩn nếu API trả 403) */}
+        {!staff && <PlatformAdminCard />}
+
         {/* Liên hệ khẩn cấp & Thông báo — chỉ CHỦ shop */}
         {!staff && <NotifyCard />}
 
@@ -210,6 +213,65 @@ export default function Settings() {
           </button>
         </div>
       </main>
+    </div>
+  );
+}
+
+/* 🛠 Quản trị NỀN TẢNG — chỉ chủ nền tảng (tài khoản đầu tiên) thấy: danh sách
+   MỌI shop đã đăng ký + gói + mức dùng. Shop thường gọi API bị 403 → card tự ẩn. */
+const TIER_LABEL = { trial: "Dùng thử", starter: "Starter", pro: "Pro", business: "Business" };
+
+function PlatformAdminCard() {
+  const [data, setData] = useState(null);   // null=tải | {shops} | "hidden"
+
+  useEffect(() => {
+    import("../notifyApi.js"); // giữ chunk chung; fetch trực tiếp bằng authApi pattern
+    (async () => {
+      try {
+        const { HOST } = await import("../apiConfig.js");
+        const { getToken } = await import("../auth.js");
+        const r = await fetch(HOST.bridge + "/admin/shops", {
+          headers: { Authorization: `Bearer ${getToken()}` },
+        });
+        if (!r.ok) { setData("hidden"); return; }
+        const b = await r.json();
+        setData(b?.ok ? b : "hidden");
+      } catch { setData("hidden"); }
+    })();
+  }, []);
+
+  if (data === null || data === "hidden") return null;
+
+  return (
+    <div className="panel set-card" style={{ marginTop: 16 }}>
+      <h3 style={{ fontSize: 17, marginBottom: 4 }}>🛠 Quản trị nền tảng</h3>
+      <p className="hint" style={{ marginBottom: 12 }}>
+        Toàn bộ <b>{data.total}</b> shop trên hệ thống (chỉ bạn — chủ nền tảng — thấy mục này).
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table className="ad-table">
+          <thead>
+            <tr><th>Shop</th><th>Gói</th><th>Hết hạn</th><th>Lượt AI</th><th>Hội thoại</th><th>Đơn</th><th>NV</th><th>Hoạt động cuối</th></tr>
+          </thead>
+          <tbody>
+            {data.shops.map((s) => (
+              <tr key={s.username}>
+                <td>
+                  <b>{s.shop_name}</b>{s.is_platform_admin ? " ⭐" : ""}
+                  <div className="hint" style={{ fontSize: 12 }}>{s.username}</div>
+                </td>
+                <td>{TIER_LABEL[s.tier] || s.tier || "—"}</td>
+                <td>{s.lifetime ? "Vĩnh viễn" : (s.expires_at ? s.expires_at.slice(0, 10) : "—")}</td>
+                <td>{s.ai_used}</td>
+                <td>{s.conversations}</td>
+                <td>{s.orders}</td>
+                <td>{s.staff_count}</td>
+                <td>{s.last_activity ? s.last_activity.slice(0, 16).replace("T", " ") : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -75,12 +75,19 @@ def register_prompt_routes(app):
             return None, ({"ok": False, "error": "Phiên hết hạn — đăng nhập lại"}, 401)
         return u, None
 
+    def _shop(u) -> str:
+        """Khoá NÃO BOT của user đăng nhập (multi-tenant): chủ nền tảng giữ não
+        'default' cũ; shop khác dùng não riêng theo username chủ workspace."""
+        from app.core import tenant
+        from app.web_api.auth_api import workspace_of
+        return tenant.shop_key(workspace_of(u))
+
     @app.route("/prompt/current")
     def prompt_current():
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, **prompt_builder.current()}
+        return {"ok": True, **prompt_builder.current(shop=_shop(u))}
 
     @app.route("/prompt/template")
     def prompt_template():
@@ -120,7 +127,7 @@ def register_prompt_routes(app):
         if chunks is not None and not isinstance(chunks, list):
             return {"ok": False, "error": "chunks phải là danh sách"}, 400
         try:
-            r = prompt_builder.apply(data.get("prompt") or "", chunks=chunks)
+            r = prompt_builder.apply(data.get("prompt") or "", chunks=chunks, shop=_shop(u))
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         log.info(f"[prompt] {u['username']} ĐÃ ÁP DỤNG bộ não mới ({r['mode']}, {r['chunk_count']} mẩu)")
@@ -131,7 +138,7 @@ def register_prompt_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, "chunks": knowledge.list_chunks()}
+        return {"ok": True, "chunks": knowledge.list_chunks(shop=_shop(u))}
 
     # ── Bot học từ hội thoại — hàng chờ duyệt ────────────────────────
 
@@ -141,8 +148,8 @@ def register_prompt_routes(app):
         if err:
             return err
         return {"ok": True,
-                "suggestions": knowledge_learn.list_suggestions("pending"),
-                "pending": knowledge_learn.count_pending()}
+                "suggestions": knowledge_learn.list_suggestions("pending", shop=_shop(u)),
+                "pending": knowledge_learn.count_pending(shop=_shop(u))}
 
     @app.route("/prompt/suggestions/<int:sid>/approve", methods=["POST"])
     def prompt_suggestion_approve(sid):
@@ -189,7 +196,7 @@ def register_prompt_routes(app):
             if isinstance(m, dict) and m.get("role") in ("user", "assistant")
         ][-TEST_HISTORY_MAX:]
         try:
-            out = claude_ai.analyze_with_debug(message, history)
+            out = claude_ai.analyze_with_debug(message, history, shop=_shop(u))
         except Exception as e:
             log.error(f"[prompt] test lỗi: {e}", exc_info=True)
             return {"ok": False, "error": f"Gọi AI thất bại: {e}"}, 502
@@ -203,6 +210,6 @@ def register_prompt_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, **prompt_builder.restore_default()}
+        return {"ok": True, **prompt_builder.restore_default(shop=_shop(u))}
 
     return app
