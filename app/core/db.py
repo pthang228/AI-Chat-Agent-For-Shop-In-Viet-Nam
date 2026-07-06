@@ -337,6 +337,9 @@ class Db:
             # ai_model = model shop chọn; usage_* = bật/tắt, giới hạn đ/tháng,
             # đã tiêu bao nhiêu trong kỳ (usage_period = YYYY-MM)
             ("billing", "ai_model",      "TEXT NOT NULL DEFAULT ''"),
+            # Model AI riêng CHO TỪNG CHATBOT (user_apps) — rỗng = dùng model
+            # mức shop (billing.ai_model). Xem ai_models.model_for().
+            ("user_apps", "ai_model",    "TEXT NOT NULL DEFAULT ''"),
             ("billing", "usage_enabled", "INTEGER NOT NULL DEFAULT 0"),
             ("billing", "usage_limit",   "INTEGER NOT NULL DEFAULT 0"),
             ("billing", "usage_spent",   "INTEGER NOT NULL DEFAULT 0"),

@@ -179,15 +179,17 @@ def _build_system_prompt(user_message: str, history: list,
     return _compose_system(user_message, history, user_id, account)[0]
 
 
-def _call_ai(messages: list, owner: str | None = None) -> str:
-    # MULTI-MODEL: shop đã chọn model (billing.ai_model) → gọi qua ai_models
-    # (tự ghi token vào billing để hiển thị usage + trừ ví khi vượt quota).
+def _call_ai(messages: list, owner: str | None = None, account: str | None = None) -> str:
+    # MULTI-MODEL: shop chọn model (billing.ai_model) hoặc PER-APP theo kênh
+    # (user_apps.ai_model — tra qua account) → gọi qua ai_models (tự ghi token
+    # vào billing để hiển thị usage + trừ ví khi vượt quota).
     # Lỗi/không chọn → rơi xuống chuỗi mặc định DeepSeek → Groq như cũ.
     if owner:
         try:
             from app.core import ai_models
-            if ai_models.model_for_owner(owner) != ai_models.DEFAULT_MODEL:
-                return ai_models.chat(messages, owner=owner, timeout=Config.AI_TIMEOUT)
+            if ai_models.model_for(owner, account) != ai_models.DEFAULT_MODEL:
+                return ai_models.chat(messages, owner=owner, account=account,
+                                      timeout=Config.AI_TIMEOUT)
         except Exception as e:
             print(f"[AI] Model shop lỗi ({e}) → dùng mặc định")
 
@@ -277,7 +279,7 @@ def analyze_message(user_message: str, history: list[dict],
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
     owner = _owner_of_shop(_resolve_shop(user_id, account))
-    return _parse_ai_output(_call_ai(messages, owner=owner))
+    return _parse_ai_output(_call_ai(messages, owner=owner, account=account))
 
 
 def analyze_with_debug(user_message: str, history: list[dict], shop: str = None) -> dict:

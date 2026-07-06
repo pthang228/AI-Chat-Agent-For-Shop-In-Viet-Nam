@@ -85,7 +85,19 @@ def fetch_link(url: str) -> dict:
 
 # ── Gọi AI sinh prompt (max_tokens lớn hơn _call_ai thường) ─────────
 
-def _call_ai_long(messages: list) -> str:
+def _call_ai_long(messages: list, model_key: str = None, owner: str = None) -> str:
+    # Shop chọn model để DẠY → thử ai_models.chat trước (tự ghi token vào billing);
+    # lỗi → rơi xuống chuỗi DeepSeek→Groq cũ (giữ nguyên hành vi mặc định).
+    if model_key:
+        try:
+            from app.core import ai_models
+            r = ai_models.chat(messages, owner=owner, model_key=model_key,
+                               max_tokens=6000, temperature=0.4,
+                               timeout=Config.AI_LONG_TIMEOUT)
+            log.info(f"[PromptBuilder] dùng model shop chọn: {model_key}")
+            return r
+        except Exception as e:
+            log.error(f"[PromptBuilder] model {model_key} lỗi ({e}) → fallback mặc định")
     if Config.DEEPSEEK_API_KEY:
         try:
             client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com",
@@ -206,9 +218,13 @@ def _norm_links(links: list) -> list:
     return out
 
 
-def generate(links: list, instructions: str) -> dict:
+def generate(links: list, instructions: str, model: str = None, owner: str = None,
+             extra_context: str = None) -> dict:
     """Tải các link + gộp hướng dẫn → AI viết persona + mẩu tri thức.
     links: string URL hoặc {url, note} (note = shop mô tả link, tuỳ chọn).
+    model: key trong ai_models.CATALOG shop chọn để DẠY (None = mặc định hệ thống);
+    owner: username chủ shop (ghi token usage khi dùng model);
+    extra_context: dữ liệu cấu hình shop hệ thống tự đính kèm (prompt_api gom).
     Trả {draft, chunks, mode, sources} — chunks rỗng nghĩa là chế độ cũ."""
     results = []
     for url, note in _norm_links(links):
@@ -218,7 +234,8 @@ def generate(links: list, instructions: str) -> dict:
             text = ("Link Google Sheets (lịch/bảng tính)"
                     + (f" — shop mô tả: {note}." if note else ".")
                     + " Không đọc trực tiếp được nội dung; nếu là lịch đặt chỗ hãy nhắc"
-                      " shop dán vào mục Lịch đặt chỗ (Google Sheets) bên dưới trang Dạy AI.")
+                      " shop chọn mục đích '📅 Lịch đặt chỗ' cho link đó ở trang Dạy AI"
+                      " để bot tra lịch trực tiếp.")
             results.append({"url": url, "ok": True, "text": text, "note": ""})
             continue
         r = fetch_link(url)
@@ -241,6 +258,12 @@ def generate(links: list, instructions: str) -> dict:
     if not ok_parts and not instructions:
         raise ValueError("Cần ít nhất 1 link đọc được hoặc 1 đoạn hướng dẫn")
 
+    # Cấu hình shop hệ thống tự gom (liên hệ khẩn, câu mẫu, lịch, bộ ảnh…) —
+    # thêm như 1 nguồn dữ liệu bổ sung ngay sau dữ liệu link.
+    shop_data = "".join(ok_parts) if ok_parts else "(không có link nào đọc được)"
+    if (extra_context or "").strip():
+        shop_data += f"\n===== CẤU HÌNH SHOP (tự động) =====\n{extra_context.strip()}\n"
+
     # Tham chiếu MẪU CHUẨN generic (không phải não mẫu homestay) → sinh prompt cho spa/salon/
     # quán ăn… không bị "lây" số liệu homestay. Thiếu file mẫu → dùng tạm mặc định.
     ref_prompt = template() or (DEFAULT_FILE.read_text(encoding="utf-8") if DEFAULT_FILE.exists() else "")
@@ -250,7 +273,7 @@ def generate(links: list, instructions: str) -> dict:
         f"{ref_prompt[:20000]}\n"
         "-----------------------------------------------\n\n"
         "DỮ LIỆU CỦA SHOP (từ các link):\n"
-        + ("".join(ok_parts) if ok_parts else "(không có link nào đọc được)")
+        + shop_data
         + "\n\nHƯỚNG DẪN CỦA CHỦ SHOP:\n"
         + (instructions or "(không có)")
         + "\n\nHãy tạo đúng 2 phần ===PERSONA=== và ===KNOWLEDGE=== theo NHIỆM VỤ."
@@ -258,7 +281,7 @@ def generate(links: list, instructions: str) -> dict:
     raw = _call_ai_long([
         {"role": "system", "content": _META_PROMPT},
         {"role": "user", "content": user_msg},
-    ]).strip()
+    ], model_key=model, owner=owner).strip()
     # AI đôi khi vẫn bọc ```...``` toàn bộ → bóc ra
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw).strip()

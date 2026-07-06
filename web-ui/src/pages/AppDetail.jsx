@@ -3,6 +3,9 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { currentUser } from "../auth.js";
 import { logoutAndStopBots } from "../session.js";
 import { getApps } from "../store.js";
+import { getToken } from "../auth.js";
+import { authApi } from "../authApi.js";
+import { billing as billingApi } from "../billingApi.js";
 import { brain } from "../brainApi.js";
 import ZaloConnect from "../components/ZaloConnect.jsx";
 import MetaConnect from "../components/MetaConnect.jsx";
@@ -107,6 +110,8 @@ export default function AppDetail() {
           <AiCard channel={app.channel} />
         </div>
 
+        <AppModelCard appId={app.id} initial={app.ai_model || ""} />
+
         <div className="tabs">
           <button className={"tab" + (tab === "connect" ? " active" : "")} onClick={() => setTab("connect")}>Kết nối</button>
           <button className={"tab" + (tab === "chats" ? " active" : "")} onClick={() => setTab("chats")}>Khách hàng</button>
@@ -119,6 +124,55 @@ export default function AppDetail() {
           {tab === "stats" && <StatsPanel channel={statsChannel} />}
         </div>
       </main>
+    </div>
+  );
+}
+
+/* 🧠 Mô hình AI riêng cho bot này (per-app) — rỗng = dùng model chung của shop
+   (chọn ở Gói dịch vụ). Catalog + giá lấy từ /billing/me. */
+function AppModelCard({ appId, initial }) {
+  const [models, setModels] = useState(null);   // null=tải | mảng | "offline"
+  const [val, setVal] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    billingApi.me().then((r) => {
+      if (r.ok && Array.isArray(r.body?.ai_models)) setModels(r.body.ai_models);
+      else setModels("offline");
+    });
+  }, []);
+  useEffect(() => { setVal(initial); }, [initial]);
+
+  // Giá ngắn gọn: "(in 6.500₫ / out 9.500₫ mỗi 1M token)"
+  const price = (m) =>
+    `(in ${(m.in_vnd ?? 0).toLocaleString("vi-VN")}₫ / out ${(m.out_vnd ?? 0).toLocaleString("vi-VN")}₫ mỗi 1M token)`;
+
+  async function save(next) {
+    setVal(next); setMsg(""); setBusy(true);
+    const r = await authApi.setAppAiModel(getToken(), appId, next);
+    setBusy(false);
+    if (r.ok) setMsg(next ? "✅ Đã lưu — bot này dùng model riêng." : "✅ Đã lưu — bot dùng model chung của shop.");
+    else { setVal(initial); setMsg("❌ " + (r.body?.error || "Lưu thất bại — server 5005 cần restart bản mới?")); }
+  }
+
+  if (models === "offline") return null;   // chưa kết nối server → không chiếm chỗ
+  return (
+    <div className="panel set-card" style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 15, marginBottom: 4 }}>🧠 Mô hình AI cho bot này</h3>
+      <p className="hint" style={{ marginBottom: 8 }}>
+        Chọn model riêng cho chatbot này — để trống thì dùng model chung của shop (chọn ở Gói dịch vụ).
+      </p>
+      <select value={val} disabled={busy || models === null}
+              onChange={(e) => save(e.target.value)} style={{ maxWidth: 460 }}>
+        <option value="">— Dùng model chung của shop —</option>
+        {(Array.isArray(models) ? models : []).map((m) => (
+          <option key={m.key} value={m.key} disabled={!m.available}>
+            {m.label} {price(m)}{m.available ? "" : " — chưa có key"}
+          </option>
+        ))}
+      </select>
+      {msg && <div className="savemsg" style={{ marginTop: 8 }}>{msg}</div>}
     </div>
   );
 }

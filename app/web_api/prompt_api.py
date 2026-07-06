@@ -3,8 +3,10 @@ API Prompt Builder — gắn vào bridge (5005). Tất cả cần Bearer token.
 
   GET  /prompt/current                       → bộ não đang dùng (custom/default, mode lai/cũ)
   GET  /prompt/template                      → prompt mẫu chuẩn generic (shop chỉnh tay)
-  POST /prompt/generate {links[], instructions} → AI viết persona + mẩu tri thức (chậm 20-60s)
-                                               (links: string URL hoặc {url, note})
+  POST /prompt/generate {links[], instructions, model?} → AI viết persona + mẩu tri thức (chậm 20-60s)
+                                               (links: string URL hoặc {url, note};
+                                                model: key ai_models shop chọn để dạy, rỗng = mặc định;
+                                                hệ thống tự đính kèm cấu hình shop — TRỪ tài khoản ngân hàng)
   POST /prompt/apply {prompt, chunks?}       → shop ĐỒNG Ý → lưu, bot dùng ngay
                                                (có chunks → chế độ LAI: persona + RAG)
   GET  /prompt/knowledge                     → danh sách mẩu tri thức đang dùng
@@ -67,6 +69,63 @@ def _test_photos(message: str, out: dict) -> list:
 log = logging.getLogger("prompt_api")
 
 
+def _shop_config_context(ws: str) -> str:
+    """Gom DỮ LIỆU CẤU HÌNH SHOP (hệ thống tự đính kèm khi Dạy AI) theo workspace:
+    liên hệ khẩn cấp, câu trả lời mẫu, lịch đặt chỗ đã nối, bộ ảnh. TUYỆT ĐỐI
+    KHÔNG gồm tài khoản ngân hàng/QR (bank_*). Lỗi bảng nào bỏ qua bảng đó."""
+    db = get_db()
+    parts = []
+    # (a) Liên hệ khẩn cấp (notify_config)
+    try:
+        from app.core import notify
+        cfg = notify.get_config(ws)
+        contact = [x for x in (
+            f"SĐT khẩn: {cfg['emergency_phone']}" if cfg["emergency_phone"] else "",
+            f"Zalo: {cfg['emergency_zalo']}" if cfg["emergency_zalo"] else "",
+            f"Telegram: {cfg['emergency_tele']}" if cfg["emergency_tele"] else "") if x]
+        if contact:
+            parts.append("LIÊN HỆ KHẨN CẤP CỦA SHOP (bot đưa cho khách khi cần, "
+                         f"chế độ đưa số: {cfg['share_mode']}): " + " · ".join(contact))
+    except Exception:
+        pass
+    # (b) Câu trả lời mẫu của shop (tối đa 30)
+    try:
+        rows = db.query("SELECT title, content FROM canned_replies "
+                        "WHERE tenant=? ORDER BY id LIMIT 30", (ws,))
+        if rows:
+            parts.append("CÂU TRẢ LỜI MẪU CHỦ SHOP ĐÃ SOẠN (tham khảo giọng điệu + nội dung):\n"
+                         + "\n".join(f"- {r['title']}: {r['content']}" for r in rows))
+    except Exception:
+        pass
+    # (c) Lịch đặt chỗ (Google Sheets) đã nối — bot tra trực tiếp khi khách hỏi
+    try:
+        rows = db.query("SELECT name FROM shop_sheets WHERE tenant=? ORDER BY id", (ws,))
+        if rows:
+            parts.append("SHOP ĐÃ NỐI GOOGLE SHEET LỊCH ĐẶT CHỖ (bot tự tra khi khách hỏi "
+                         "lịch trống — KHÔNG cần bịa lịch): "
+                         + ", ".join(r["name"] or "Chi nhánh" for r in rows))
+    except Exception:
+        pass
+    # (d) Bộ ảnh trong Thư viện ảnh — bot gửi khi khách hỏi trúng tên/keywords
+    try:
+        import json as _json
+        rows = db.query("SELECT name, keywords FROM photo_sets "
+                        "WHERE tenant=? ORDER BY created_at", (ws,))
+        lines = []
+        for r in rows:
+            try:
+                kw = ", ".join(_json.loads(r["keywords"] or "[]"))
+            except Exception:
+                kw = ""
+            lines.append(f"- {r['name']}" + (f" (khách hay hỏi: {kw})" if kw else ""))
+        if lines:
+            parts.append("BỘ ẢNH SHOP ĐÃ UPLOAD (bot tự gửi ảnh khi khách hỏi trúng):\n"
+                         + "\n".join(lines))
+    except Exception:
+        pass
+    return "\n\n".join(parts)
+
+
 def register_prompt_routes(app):
     db = get_db()
 
@@ -110,8 +169,20 @@ def register_prompt_routes(app):
         # Mỗi phần tử: string URL hoặc {url, note} (note = shop mô tả link, tuỳ chọn)
         if not all(isinstance(it, (str, dict)) for it in links):
             return {"ok": False, "error": "mỗi link phải là chuỗi hoặc {url, note}"}, 400
+        # Model shop chọn để DẠY (tuỳ chọn) — rỗng = mặc định hệ thống
+        from app.core import ai_models
+        model = (data.get("model") or "").strip()
+        if model and model not in ai_models.CATALOG:
+            return {"ok": False, "error": "Mô hình không hợp lệ"}, 400
+        if model and model not in ai_models.available_keys():
+            return {"ok": False, "error": "Mô hình này máy chủ chưa cấu hình API key"}, 400
+        # Gom cấu hình shop (liên hệ khẩn, câu mẫu, lịch, bộ ảnh — KHÔNG bank_*)
+        from app.web_api.auth_api import workspace_of
+        ws = workspace_of(u)
+        extra_context = _shop_config_context(ws)
         try:
-            r = prompt_builder.generate(links, instructions)
+            r = prompt_builder.generate(links, instructions, model=model or None,
+                                        owner=ws, extra_context=extra_context)
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         except Exception as e:

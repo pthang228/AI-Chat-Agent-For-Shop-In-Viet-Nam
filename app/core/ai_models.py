@@ -96,12 +96,40 @@ def model_for_owner(owner: str | None) -> str:
     return DEFAULT_MODEL
 
 
+# account (kênh nhận tin) → channel trong user_apps — để tra model PER-APP.
+# Zalo cá nhân dùng account="1" (số tài khoản) nên map cả "1" lẫn "zalo".
+ACCOUNT_CHANNEL = {
+    "1": "zalo", "zalo": "zalo", "meta": "meta", "instagram": "meta",
+    "telegram": "telegram", "tiktok": "tiktok", "shopee": "shopee",
+    "zalooa": "zalooa", "webchat": "webchat",
+}
+
+
+def model_for(owner: str | None, account: str | None = None) -> str:
+    """Model cho 1 lượt gọi: override PER-APP (user_apps.ai_model theo kênh của
+    account) thắng; không có/không hợp lệ → model mức SHOP (model_for_owner)."""
+    if owner and account:
+        try:
+            ch = ACCOUNT_CHANNEL.get(str(account).strip().lower())
+            if ch:
+                from app.core.db import get_db
+                rows = get_db().query(
+                    "SELECT ai_model FROM user_apps WHERE username=? AND channel=? "
+                    "AND ai_model!='' ORDER BY created_at LIMIT 1", (owner, ch))
+                key = (rows[0]["ai_model"] if rows else "") or ""
+                if key in CATALOG and _api_key(CATALOG[key]["provider"]):
+                    return key
+        except Exception:
+            pass
+    return model_for_owner(owner)
+
+
 def chat(messages: list, owner: str | None = None, model_key: str | None = None,
          max_tokens: int = 1024, temperature: float = 0.7,
-         timeout: float | None = None) -> str:
-    """Gọi chat theo model CỦA SHOP + ghi token vào billing. Lỗi → raise
-    (caller tự fallback — claude_ai giữ chuỗi DeepSeek→Groq cũ)."""
-    key = model_key or model_for_owner(owner)
+         timeout: float | None = None, account: str | None = None) -> str:
+    """Gọi chat theo model CỦA SHOP (hoặc PER-APP nếu có account) + ghi token vào
+    billing. Lỗi → raise (caller tự fallback — claude_ai giữ chuỗi DeepSeek→Groq cũ)."""
+    key = model_key or model_for(owner, account)
     m = CATALOG.get(key) or CATALOG[DEFAULT_MODEL]
     api_key = _api_key(m["provider"])
     if not api_key:

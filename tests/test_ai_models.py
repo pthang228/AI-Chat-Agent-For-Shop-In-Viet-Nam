@@ -8,6 +8,8 @@ test_ai_models.py — MULTI-MODEL AI + tính theo usage khi vượt quota:
      + cộng usage_spent; reset theo tháng
   D. can_reply: hết quota → False; bật usage còn hạn mức + ví → True; chạm limit → False
   E. API /billing/ai-model + /billing/usage: validate + lưu
+  F. model_for(owner, account): override PER-APP (user_apps.ai_model) theo kênh
+  G. API /auth/apps/<id>/ai-model: đặt/xoá model riêng từng chatbot
 
 Chạy TỪ GỐC: python -m tests.test_ai_models
 """
@@ -133,6 +135,43 @@ r = cli.post("/billing/usage", headers=H, json={"enabled": True, "limit": 0})
 check(r.status_code == 400, "E6 bật mà limit 0 → 400")
 r = cli.post("/billing/usage", headers=H, json={"enabled": False, "limit": 0})
 check(r.status_code == 200 and not r.json["usage_enabled"], "E7 tắt usage OK")
+
+print("F. model_for per-app (user_apps.ai_model)")
+db.execute("UPDATE billing SET ai_model='' WHERE username=?", (U,))
+check(am.model_for(U, "1") == am.DEFAULT_MODEL, "F1 không override → model shop (mặc định)")
+db.execute("INSERT INTO user_apps(id, username, name, channel, created_at, ai_model) "
+           "VALUES (?,?,?,?,?,?)",
+           ("app-zalo-1", U, "Bot Zalo", "zalo", "2026-01-01", "gpt-4o-mini"))
+check(am.model_for(U, "1") == "gpt-4o-mini", "F2 account '1' → kênh zalo → model per-app")
+check(am.model_for(U, "zalo") == "gpt-4o-mini", "F3 account 'zalo' cũng map kênh zalo")
+db.execute("UPDATE billing SET ai_model='gpt-5-mini' WHERE username=?", (U,))
+check(am.model_for(U, "telegram") == "gpt-5-mini", "F4 kênh không override → model shop")
+Config.OPENAI_API_KEY = ""
+check(am.model_for(U, "1") == am.DEFAULT_MODEL, "F5 override thiếu key → mặc định")
+Config.OPENAI_API_KEY = "sk-openai-test"
+db.execute("UPDATE billing SET ai_model='' WHERE username=?", (U,))
+
+print("G. API /auth/apps/<id>/ai-model (model riêng từng chatbot)")
+r = cli.post("/auth/apps", headers=H, json={"name": "Bot Tele", "channel": "telegram"})
+app_id = r.json["app"]["id"]
+r = cli.post(f"/auth/apps/{app_id}/ai-model", headers=H, json={"model": "gpt-4o-mini"})
+check(r.status_code == 200 and r.json["ai_model"] == "gpt-4o-mini", "G1 đặt model per-app OK",
+      r.text[:80])
+r = cli.get("/auth/apps", headers=H)
+_found = [a for a in r.json if a["id"] == app_id]
+check(_found and _found[0]["ai_model"] == "gpt-4o-mini", "G2 GET /auth/apps trả ai_model")
+check(am.model_for(U, "telegram") == "gpt-4o-mini", "G3 model_for thấy override telegram")
+r = cli.post(f"/auth/apps/{app_id}/ai-model", headers=H, json={"model": "model-lạ"})
+check(r.status_code == 400, "G4 model lạ → 400")
+Config.OPENAI_API_KEY = ""
+r = cli.post(f"/auth/apps/{app_id}/ai-model", headers=H, json={"model": "gpt-4o"})
+check(r.status_code == 400, "G5 thiếu key server → 400")
+Config.OPENAI_API_KEY = "sk-openai-test"
+r = cli.post(f"/auth/apps/{app_id}/ai-model", headers=H, json={"model": ""})
+check(r.status_code == 200 and r.json["ai_model"] == "", "G6 model rỗng = xoá override")
+check(am.model_for(U, "telegram") == am.DEFAULT_MODEL, "G7 sau xoá → về model shop")
+r = cli.post("/auth/apps/khong-ton-tai/ai-model", headers=H, json={"model": "gpt-4o-mini"})
+check(r.status_code == 404, "G8 app không tồn tại → 404")
 
 # dọn
 try:

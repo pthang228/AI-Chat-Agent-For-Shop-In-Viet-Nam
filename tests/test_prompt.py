@@ -123,6 +123,28 @@ with patch.object(pb, 'requests') as mreq, \
           and "lịch đặt phòng" in user_msg and r["sources"][0]["ok"],
           "B9 gsheet_note_no_fetch", user_msg[:200])
 
+# Model shop chọn để DẠY + extra_context (cấu hình shop tự đính kèm) → truyền xuống AI
+with patch.object(pb, 'requests') as mreq, \
+     patch.object(pb, '_call_ai_long', return_value=FAKE_PROMPT) as mai:
+    mreq.get.return_value = _resp(text="<p>data</p>")
+    r = pb.generate(["https://x.vn"], "hi", model="gpt-4o-mini", owner="shop@x.vn",
+                    extra_context="LIÊN HỆ KHẨN CẤP CỦA SHOP: 0901")
+    check(mai.call_args[1].get("model_key") == "gpt-4o-mini"
+          and mai.call_args[1].get("owner") == "shop@x.vn",
+          "B10 model_owner_passed", f"{mai.call_args[1]}")
+    user_msg = mai.call_args[0][0][1]["content"]
+    check("===== CẤU HÌNH SHOP (tự động) =====" in user_msg and "0901" in user_msg,
+          "B11 extra_context_included", user_msg[:200])
+
+# _call_ai_long với model_key → đi qua ai_models.chat (max_tokens/temperature dạy AI)
+import app.core.ai_models as am_mod
+with patch.object(am_mod, 'chat', return_value="OK-model") as mchat:
+    out = pb._call_ai_long([{"role": "user", "content": "x"}],
+                           model_key="gpt-4o-mini", owner="o@x.vn")
+    check(out == "OK-model" and mchat.call_args[1]["model_key"] == "gpt-4o-mini"
+          and mchat.call_args[1]["max_tokens"] == 6000,
+          "B12 call_ai_long_uses_ai_models_chat", f"{mchat.call_args}")
+
 print("\n── C. apply / current / restore ──")
 cur = pb.current()
 check(cur["source"] == "default" and len(cur["prompt"]) > 0, "C1 default_initial", cur["source"])
@@ -172,6 +194,38 @@ check(r.status_code == 200 and r.get_json()["draft"] == FAKE_PROMPT.strip(), "D3
 
 r = api.post("/prompt/generate", json={"links": [], "instructions": ""}, headers=H)
 check(r.status_code == 400, "D4 api_generate_empty_400")
+
+# Model không hợp lệ / thiếu key → 400 (không gọi AI)
+r = api.post("/prompt/generate", json={"links": ["https://x.vn"], "instructions": "hi",
+                                       "model": "model-lạ"}, headers=H)
+check(r.status_code == 400, "D4b api_generate_bad_model_400")
+
+# Model hợp lệ (server có key) → truyền model_key + owner vào generate;
+# cấu hình shop (canned reply của workspace) tự đính kèm vào dữ liệu dạy
+from app.core.config import Config as _Cfg
+_old_ds = _Cfg.DEEPSEEK_API_KEY
+_Cfg.DEEPSEEK_API_KEY = "sk-test"
+db.execute("INSERT INTO canned_replies (title, content, created_at, tenant) VALUES (?,?,?,?)",
+           ("Chào khách", "Xin chào bạn iu", "2026-01-01", "p@x.vn"))
+db.execute("UPDATE users SET bank_code='MB', bank_account='9998887776', "
+           "bank_holder='NGUYEN BI MAT' WHERE username='p@x.vn'")
+with patch.object(pb, 'requests') as mreq, \
+     patch.object(pb, '_call_ai_long', return_value=FAKE_PROMPT) as mai:
+    mreq.get.return_value = _resp(text="<p>data</p>")
+    r = api.post("/prompt/generate", json={"links": ["https://x.vn"], "instructions": "hi",
+                                           "model": "deepseek-chat"}, headers=H)
+check(r.status_code == 200 and mai.call_args[1].get("model_key") == "deepseek-chat"
+      and mai.call_args[1].get("owner") == "p@x.vn",
+      "D4c api_generate_model_passed", f"{r.status_code} {mai.call_args[1] if mai.call_args else None}")
+_api_user_msg = mai.call_args[0][0][1]["content"] if mai.call_args else ""
+check("===== CẤU HÌNH SHOP (tự động) =====" in _api_user_msg
+      and "Xin chào bạn iu" in _api_user_msg,
+      "D4d api_generate_shop_config_attached", _api_user_msg[:200])
+# TUYỆT ĐỐI KHÔNG gom tài khoản ngân hàng vào dữ liệu dạy
+check("9998887776" not in _api_user_msg and "NGUYEN BI MAT" not in _api_user_msg,
+      "D4e bank_never_attached")
+_Cfg.DEEPSEEK_API_KEY = _old_ds
+db.execute("DELETE FROM canned_replies WHERE tenant='p@x.vn'")
 
 r = api.post("/prompt/apply", json={"prompt": FAKE_PROMPT}, headers=H)
 check(r.status_code == 200 and r.get_json()["source"] == "custom", "D5 api_apply")

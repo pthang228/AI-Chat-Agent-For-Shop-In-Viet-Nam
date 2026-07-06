@@ -419,10 +419,12 @@ def register_auth_routes(app):
             return err
         # Staff xem app của CHỦ workspace (chỉ đọc — thêm/xoá bị chặn bên dưới)
         rows = db.query(
-            "SELECT id, name, channel, created_at FROM user_apps WHERE username=? ORDER BY created_at",
+            "SELECT id, name, channel, created_at, ai_model FROM user_apps "
+            "WHERE username=? ORDER BY created_at",
             (workspace_of(u),))
         return jsonify([
-            {"id": r["id"], "name": r["name"], "channel": r["channel"], "createdAt": r["created_at"]}
+            {"id": r["id"], "name": r["name"], "channel": r["channel"],
+             "createdAt": r["created_at"], "ai_model": r["ai_model"] or ""}
             for r in rows
         ])
 
@@ -448,6 +450,30 @@ def register_auth_routes(app):
             "INSERT INTO user_apps(id, username, name, channel, created_at) VALUES (?,?,?,?,?)",
             (app_id, u["username"], name, channel, datetime.now().isoformat()))
         return {"ok": True, "app": {"id": app_id, "name": name, "channel": channel}}
+
+    @app.route("/auth/apps/<app_id>/ai-model", methods=["POST"])
+    def auth_apps_ai_model(app_id):
+        """Chọn MÔ HÌNH AI riêng cho 1 chatbot (per-app) — rỗng = xoá override,
+        bot dùng lại model chung của shop (billing.ai_model)."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        if role_of(u) != "owner":
+            return {"ok": False, "error": "Nhân viên không được đổi model"}, 403
+        from app.core import ai_models
+        key = ((request.get_json(force=True, silent=True) or {}).get("model") or "").strip()
+        if key and key not in ai_models.CATALOG:
+            return {"ok": False, "error": "Mô hình không hợp lệ"}, 400
+        if key and key not in ai_models.available_keys():
+            return {"ok": False, "error": "Mô hình này máy chủ chưa cấu hình API key"}, 400
+        # Chỉ chủ workspace sửa app CỦA MÌNH (giống DELETE bên dưới)
+        if not db.query("SELECT 1 FROM user_apps WHERE username=? AND id=?",
+                        (u["username"], app_id)):
+            return {"ok": False, "error": "Không tìm thấy app"}, 404
+        db.execute("UPDATE user_apps SET ai_model=? WHERE username=? AND id=?",
+                   (key, u["username"], app_id))
+        log.info(f"[auth] {u['username']} đổi model app {app_id} → '{key or '(mức shop)'}'")
+        return {"ok": True, "ai_model": key}
 
     @app.route("/auth/apps/<app_id>", methods=["DELETE"])
     def auth_apps_remove(app_id):

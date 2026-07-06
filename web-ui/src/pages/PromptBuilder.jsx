@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { currentUser } from "../auth.js";
+import { currentUser, getToken } from "../auth.js";
+import { HOST } from "../apiConfig.js";
 import { promptApi } from "../promptApi.js";
+import { billing as billingApi } from "../billingApi.js";
 import { IcHome, IcBack } from "../components/icons.jsx";
 import LogoMark from "../components/LogoMark.jsx";
 import BackLink from "../components/BackLink.jsx";
-import { NotifyCard, BankCard, SheetsCard, CannedCard } from "../components/ShopConfigCards.jsx";
+import { NotifyCard, BankCard, CannedCard } from "../components/ShopConfigCards.jsx";
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -158,9 +160,13 @@ export default function PromptBuilder() {
   const [showCur, setShowCur] = useState(false);
   const [tpl, setTpl] = useState("");          // prompt mẫu chuẩn
   const [showTpl, setShowTpl] = useState(false);
-  const [links, setLinks] = useState([{ url: "", note: "" }]);   // link dữ liệu + mô tả tuỳ chọn
+  // Link dữ liệu: purpose "data" = AI đọc nội dung · "booking" = Google Sheet
+  // lịch đặt chỗ (tự nối vào /sheets để bot tra trực tiếp, KHÔNG đưa vào generate)
+  const [links, setLinks] = useState([{ url: "", note: "", purpose: "data" }]);
   const [guide, setGuide] = useState({});      // câu trả lời form gợi ý
   const [extra, setExtra] = useState("");      // hướng dẫn thêm tự do
+  const [models, setModels] = useState([]);    // catalog model (từ /billing/me)
+  const [genModel, setGenModel] = useState(""); // model dùng để DẠY ("" = mặc định)
   const [draft, setDraft] = useState(null);    // persona AI vừa tạo (chờ duyệt)
   const [chunks, setChunks] = useState([]);    // mẩu tri thức đi kèm (chế độ lai)
   const [gaps, setGaps] = useState([]);        // AI đề nghị bổ sung
@@ -175,6 +181,11 @@ export default function PromptBuilder() {
     else setCur("offline");
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    billingApi.me().then((r) => {
+      if (r.ok && Array.isArray(r.body?.ai_models)) setModels(r.body.ai_models);
+    });
+  }, []);
 
   async function loadTemplate() {
     if (tpl) { setShowTpl((v) => !v); return; }
@@ -189,8 +200,8 @@ export default function PromptBuilder() {
   }
 
   function setLink(i, k, v) { setLinks((ls) => ls.map((x, j) => (j === i ? { ...x, [k]: v } : x))); }
-  function addLink() { setLinks((ls) => [...ls, { url: "", note: "" }]); }
-  function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ url: "", note: "" }])); }
+  function addLink() { setLinks((ls) => [...ls, { url: "", note: "", purpose: "data" }]); }
+  function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ url: "", note: "", purpose: "data" }])); }
 
   function setG(key, v) { setGuide((g) => ({ ...g, [key]: v })); }
   function fillSample(name) {
@@ -211,27 +222,65 @@ export default function PromptBuilder() {
     return parts.join("\n\n");
   }
 
+  // Link "Lịch đặt chỗ" → nối vào /sheets (bot tra trực tiếp), KHÔNG đưa vào generate.
+  // 409 (trùng) coi như đã nối; 400 (không phải link Google Sheets) → báo lỗi rõ,
+  // không chặn các link khác. Trả {lines (dòng thêm vào hướng dẫn), warns}.
+  async function connectBookingSheets(bookings) {
+    const lines = [], warns = [];
+    for (const l of bookings) {
+      const name = (l.note || "").trim() || "Chi nhánh";
+      try {
+        const r = await fetch(HOST.bridge + "/sheets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+          body: JSON.stringify({ name, link: l.url }),
+        });
+        const b = await r.json().catch(() => null);
+        if (b?.ok || r.status === 409) {
+          lines.push(`Shop đã nối Google Sheet lịch đặt chỗ (bot tự tra khi khách hỏi lịch trống): ${name}`);
+        } else {
+          warns.push(`⚠️ Link lịch đặt chỗ "${l.url}" chưa nối được: ${b?.error || "lỗi máy chủ"}`);
+        }
+      } catch {
+        warns.push(`⚠️ Link lịch đặt chỗ "${l.url}" chưa nối được: không kết nối được máy chủ (5005)`);
+      }
+    }
+    return { lines, warns };
+  }
+
   async function doGenerate() {
-    const instructions = buildInstructions();
-    const linkList = links
-      .filter((l) => l.url.trim())
+    let instructions = buildInstructions();
+    const filled = links.filter((l) => l.url.trim());
+    const linkList = filled
+      .filter((l) => (l.purpose || "data") !== "booking")
       .map((l) => ({ url: l.url.trim(), note: (l.note || "").trim() }));
-    if (!instructions && linkList.length === 0) {
+    const bookings = filled.filter((l) => (l.purpose || "data") === "booking");
+    if (!instructions && linkList.length === 0 && bookings.length === 0) {
       setMsg("❌ Điền ít nhất một ô (hoặc dán 1 link) rồi hãy tạo nhé.");
       return;
     }
     setMsg(""); setDraft(null); setChunks([]); setGaps([]); setSources([]);
     setBusy(true);
-    const r = await promptApi.generate(linkList, instructions);
+    // Nối các sheet lịch đặt chỗ TRƯỚC, rồi mới nhờ AI soạn não
+    const { lines, warns } = await connectBookingSheets(bookings);
+    if (lines.length) instructions = [instructions, ...lines].filter(Boolean).join("\n\n");
+    if (!instructions && linkList.length === 0) {
+      setBusy(false);
+      setMsg(warns.join("\n") || "❌ Không còn dữ liệu nào để dạy — kiểm tra lại link nhé.");
+      return;
+    }
+    const r = await promptApi.generate(linkList, instructions, genModel);
     setBusy(false);
+    const warnTail = warns.length ? "\n" + warns.join("\n") : "";
     if (r.ok && r.body?.draft) {
       setDraft(r.body.draft);
       setChunks(r.body.chunks || []);
       setGaps(r.body.gaps || []);
       setSources(r.body.sources || []);
+      if (warnTail) setMsg(warnTail.trim());
       setTimeout(() => document.querySelector(".draft-box")?.scrollIntoView({ behavior: "smooth" }), 80);
     } else {
-      setMsg("❌ " + (r.body?.error || (r.status === 0 ? "Không kết nối được máy chủ (5005)" : "Tạo thất bại")));
+      setMsg("❌ " + (r.body?.error || (r.status === 0 ? "Không kết nối được máy chủ (5005)" : "Tạo thất bại")) + warnTail);
     }
   }
 
@@ -387,21 +436,40 @@ export default function PromptBuilder() {
         {/* Bước 2: link dữ liệu (tuỳ chọn) */}
         <div className="panel set-card" style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>2️⃣ Link dữ liệu <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn — có link thì AI đọc thêm)</span></h3>
-          <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets đã "Xuất bản lên web"… Link phải mở được công khai.</p>
+          <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets đã "Xuất bản lên web"… Link phải mở được công khai.
+            Chọn <b>Mục đích</b>: lịch đặt chỗ (Google Sheet) sẽ được nối để bot <b>tra lịch trực tiếp</b> khi khách hỏi.</p>
           {links.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <input style={{ flex: "1 1 260px" }} placeholder="https://…" value={l.url}
                      onChange={(e) => setLink(i, "url", e.target.value)} />
-              <input style={{ flex: "1 1 220px" }}
-                     placeholder="Mô tả link này (tuỳ chọn) — vd: bảng giá phòng, menu món…"
+              <input style={{ flex: "1 1 200px" }}
+                     placeholder={(l.purpose || "data") === "booking"
+                       ? "Tên chi nhánh (vd: Cơ sở 1)"
+                       : "Mô tả link này (tuỳ chọn) — vd: bảng giá phòng, menu món…"}
                      value={l.note} onChange={(e) => setLink(i, "note", e.target.value)} />
+              <select style={{ flex: "0 1 300px" }} value={l.purpose || "data"}
+                      onChange={(e) => setLink(i, "purpose", e.target.value)} title="Mục đích của link này">
+                <option value="data">📄 Dữ liệu cho AI đọc</option>
+                <option value="booking">📅 Lịch đặt chỗ — Google Sheet (bot tra lịch trực tiếp)</option>
+              </select>
               <button className="btn-mini danger" onClick={() => rmLink(i)} title="Xoá link này">✕</button>
             </div>
           ))}
           <button className="btn-mini" style={{ marginTop: 10 }} onClick={addLink}>＋ Thêm link</button>
         </div>
 
-        {/* Bước 3: tạo */}
+        {/* Bước 3: tạo — kèm chọn model AI dùng để dạy */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+          <label className="hint" style={{ margin: 0 }}>Model dùng để dạy:</label>
+          <select value={genModel} onChange={(e) => setGenModel(e.target.value)} style={{ flex: "1 1 260px", maxWidth: 420 }}>
+            <option value="">— Mặc định hệ thống —</option>
+            {models.map((m) => (
+              <option key={m.key} value={m.key} disabled={!m.available}>
+                {m.label} (in {(m.in_vnd ?? 0).toLocaleString("vi-VN")}₫ / out {(m.out_vnd ?? 0).toLocaleString("vi-VN")}₫ mỗi 1M token){m.available ? "" : " — chưa có key"}
+              </option>
+            ))}
+          </select>
+        </div>
         <button className="btn-primary" onClick={doGenerate} disabled={busy}
                 style={{ width: "100%", marginBottom: 16 }}>
           {busy ? "🪄 AI đang đọc & soạn bộ não… (20–60 giây)" : "🪄 Tạo bộ não bằng AI"}
@@ -481,13 +549,15 @@ export default function PromptBuilder() {
         <div style={{ marginTop: 28 }}>
           <h3 style={{ fontSize: 18, marginBottom: 4 }}>⚙️ Cấu hình bot của shop</h3>
           <p className="hint">
-            Liên hệ khẩn cấp, tài khoản nhận tiền, lịch đặt chỗ và câu trả lời mẫu —
-            bot dùng các cấu hình này khi trả lời khách (đưa số liên hệ, gửi QR chốt đơn,
-            tra lịch trống…).
+            Liên hệ khẩn cấp, tài khoản nhận tiền và câu trả lời mẫu — bot dùng các
+            cấu hình này khi trả lời khách (đưa số liên hệ, gửi QR chốt đơn…).
+            Lịch đặt chỗ (Google Sheets) giờ nối ngay ở Bước 2 — chọn mục đích
+            "📅 Lịch đặt chỗ" cho link.
           </p>
+          {/* SheetsCard bỏ khỏi đây — lịch đặt chỗ giờ nối ngay ở Bước 2
+              (link purpose "Lịch đặt chỗ"); component + API /sheets giữ nguyên */}
           <NotifyCard />
           <BankCard />
-          <SheetsCard />
           <CannedCard />
         </div>
       </main>

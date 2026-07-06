@@ -43,6 +43,9 @@ export const authApi = {
   apps: (token) => j("/auth/apps", auth(token)),
   addApp: (token, { name, channel }) => j("/auth/apps", json({ name, channel }, token)),
   removeApp: (token, id) => j("/auth/apps/" + encodeURIComponent(id), auth(token, "DELETE")),
+  // Model AI riêng cho 1 chatbot — model rỗng = dùng model chung của shop
+  setAppAiModel: (token, id, model) =>
+    j("/auth/apps/" + encodeURIComponent(id) + "/ai-model", json({ model }, token)),
 };
 
 export const OFFLINE_MSG =
