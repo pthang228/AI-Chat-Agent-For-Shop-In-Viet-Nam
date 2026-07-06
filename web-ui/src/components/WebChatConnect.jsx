@@ -85,7 +85,7 @@ export default function WebChatConnect() {
         title="📘 Hướng dẫn — dán 1 dòng mã là chạy (không cần duyệt gì cả)"
         steps={[
           { t: "Kênh Website là gì?", d: <>Bong bóng chat hiện ở <b>góc phải website của bạn</b> (giống khung chat bạn hay thấy trên các trang bán hàng). Khách đang xem web hỏi là <b>bot trả lời ngay</b> — không cần khách cài app hay đăng nhập gì.</> },
-          { t: "Bước 1 · Tạo site", d: <>Điền tên website (vd "Web Haru Homestay") → bấm <b>Tạo mã nhúng</b>. Xong ngay, không chờ ai duyệt.</> },
+          { t: "Bước 1 · Tạo site", d: <>Điền tên website (vd "Web Shop Mình") → bấm <b>Tạo mã nhúng</b>. Xong ngay, không chờ ai duyệt.</> },
           { t: "Bước 2 · Dán mã vào website", d: <>Bấm <b>📋 Copy mã nhúng</b> → gửi cho người làm web của bạn dán vào <b>cuối trang (trước &lt;/body&gt;)</b>. Web WordPress/Haravan/Shopify đều có chỗ dán mã — chỉ 1 dòng duy nhất.</> },
           { t: "Bước 3 · Thử ngay", d: <>Mở website của bạn → thấy bong bóng chat tím góc phải → nhắn thử 1 câu, bot trả lời là xong. Mọi hội thoại hiện trong tab <b>Hội thoại</b> ở đây, bạn nhắn xen vào lúc nào cũng được (bot tự nhường).</> },
           { t: "Bước 4 · Nhận thông báo (tuỳ chọn)", d: <>Tự nhắn widget trên web của bạn 1 tin → vào tab <b>Khách hàng</b> → mở hội thoại của mình → <b>⭐ Đặt làm chủ</b>. Muốn nhận báo cả khi không mở web → nối thêm kênh Telegram/Zalo.</> },
@@ -101,7 +101,7 @@ export default function WebChatConnect() {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
         <input
           style={{ flex: 1, minWidth: 200 }}
-          placeholder="Tên website (vd: Web Haru Homestay)…"
+          placeholder="Tên website (vd: Web Shop Mình)…"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />

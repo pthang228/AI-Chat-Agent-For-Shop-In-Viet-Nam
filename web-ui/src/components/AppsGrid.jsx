@@ -185,7 +185,7 @@ function AddAppModal({ onClose, onAdd }) {
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <h3>Thêm app mới</h3>
         <label>Tên app</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Haru Zalo" autoFocus />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Zalo Shop Mình" autoFocus />
         <label>Kênh</label>
         <div className="ch-pick">
           {ADD_CHANNELS.map((key) => {

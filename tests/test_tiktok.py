@@ -197,7 +197,7 @@ check(all("access_token" not in a for a in rows), "D4 no_token_leak", f"{rows}")
 check(any(a["business_id"] == "B9" and a["bot_enabled"] for a in rows), "D4 enabled_flag", f"{rows}")
 
 # D5: webhook GET verify → echo challenge
-r = api.get("/tiktok/webhook?challenge=xyz&verify_token=haru_tiktok_verify")
+r = api.get("/tiktok/webhook?challenge=xyz&verify_token=novachat_tiktok_verify")
 check(r.status_code == 200 and r.get_data(as_text=True) == "xyz", "D5 webhook_verify")
 r = api.get("/tiktok/webhook?challenge=xyz&verify_token=sai")
 check(r.status_code == 403, "D5 webhook_verify_reject")

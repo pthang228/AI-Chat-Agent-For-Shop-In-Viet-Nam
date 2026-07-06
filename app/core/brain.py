@@ -47,15 +47,15 @@ def _notify_cfg(conv):
 
 
 FIRST_MESSAGE_GREETING = (
-    "Admin bên home có thể đang bận nên chưa rep được, "
-    "để Haru AI tư vấn trước cho mình nhen 😊\n\n"
+    "Admin bên shop có thể đang bận nên chưa rep được, "
+    "để trợ lý AI tư vấn trước cho mình nhen 😊\n\n"
     "Mình có thể giúp bạn:\n"
     "📅 Xem lịch trống → nhắn \"tối nay còn phòng không\" hoặc \"ngày 25 còn phòng không\"\n"
     "💰 Xem bảng giá → nhắn \"bảng giá\"\n"
-    "📸 Xem ảnh phòng → nhắn \"ảnh phòng 201\" hoặc \"ảnh Haru\"\n"
-    "🏠 Đặt phòng → nhắn \"đặt phòng 301 tối nay\"\n\n"
-    "Haru AI là anh chủ home tự train nên còn một vài thiếu sót, mong bạn thông cảm nha 🙏 "
-    "Mong bạn iu ghi rõ yêu cầu để Haru AI hỗ trợ mình chính xác nhất có thể ạ.\n\n"
+    "📸 Xem ảnh phòng → nhắn \"xin ảnh phòng\"\n"
+    "🏠 Đặt phòng → nhắn \"đặt phòng tối nay\"\n\n"
+    "Trợ lý AI do shop tự train nên còn một vài thiếu sót, mong bạn thông cảm nha 🙏 "
+    "Mong bạn iu ghi rõ yêu cầu để AI hỗ trợ mình chính xác nhất có thể ạ.\n\n"
     "Bạn cần mình hỗ trợ gì ạ? 😊"
 )
 
@@ -531,7 +531,7 @@ class Brain:
             if "[CHUA_CO_LICH]" in context:
                 conv.add_user_message(
                     f"[HỆ THỐNG] Ngày {conv.checkin}: chưa có booking nào trong Google Sheets. "
-                    f"Tất cả các phòng Haru và Mochi đều có thể đặt được. "
+                    f"Tất cả các phòng của cả hai chi nhánh đều có thể đặt được. "
                     f"Hãy tư vấn khách chọn phòng và ca phù hợp."
                 )
                 conv.add_assistant_message(

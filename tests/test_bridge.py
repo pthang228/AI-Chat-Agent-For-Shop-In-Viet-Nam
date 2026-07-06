@@ -87,7 +87,7 @@ with patch.object(bridge_mod, 'threading') as mth, \
     fc.texts.clear(); fc.price=False
     r = client.post("/incoming", json={"userId":"cust1","text":"xin chào"})
     check(r.get_json().get("ok") is True, "A3 customer_ok")
-    check(any("Haru AI" in t for t in fc.texts), "A3 greeting_sent", f"texts={fc.texts}")
+    check(any("trợ lý AI" in t for t in fc.texts), "A3 greeting_sent", f"texts={fc.texts}")
     check(fc.price is True, "A3 price_sent")
 
     # A4: owner_active → bỏ qua
@@ -143,7 +143,7 @@ with patch.object(bridge_mod, 'threading') as mth, \
     # C5: bot BẬT lại → khách mới được trả lời bình thường
     fc.texts.clear()
     r = client.post("/incoming", json={"userId":"cust6","text":"xin chào"})
-    check(any("Haru AI" in t for t in fc.texts), "C5 reply_resumed", f"texts={fc.texts}")
+    check(any("trợ lý AI" in t for t in fc.texts), "C5 reply_resumed", f"texts={fc.texts}")
 
 print("\n── B. ZaloNodeChannel gọi Node đúng ──")
 with patch.object(httputil.requests, 'post') as mreq:

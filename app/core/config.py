@@ -45,8 +45,8 @@ class Config:
 
     # Google Sheets
     GOOGLE_CREDENTIALS_FILE = _resolve(os.getenv("GOOGLE_CREDENTIALS_FILE"), "google_credentials.json")
-    HARU_SHEET_ID           = os.getenv("HARU_SHEET_ID",  "")   # Haru Staycation
-    MOCHI_SHEET_ID          = os.getenv("MOCHI_SHEET_ID", "")   # Mochi Home
+    HARU_SHEET_ID           = os.getenv("HARU_SHEET_ID",  "")   # sheet lịch phòng chi nhánh 1 (legacy Zalo gốc)
+    MOCHI_SHEET_ID          = os.getenv("MOCHI_SHEET_ID", "")   # sheet lịch phòng chi nhánh 2 (legacy Zalo gốc)
 
     # Telegram — gọi điện qua Telethon
     TELEGRAM_TARGET_ID = os.getenv("TELEGRAM_TARGET_ID", "")  # ID acc nhận cuộc gọi
@@ -65,7 +65,7 @@ class Config:
     FB_APP_ID            = os.getenv("FB_APP_ID", "")            # ID app (công khai) — cho nút "Kết nối Facebook"
     FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "")  # token 1 Page (chế độ single-tenant/test thủ công)
     FB_APP_SECRET        = os.getenv("FB_APP_SECRET", "")         # xác thực chữ ký webhook
-    FB_VERIFY_TOKEN      = os.getenv("FB_VERIFY_TOKEN", "haru_verify_token")  # tự đặt, khớp khi đăng ký webhook
+    FB_VERIFY_TOKEN      = os.getenv("FB_VERIFY_TOKEN", "novachat_verify_token")  # tự đặt, khớp khi đăng ký webhook
     FB_GRAPH_VERSION     = os.getenv("FB_GRAPH_VERSION", "v21.0")
     FB_OWNER_PSID        = os.getenv("FB_OWNER_PSID", "")         # PSID chủ nhà để báo (Meta không có nhóm)
     PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL", "")       # URL công khai (ngrok/domain) để gửi ảnh + nhận webhook
@@ -87,7 +87,7 @@ class Config:
     TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")   # token 1 tài khoản (.env, single-tenant/test)
     TIKTOK_BUSINESS_ID  = os.getenv("TIKTOK_BUSINESS_ID", "")    # business_id của tài khoản .env
     TIKTOK_API_BASE     = os.getenv("TIKTOK_API_BASE", "https://business-api.tiktok.com/open_api/v1.3")
-    TIKTOK_VERIFY_TOKEN = os.getenv("TIKTOK_VERIFY_TOKEN", "haru_tiktok_verify")  # khớp khi khai webhook
+    TIKTOK_VERIFY_TOKEN = os.getenv("TIKTOK_VERIFY_TOKEN", "novachat_tiktok_verify")  # khớp khi khai webhook
     TIKTOK_API_PORT     = int(os.getenv("TIKTOK_API_PORT", "5008"))
 
     # Shopee Open Platform (open.shopee.com) — app của VENDOR (partner) dùng chung,

@@ -103,10 +103,10 @@ input[type=password] { width: 100%; padding: 10px 14px; border: 1px solid #ddd;
 
 LOGIN_HTML = """<!doctype html><html lang=vi><head>
 <meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
-<title>Đăng nhập — Haru Dashboard</title>
+<title>Đăng nhập — Shop Dashboard</title>
 <style>{{ css }}</style></head><body>
 <div class=container><div class=login-box>
-  <h2>🏠 Haru Dashboard</h2>
+  <h2>🏠 Shop Dashboard</h2>
   <div class=card>
     <form method=post>
       <input type=password name=password placeholder='Mật khẩu' autofocus>
@@ -119,10 +119,10 @@ LOGIN_HTML = """<!doctype html><html lang=vi><head>
 INDEX_HTML = """<!doctype html><html lang=vi><head>
 <meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
 <meta http-equiv=refresh content=30>
-<title>Dashboard — Haru & Mochi</title>
+<title>Dashboard — Shop Bot</title>
 <style>{{ css }}</style></head><body>
 <div class=navbar>
-  <h1>🏠 Haru & Mochi Bot</h1>
+  <h1>🏠 Shop Bot</h1>
   <a href=/logout>Đăng xuất</a>
 </div>
 <div class=container>

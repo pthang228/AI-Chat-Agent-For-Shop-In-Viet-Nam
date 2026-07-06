@@ -195,7 +195,7 @@ function DemoChat() {
       <div className="ld-demo-head">
         <span className="ld-demo-ava">🏡</span>
         <div>
-          <div className="ld-demo-name">Haru Staycation</div>
+          <div className="ld-demo-name">Ban Mai Homestay</div>
           <div className="ld-demo-status"><span className="cw-dot" /> Bot đang trực · trả lời trong 2s</div>
         </div>
         <span className="ld-demo-ch">💬 Zalo</span>

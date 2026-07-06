@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 CUSTOM_FILE = Config.DATA_DIR / "custom_prompt.txt"
 BACKUP_DIR = Config.DATA_DIR / "prompt_backups"
-DEFAULT_FILE = Path(__file__).parent / "system_prompt.txt"      # não Haru — mặc định/khôi phục
+DEFAULT_FILE = Path(__file__).parent / "system_prompt.txt"      # não MẪU (shop ví dụ) — mặc định/khôi phục
 TEMPLATE_FILE = Path(__file__).parent / "prompt_template.txt"   # mẫu chuẩn generic mọi shop
 
 HYBRID_MARKER = "#NOVACHAT-HYBRID-V1"
@@ -205,7 +205,7 @@ def generate(links: list, instructions: str) -> dict:
     if not ok_parts and not instructions:
         raise ValueError("Cần ít nhất 1 link đọc được hoặc 1 đoạn hướng dẫn")
 
-    # Tham chiếu MẪU CHUẨN generic (không phải não Haru) → sinh prompt cho spa/salon/
+    # Tham chiếu MẪU CHUẨN generic (không phải não mẫu homestay) → sinh prompt cho spa/salon/
     # quán ăn… không bị "lây" số liệu homestay. Thiếu file mẫu → dùng tạm mặc định.
     ref_prompt = template() or (DEFAULT_FILE.read_text(encoding="utf-8") if DEFAULT_FILE.exists() else "")
     user_msg = (

@@ -11,7 +11,7 @@ function initials(name) {
 }
 
 /* ── Form gợi ý có cấu trúc — shop không cần biết "viết prompt" ──
- * Chia 5 nhóm, ~20 ô — chi tiết ngang prompt Haru gốc. Bỏ trống ô không có;
+ * Chia 5 nhóm, ~20 ô — chi tiết ngang prompt mẫu gốc. Bỏ trống ô không có;
  * hệ thống ghép các ô thành hướng dẫn có nhãn cho AI. */
 const GUIDE_SECTIONS = [
   { title: "🏪 Thông tin cơ bản", fields: [
@@ -54,7 +54,7 @@ const GUIDE_FIELDS = GUIDE_SECTIONS.flatMap((s) => s.fields);
 const GUIDE_LABEL = Object.fromEntries(GUIDE_FIELDS.map((g) => [g.key, g.label]));
 
 /* Mẫu điền sẵn theo ngành — bấm 1 nút có ví dụ hoàn chỉnh để sửa.
- * Mẫu Homestay chi tiết ngang prompt Haru gốc — làm chuẩn "điền đủ là thế nào". */
+ * Mẫu Homestay chi tiết nhất (dữ liệu HƯ CẤU) — làm chuẩn "điền đủ là thế nào". */
 const SAMPLES = {
   "💆 Spa / Salon": {
     about: "Mây Spa — spa thư giãn & chăm sóc da",
@@ -101,11 +101,11 @@ const SAMPLES = {
     faq: "Có ship không? → Quán chưa tự ship, mình đặt qua GrabFood/ShopeeFood nha\nĐi 15 người ngồi được không? → Được ạ, có phòng riêng, quán xếp trước cho mình",
   },
   "🏡 Homestay / Lưu trú": {
-    about: "Haru Staycation (Haru Home) & Mochi Home — homestay cho cặp đôi, thuê theo ca hoặc qua đêm",
-    branches: "Haru Staycation: 238 ĐT743A, Bình Thắng, Dĩ An\nMochi Home: 3D ĐT743A, Bình Thắng, Dĩ An\nCả 2 cách KTX Làng Đại học (ĐHQG) chỉ 2km — cực tiện cho sinh viên",
+    about: "Ban Mai Home & Hướng Dương Home — homestay cho cặp đôi, thuê theo ca hoặc qua đêm (thông tin VÍ DỤ — thay bằng shop của bạn)",
+    branches: "Ban Mai Home: 12 Đường Hoa Ban, Phường 3, TP. Đà Lạt\nHướng Dương Home: 45 Đường Đồi Thông, Phường 10, TP. Đà Lạt\nCả 2 cách chợ đêm trung tâm chỉ 2km — đi lại cực tiện",
     hours: "Check-in tự động 24/7, không cần lễ tân, check-in muộn không sao",
     contact: "Nhắn tin fanpage/Zalo này là nhanh nhất",
-    services: "HARU — Phòng 201: ca trưa 12h-16h 260k · ca chiều 16h30-20h30 260k · qua đêm 21h-10h30 380k · combo trưa+chiều 490k · combo ca+đêm 590k · nguyên ngày 750k\nHARU — Phòng 202: trưa 11h30-15h30 240k · chiều 16h-20h 240k · đêm 20h30-10h 330k · combo 390k/490k · nguyên ngày 650k\nHARU — Phòng 301: trưa 11h-15h 240k · chiều 15h30-19h30 240k · đêm 20h-10h 330k · combo 390k/490k · nguyên ngày 650k\nMOCHI — Phòng 111: trưa 13h-17h 260k · chiều 17h30-21h30 260k · đêm 22h-11h 370k · combo 450k/550k · nguyên ngày 750k\nMOCHI — Phòng 112: trưa 12h-16h 230k · chiều 16h30-20h30 230k · đêm 21h-10h 330k · combo 390k/490k · nguyên ngày 650k\nMOCHI — Phòng 211: trưa 12h30-16h30 260k · chiều 17h-21h 260k · đêm 21h30-10h30 370k · combo 450k/550k · nguyên ngày 750k\nMOCHI — Phòng 212: trưa 11h30-15h30 230k · chiều 16h-20h 230k · đêm 20h30-10h 330k · combo 390k/490k · nguyên ngày 650k\nMOCHI — Phòng 311: trưa 11h-15h 240k · chiều 15h30-19h30 240k · đêm 20h-10h 340k · combo 400k/500k · nguyên ngày 670k",
+    services: "BAN MAI — Phòng 201: ca trưa 12h-16h 260k · ca chiều 16h30-20h30 260k · qua đêm 21h-10h30 380k · combo trưa+chiều 490k · combo ca+đêm 590k · nguyên ngày 750k\nBAN MAI — Phòng 202: trưa 11h30-15h30 240k · chiều 16h-20h 240k · đêm 20h30-10h 330k · combo 390k/490k · nguyên ngày 650k\nBAN MAI — Phòng 301: trưa 11h-15h 240k · chiều 15h30-19h30 240k · đêm 20h-10h 330k · combo 390k/490k · nguyên ngày 650k\nHƯỚNG DƯƠNG — Phòng 111: trưa 13h-17h 260k · chiều 17h30-21h30 260k · đêm 22h-11h 370k · combo 450k/550k · nguyên ngày 750k\nHƯỚNG DƯƠNG — Phòng 112: trưa 12h-16h 230k · chiều 16h30-20h30 230k · đêm 21h-10h 330k · combo 390k/490k · nguyên ngày 650k\nHƯỚNG DƯƠNG — Phòng 211: trưa 12h30-16h30 260k · chiều 17h-21h 260k · đêm 21h30-10h30 370k · combo 450k/550k · nguyên ngày 750k\nHƯỚNG DƯƠNG — Phòng 212: trưa 11h30-15h30 230k · chiều 16h-20h 230k · đêm 20h30-10h 330k · combo 390k/490k · nguyên ngày 650k\nHƯỚNG DƯƠNG — Phòng 311: trưa 11h-15h 240k · chiều 15h30-19h30 240k · đêm 20h-10h 340k · combo 400k/500k · nguyên ngày 670k",
     surcharge: "Cuối tuần & ngày lễ +35k/ca (tính trên từng ca kể cả trong combo) · Chuẩn 2 người/phòng, phụ thu từ người thứ 3 · Thú cưng làm bẩn/hư phụ thu 500k",
     promos: "",
     booking: "Booking chỉ giữ 30 phút — chưa cọc sẽ tự huỷ",
@@ -113,14 +113,14 @@ const SAMPLES = {
     reschedule: "Miễn phí dời 1 lần (báo trước ít nhất 7 ngày) · Dời trước 48h phí 30% tiền phòng · Dời lần 2 phí 30% (dù trước 7 ngày)",
     cancel: "Huỷ trước 5 ngày hoàn 50% cọc · Trước 3 ngày không hoàn cọc · Trước 12 tiếng không hoàn bất kỳ khoản nào",
     amenities: "Check-in tự động không cần lễ tân · Giờ ra vào tự do · Bãi giữ xe riêng (cả ô tô lẫn xe máy) · Được mang đồ ăn vào (làm bẩn giường phụ thu) · 100% không camera ẩn · Cho mang thú cưng",
-    equipment: "Mọi phòng: cách âm tốt, máy chiếu + Netflix, máy lạnh, board game cho cặp đôi\nHaru KHÔNG có bếp (chỉ bình siêu tốc + chén đũa) · Mochi TẤT CẢ phòng có bếp đủ gia vị\nCả 2 nơi chỉ có nước lọc miễn phí, KHÔNG bán đồ ăn thức uống\nCa qua đêm có sẵn kem đánh răng/bàn chải/khăn tắm; ca ngày yêu cầu thì chuẩn bị · Máy sấy tóc liên hệ mang lên",
+    equipment: "Mọi phòng: cách âm tốt, máy chiếu + Netflix, máy lạnh, board game cho cặp đôi\nBan Mai KHÔNG có bếp (chỉ bình siêu tốc + chén đũa) · Hướng Dương TẤT CẢ phòng có bếp đủ gia vị\nCả 2 nơi chỉ có nước lọc miễn phí, KHÔNG bán đồ ăn thức uống\nCa qua đêm có sẵn kem đánh răng/bàn chải/khăn tắm; ca ngày yêu cầu thì chuẩn bị · Máy sấy tóc liên hệ mang lên",
     capacity: "Tiêu chuẩn 2 người/phòng — phụ thu từ người thứ 3",
     forbidden: "Hút thuốc trong phòng · Mang chất cấm · Vật dễ cháy nổ · Cố tình phá hoại sẽ báo chính quyền địa phương",
     tone: 'Xưng "mình", thân thiện tự nhiên như bạn bè, câu ngắn, emoji vừa phải 😊 🏠 📅 ✅',
     greeting: 'Admin bên home có thể đang bận nên chưa rep được, để AI tư vấn trước cho mình nhen 😊\nMình có thể giúp bạn:\n📅 Xem lịch trống → nhắn "tối nay còn phòng không"\n💰 Xem bảng giá → nhắn "bảng giá"\n📸 Xem ảnh phòng → nhắn "ảnh phòng 201"\n🏠 Đặt phòng → nhắn "đặt phòng 301 tối nay"',
     handoff: "Khách muốn gặp người thật/admin · Đổi ca-giờ đã đặt (không tự quyết, hỏi chủ giúp) · Câu hỏi ngoài kiến thức → báo đã nhắn chủ nhà, chủ phản hồi sớm",
     rules: "Không tự xác nhận booking cuối cùng — chủ nhà quyết định · Không nhận tiền cọc trực tiếp · Không bịa thông tin, thiếu thì nói chưa có và báo chủ · Không tiết lộ mã cửa qua chat",
-    faq: "Gần làng đại học không? → Cả 2 chi nhánh cách KTX Làng Đại học chỉ 2km\nCó camera không? → 100% không camera ẩn, riêng tư tuyệt đối\nMang đồ ăn vào được không? → Được nha, làm bẩn giường thì phụ thu nhẹ\nCheck-in muộn được không? → Tự động 24/7, muộn mấy cũng được",
+    faq: "Gần trung tâm không? → Cả 2 chi nhánh cách chợ đêm trung tâm chỉ 2km\nCó camera không? → 100% không camera ẩn, riêng tư tuyệt đối\nMang đồ ăn vào được không? → Được nha, làm bẩn giường thì phụ thu nhẹ\nCheck-in muộn được không? → Tự động 24/7, muộn mấy cũng được",
   },
   "🛍️ Shop online": {
     about: "Nắng Store — thời trang nữ phong cách tối giản",

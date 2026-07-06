@@ -1,9 +1,9 @@
-# Chính sách quyền riêng tư — Haru Staycation Bot
+# Chính sách quyền riêng tư — NovaChat Bot
 
 _Cập nhật lần cuối: 26/06/2026_
 
 ## 1. Chúng tôi là ai
-Haru Staycation (và các homestay sử dụng dịch vụ chatbot của chúng tôi) vận hành một
+NovaChat (và các shop sử dụng dịch vụ chatbot của chúng tôi) vận hành một
 trợ lý trả lời tin nhắn tự động trên Facebook Messenger và Instagram nhằm hỗ trợ khách
 hàng hỏi đáp về phòng, giá, đặt phòng và các thông tin liên quan.
 
