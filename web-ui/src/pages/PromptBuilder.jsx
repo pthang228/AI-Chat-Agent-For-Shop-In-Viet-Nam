@@ -5,6 +5,7 @@ import { promptApi } from "../promptApi.js";
 import { IcHome, IcBack } from "../components/icons.jsx";
 import LogoMark from "../components/LogoMark.jsx";
 import BackLink from "../components/BackLink.jsx";
+import { NotifyCard, BankCard, SheetsCard, CannedCard } from "../components/ShopConfigCards.jsx";
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -157,7 +158,7 @@ export default function PromptBuilder() {
   const [showCur, setShowCur] = useState(false);
   const [tpl, setTpl] = useState("");          // prompt mẫu chuẩn
   const [showTpl, setShowTpl] = useState(false);
-  const [links, setLinks] = useState([""]);
+  const [links, setLinks] = useState([{ url: "", note: "" }]);   // link dữ liệu + mô tả tuỳ chọn
   const [guide, setGuide] = useState({});      // câu trả lời form gợi ý
   const [extra, setExtra] = useState("");      // hướng dẫn thêm tự do
   const [draft, setDraft] = useState(null);    // persona AI vừa tạo (chờ duyệt)
@@ -187,9 +188,9 @@ export default function PromptBuilder() {
     setTimeout(() => document.querySelector(".draft-box")?.scrollIntoView({ behavior: "smooth" }), 50);
   }
 
-  function setLink(i, v) { setLinks((ls) => ls.map((x, j) => (j === i ? v : x))); }
-  function addLink() { setLinks((ls) => [...ls, ""]); }
-  function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [""])); }
+  function setLink(i, k, v) { setLinks((ls) => ls.map((x, j) => (j === i ? { ...x, [k]: v } : x))); }
+  function addLink() { setLinks((ls) => [...ls, { url: "", note: "" }]); }
+  function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ url: "", note: "" }])); }
 
   function setG(key, v) { setGuide((g) => ({ ...g, [key]: v })); }
   function fillSample(name) {
@@ -212,7 +213,9 @@ export default function PromptBuilder() {
 
   async function doGenerate() {
     const instructions = buildInstructions();
-    const linkList = links.filter((l) => l.trim());
+    const linkList = links
+      .filter((l) => l.url.trim())
+      .map((l) => ({ url: l.url.trim(), note: (l.note || "").trim() }));
     if (!instructions && linkList.length === 0) {
       setMsg("❌ Điền ít nhất một ô (hoặc dán 1 link) rồi hãy tạo nhé.");
       return;
@@ -386,9 +389,12 @@ export default function PromptBuilder() {
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>2️⃣ Link dữ liệu <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn — có link thì AI đọc thêm)</span></h3>
           <p className="hint">Bảng giá, trang Facebook/website, Google Docs/Sheets đã "Xuất bản lên web"… Link phải mở được công khai.</p>
           {links.map((l, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <input style={{ flex: 1 }} placeholder="https://…" value={l}
-                     onChange={(e) => setLink(i, e.target.value)} />
+            <div key={i} style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <input style={{ flex: "1 1 260px" }} placeholder="https://…" value={l.url}
+                     onChange={(e) => setLink(i, "url", e.target.value)} />
+              <input style={{ flex: "1 1 220px" }}
+                     placeholder="Mô tả link này (tuỳ chọn) — vd: bảng giá phòng, menu món…"
+                     value={l.note} onChange={(e) => setLink(i, "note", e.target.value)} />
               <button className="btn-mini danger" onClick={() => rmLink(i)} title="Xoá link này">✕</button>
             </div>
           ))}
@@ -469,6 +475,21 @@ export default function PromptBuilder() {
             </div>
           </div>
         )}
+
+        {/* ⚙️ Cấu hình bot của shop — chuyển từ trang Cài đặt sang đây
+            (PromptBuilder là trang OwnerOnly nên không cần check staff) */}
+        <div style={{ marginTop: 28 }}>
+          <h3 style={{ fontSize: 18, marginBottom: 4 }}>⚙️ Cấu hình bot của shop</h3>
+          <p className="hint">
+            Liên hệ khẩn cấp, tài khoản nhận tiền, lịch đặt chỗ và câu trả lời mẫu —
+            bot dùng các cấu hình này khi trả lời khách (đưa số liên hệ, gửi QR chốt đơn,
+            tra lịch trống…).
+          </p>
+          <NotifyCard />
+          <BankCard />
+          <SheetsCard />
+          <CannedCard />
+        </div>
       </main>
     </div>
   );

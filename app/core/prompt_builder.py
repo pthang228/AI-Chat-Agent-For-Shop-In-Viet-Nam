@@ -187,15 +187,51 @@ def _parse_hybrid(raw: str) -> tuple:
     return persona, chunks, gaps
 
 
+_GSHEET_RE = re.compile(r"docs\.google\.com/spreadsheets", re.I)
+
+
+def _norm_links(links: list) -> list:
+    """Mỗi phần tử: string URL hoặc dict {url, note} → list (url, note).
+    Giữ tương thích ngược với mảng string cũ."""
+    out = []
+    for item in (links or []):
+        if isinstance(item, dict):
+            url = str(item.get("url") or "").strip()
+            note = str(item.get("note") or "").strip()
+        else:
+            url = str(item or "").strip()
+            note = ""
+        if url:
+            out.append((url, note))
+    return out
+
+
 def generate(links: list, instructions: str) -> dict:
     """Tải các link + gộp hướng dẫn → AI viết persona + mẩu tri thức.
+    links: string URL hoặc {url, note} (note = shop mô tả link, tuỳ chọn).
     Trả {draft, chunks, mode, sources} — chunks rỗng nghĩa là chế độ cũ."""
-    results = [fetch_link(u) for u in (links or []) if (u or "").strip()]
+    results = []
+    for url, note in _norm_links(links):
+        if _GSHEET_RE.search(url):
+            # Google Sheets: fetch_link thường không đọc được (trang login/JS) →
+            # không fetch, đưa ghi chú vào prompt để AI biết link là gì, flow không gãy
+            text = ("Link Google Sheets (lịch/bảng tính)"
+                    + (f" — shop mô tả: {note}." if note else ".")
+                    + " Không đọc trực tiếp được nội dung; nếu là lịch đặt chỗ hãy nhắc"
+                      " shop dán vào mục Lịch đặt chỗ (Google Sheets) bên dưới trang Dạy AI.")
+            results.append({"url": url, "ok": True, "text": text, "note": ""})
+            continue
+        r = fetch_link(url)
+        r["note"] = note
+        results.append(r)
     ok_parts, total = [], 0
     for r in results:
         if not r["ok"]:
             continue
-        chunk = f"\n===== NGUỒN: {r['url']} =====\n{r['text']}\n"
+        header = f"\n===== NGUỒN: {r['url']} ====="
+        if r.get("note"):
+            header += f"\n— Shop mô tả link này: {r['note']}"
+        chunk = f"{header}\n{r['text']}\n"
         if total + len(chunk) > MAX_TOTAL_CHARS:
             break
         ok_parts.append(chunk)

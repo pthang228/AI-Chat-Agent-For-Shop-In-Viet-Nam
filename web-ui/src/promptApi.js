@@ -26,6 +26,7 @@ export const promptApi = {
   current: () => j("/prompt/current"),
   template: () => j("/prompt/template"),
   // AI viết prompt — chậm (20-60s), đừng đặt timeout phía UI
+  // links: mảng string URL hoặc {url, note} (note = shop mô tả link, tuỳ chọn)
   generate: (links, instructions) =>
     j("/prompt/generate", { method: "POST", body: JSON.stringify({ links, instructions }) }),
   // chunks (mẩu tri thức) đi kèm draft từ generate — có chunks = chế độ lai (RAG)

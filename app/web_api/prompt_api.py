@@ -4,6 +4,7 @@ API Prompt Builder — gắn vào bridge (5005). Tất cả cần Bearer token.
   GET  /prompt/current                       → bộ não đang dùng (custom/default, mode lai/cũ)
   GET  /prompt/template                      → prompt mẫu chuẩn generic (shop chỉnh tay)
   POST /prompt/generate {links[], instructions} → AI viết persona + mẩu tri thức (chậm 20-60s)
+                                               (links: string URL hoặc {url, note})
   POST /prompt/apply {prompt, chunks?}       → shop ĐỒNG Ý → lưu, bot dùng ngay
                                                (có chunks → chế độ LAI: persona + RAG)
   GET  /prompt/knowledge                     → danh sách mẩu tri thức đang dùng
@@ -106,6 +107,9 @@ def register_prompt_routes(app):
         instructions = data.get("instructions") or ""
         if not isinstance(links, list):
             return {"ok": False, "error": "links phải là danh sách"}, 400
+        # Mỗi phần tử: string URL hoặc {url, note} (note = shop mô tả link, tuỳ chọn)
+        if not all(isinstance(it, (str, dict)) for it in links):
+            return {"ok": False, "error": "mỗi link phải là chuỗi hoặc {url, note}"}, 400
         try:
             r = prompt_builder.generate(links, instructions)
         except ValueError as e:

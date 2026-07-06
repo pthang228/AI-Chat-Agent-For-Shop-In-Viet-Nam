@@ -104,6 +104,25 @@ with patch.object(pb, 'requests') as mreq, \
     r = pb.generate(["https://die.vn"], "chỉ dẫn thôi")
     check(r["draft"] and not r["sources"][0]["ok"], "B7 bad_link_ok_with_instructions")
 
+# Link dạng dict {url, note} → ghi chú của shop đặt ngay trước nội dung đã fetch
+with patch.object(pb, 'requests') as mreq, \
+     patch.object(pb, '_call_ai_long', return_value=FAKE_PROMPT) as mai:
+    mreq.get.return_value = _resp(text="<p>Phòng 201 giá 500k</p>")
+    r = pb.generate([{"url": "https://haru.vn/gia", "note": "bảng giá phòng"}], "")
+    user_msg = mai.call_args[0][0][1]["content"]
+    check("Shop mô tả link này: bảng giá phòng" in user_msg
+          and "Phòng 201 giá 500k" in user_msg and r["sources"][0]["ok"],
+          "B8 dict_link_note_included", user_msg[:200])
+
+# Link Google Sheets → không fetch, đưa ghi chú (kèm mô tả shop) vào prompt, flow không gãy
+with patch.object(pb, 'requests') as mreq, \
+     patch.object(pb, '_call_ai_long', return_value=FAKE_PROMPT) as mai:
+    r = pb.generate([{"url": "https://docs.google.com/spreadsheets/d/abc123/edit", "note": "lịch đặt phòng"}], "")
+    user_msg = mai.call_args[0][0][1]["content"]
+    check(not mreq.get.called and "Link Google Sheets" in user_msg
+          and "lịch đặt phòng" in user_msg and r["sources"][0]["ok"],
+          "B9 gsheet_note_no_fetch", user_msg[:200])
+
 print("\n── C. apply / current / restore ──")
 cur = pb.current()
 check(cur["source"] == "default" and len(cur["prompt"]) > 0, "C1 default_initial", cur["source"])
