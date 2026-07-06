@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { IcHome, IcArrow } from "../components/icons.jsx";
+import LogoMark from "../components/LogoMark.jsx";
 import { IcZalo, IcMessenger, IcInstagram, IcTelegram, IcTikTok, IcAI, IcCalendar, IcPhone, IcImage } from "../components/brandIcons.jsx";
 
 // Trang chủ BÁN HÀNG — phong cách Marketeam: hero tối full màn hình,
@@ -242,7 +243,7 @@ export default function Landing() {
         <header className="ld-top">
           <div className="ld-top-in">
             <div className="ld-top-left">
-              <div className="ld-logo"><span className="brand-logo sm"><IcHome width={18} height={18} /></span> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
+              <div className="ld-logo"><LogoMark size={36} /> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
               <nav className="ld-nav">
                 <a href="#features">Tính năng</a>
                 <a href="#how">Cách hoạt động</a>
@@ -416,7 +417,7 @@ export default function Landing() {
 
       <footer className="ld-footer">
         <div className="ld-wrap ld-footer-in">
-          <div className="ld-logo"><span className="brand-logo sm"><IcHome width={16} height={16} /></span> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
+          <div className="ld-logo"><LogoMark size={32} /> <span className="ld-logo-txt">Nova<b>Chat</b></span></div>
           <div className="ld-footer-links">
             <a href="#features">Tính năng</a>
             <a href="#pricing">Bảng giá</a>

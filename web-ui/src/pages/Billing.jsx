@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { currentUser } from "../auth.js";
 import { billing, vnd } from "../billingApi.js";
 import { IcHome, IcBack } from "../components/icons.jsx";
+import LogoMark from "../components/LogoMark.jsx";
 import BackLink from "../components/BackLink.jsx";
 
 function initials(name) {
@@ -256,7 +257,7 @@ function Shell({ hostName, children }) {
     <div className="dash">
       <header className="topbar">
         <div className="brand">
-          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> NovaChat</Link>
+          <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <LogoMark size={28} /> NovaChat</Link>
         </div>
         <div className="user">
           <Link to="/settings" className="user-pill" title="Cài đặt tài khoản">

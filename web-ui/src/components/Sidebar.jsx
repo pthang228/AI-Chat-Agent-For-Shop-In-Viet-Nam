@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import LogoMark from "./LogoMark.jsx";
 
 /*
  * Sidebar dọc kiểu AloChat — dùng cho trang Overview (bảng điều khiển shop).
@@ -55,7 +56,7 @@ export default function Sidebar({ active = "overview", onSelect, collapsed = fal
     <aside className={"sb" + (collapsed ? " collapsed" : "")}>
       <div className="sb-head">
         <Link to="/" className="sb-logo" title="NovaChat">
-          <span className="sb-logo-mark">N</span>
+          <LogoMark size={34} />
           {!collapsed && <span className="sb-logo-txt">Nova<b>Chat</b></span>}
         </Link>
         <button className="sb-collapse" onClick={onToggle} title={collapsed ? "Mở rộng" : "Thu gọn"}>
