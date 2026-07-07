@@ -148,19 +148,22 @@ def _mkresp(text, finish):
     resp.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
     return resp
 
-with patch.object(pb, "OpenAI") as mopen:
-    mclient = mopen.return_value
+# (client giờ dựng qua ai_models.client_for — mock ở đó)
+import app.core.ai_models as am_mod
+_mclient = MagicMock()
+with patch.object(am_mod, "client_for", return_value=(_mclient, "gpt-4o-mini")) as mcf:
     # Vòng 1 chạm trần (finish_reason='length') → tự viết tiếp vòng 2
-    mclient.chat.completions.create.side_effect = [
+    _mclient.chat.completions.create.side_effect = [
         _mkresp("PHẦN-1|", "length"), _mkresp("PHẦN-2", "stop")]
     out = pb._call_ai_long([{"role": "user", "content": "x"}],
                            model_key="gpt-4o-mini", owner="o@x.vn")
-    call1 = mclient.chat.completions.create.call_args_list[0][1]
-    check(out == "PHẦN-1|PHẦN-2" and call1["model"] == "gpt-4o-mini"
+    call1 = _mclient.chat.completions.create.call_args_list[0][1]
+    check(out == "PHẦN-1|PHẦN-2" and mcf.call_args[0][0] == "gpt-4o-mini"
+          and call1["model"] == "gpt-4o-mini"
           and call1["max_tokens"] == pb.GEN_MAX_TOKENS
-          and mclient.chat.completions.create.call_count == 2,
+          and _mclient.chat.completions.create.call_count == 2,
           "B12 gen_full_viet_tiep_khi_cham_tran",
-          f"out={out!r} calls={mclient.chat.completions.create.call_count}")
+          f"out={out!r} calls={_mclient.chat.completions.create.call_count}")
 
 print("\n── C. apply / current / restore ──")
 cur = pb.current()
@@ -235,9 +238,15 @@ check(r.status_code == 200 and mai.call_args[1].get("model_key") == "deepseek-ch
       and mai.call_args[1].get("owner") == "p@x.vn",
       "D4c api_generate_model_passed", f"{r.status_code} {mai.call_args[1] if mai.call_args else None}")
 _api_user_msg = mai.call_args[0][0][1]["content"] if mai.call_args else ""
+# Câu mẫu KHÔNG bơm vào input AI nữa (tránh sinh mẩu kép) — nó được ghép cứng
+# thành 1 mẩu tri thức trong response (kiểm ở D4d2)
 check("===== CẤU HÌNH SHOP (tự động) =====" in _api_user_msg
-      and "Xin chào bạn iu" in _api_user_msg,
+      and "Xin chào bạn iu" not in _api_user_msg,
       "D4d api_generate_shop_config_attached", _api_user_msg[:200])
+_chunks = (r.get_json() or {}).get("chunks") or []
+check(any(c.get("title") == "Câu trả lời mẫu của shop"
+          and "Xin chào bạn iu" in (c.get("content") or "") for c in _chunks),
+      "D4d2 canned_thanh_mau_co_dinh", f"{[c.get('title') for c in _chunks]}")
 # TUYỆT ĐỐI KHÔNG gom tài khoản ngân hàng vào dữ liệu dạy
 check("9998887776" not in _api_user_msg and "NGUYEN BI MAT" not in _api_user_msg,
       "D4e bank_never_attached")

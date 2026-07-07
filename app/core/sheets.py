@@ -86,11 +86,17 @@ def homestays_for(tenant: str | None) -> list:
     return out
 
 
+_client_cache = None    # gspread client tái dùng — google-auth tự refresh token khi hết hạn
+
+
 def _get_client():
-    creds = Credentials.from_service_account_file(
-        Config.GOOGLE_CREDENTIALS_FILE, scopes=SCOPES
-    )
-    return gspread.authorize(creds)
+    global _client_cache
+    if _client_cache is None:
+        creds = Credentials.from_service_account_file(
+            Config.GOOGLE_CREDENTIALS_FILE, scopes=SCOPES
+        )
+        _client_cache = gspread.authorize(creds)
+    return _client_cache
 
 
 def _open_tab(sheet, year: int, month: int):

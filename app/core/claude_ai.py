@@ -203,30 +203,14 @@ def _call_ai(messages: list, owner: str | None = None, account: str | None = Non
         except Exception as e:
             print(f"[AI] Model shop lỗi ({e}) → dùng mặc định")
 
-    # Thử DeepSeek trước (mặc định — vẫn ghi token nếu biết owner)
+    # Thử DeepSeek (mặc định — ghi token nếu biết owner). Lỗi → Groq ngay,
+    # KHÔNG gọi lại DeepSeek lần 2 (trước đây retry y hệt làm khách chờ gấp đôi)
     if Config.DEEPSEEK_API_KEY:
         try:
             from app.core import ai_models
             return ai_models.chat(messages, owner=owner,
                                   model_key=ai_models.DEFAULT_MODEL,
                                   timeout=Config.AI_TIMEOUT)
-        except Exception as e:
-            print(f"[AI] DeepSeek (ai_models) lỗi ({e}), thử client cũ…")
-    if Config.DEEPSEEK_API_KEY:
-        try:
-            client = OpenAI(
-                api_key=Config.DEEPSEEK_API_KEY,
-                base_url="https://api.deepseek.com",
-                timeout=Config.AI_TIMEOUT,   # tránh treo thread vô hạn khi AI chậm
-            )
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=messages,
-                max_tokens=1024,
-                temperature=0.7,
-            )
-            print("[AI] Dùng DeepSeek")
-            return response.choices[0].message.content or ""
         except Exception as e:
             print(f"[AI] DeepSeek lỗi ({e}), chuyển sang Groq...")
 

@@ -124,6 +124,19 @@ def model_for(owner: str | None, account: str | None = None) -> str:
     return model_for_owner(owner)
 
 
+def client_for(model_key: str, timeout: float | None = None):
+    """Dựng (client OpenAI-compatible, model_id thật) cho 1 model trong CATALOG.
+    Điểm DUY NHẤT dựng client theo provider — chat() và prompt_builder (Dạy AI)
+    dùng chung, đổi provider/key chỉ sửa ở đây. Thiếu key → raise."""
+    m = CATALOG.get(model_key) or CATALOG[DEFAULT_MODEL]
+    api_key = _api_key(m["provider"])
+    if not api_key:
+        raise RuntimeError(f"Thiếu API key cho provider {m['provider']}")
+    base_url, _ = PROVIDERS[m["provider"]]
+    return OpenAI(api_key=api_key, base_url=base_url,
+                  timeout=timeout or Config.AI_TIMEOUT), m["model"]
+
+
 def chat(messages: list, owner: str | None = None, model_key: str | None = None,
          max_tokens: int = 1024, temperature: float = 0.7,
          timeout: float | None = None, account: str | None = None) -> str:
@@ -131,12 +144,7 @@ def chat(messages: list, owner: str | None = None, model_key: str | None = None,
     billing. Lỗi → raise (caller tự fallback — claude_ai giữ chuỗi DeepSeek→Groq cũ)."""
     key = model_key or model_for(owner, account)
     m = CATALOG.get(key) or CATALOG[DEFAULT_MODEL]
-    api_key = _api_key(m["provider"])
-    if not api_key:
-        raise RuntimeError(f"Thiếu API key cho provider {m['provider']}")
-    base_url, _ = PROVIDERS[m["provider"]]
-    client = OpenAI(api_key=api_key, base_url=base_url,
-                    timeout=timeout or Config.AI_TIMEOUT)
+    client, _model_id = client_for(key, timeout)
     resp = client.chat.completions.create(
         model=m["model"], messages=messages,
         max_tokens=max_tokens, temperature=temperature)

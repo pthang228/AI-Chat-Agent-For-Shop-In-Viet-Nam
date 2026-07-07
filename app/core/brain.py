@@ -60,6 +60,45 @@ FIRST_MESSAGE_GREETING = (
 )
 
 
+# ── Bộ từ khoá "hỏi lịch/phòng trống" — DÙNG CHUNG cho brain (override intent
+# trên kênh thật) và Test Bot (prompt_api) để preview khớp production ──
+DAY_KEYWORDS = [
+    # Hôm nay
+    "hôm nay", "ngày hôm nay", "hnay", "tnay", "t.nay",
+    "tối nay", "tối này", "đêm nay", "đêm này",
+    "chiều nay", "chiều này", "sáng nay", "sáng này", "trưa nay",
+    # Ngày mai
+    "ngày mai", "tối mai", "chiều mai", "sáng mai", "trưa mai",
+    "hôm sau", "mai chiều", "mai tối", "mai sáng",
+    # Mốt
+    "ngày mốt", "ngày kia",
+    # Thứ trong tuần
+    "thứ 2", "thứ hai", "thứ 3", "thứ ba",
+    "thứ 4", "thứ tư",  "thứ 5", "thứ năm",
+    "thứ 6", "thứ sáu", "thứ 7", "thứ bảy",
+    "chủ nhật", "cuối tuần", "tuần sau", "tuần tới",
+    "tháng sau", "tháng tới",
+    # Tiếng Anh phổ biến
+    "tonight", "tomorrow",
+]
+AVAIL_KEYWORDS = [
+    "còn phòng", "phòng trống", "còn trống", "có phòng", "còn chỗ",
+    "có chỗ", "có chỗ trống", "chỗ trống",
+    "đặt được", "book được", "trống không", "trống ko", "trống chưa",
+    "còn ko", "còn không", "còn gì không", "còn gì ko",
+    "check lịch", "xem lịch", "kiểm tra lịch", "lịch trống",
+    "phòng nào trống", "ca nào trống", "ca nào còn", "kết quả", "check xong",
+    "qua đêm", "ca đêm", "ca trưa", "ca chiều", "ca sáng",
+    "slot", "available",
+]
+
+
+def mentions_availability(text_lower: str) -> bool:
+    """Câu có ý 'hỏi phòng/lịch trống' không (chưa xét tới ngày)."""
+    return any(k in text_lower for k in AVAIL_KEYWORDS) \
+        or bool(re.search(r'còn.{0,30}(ko|không)\b', text_lower))
+
+
 def _default_shop(conv) -> bool:
     """Hội thoại thuộc SHOP GỐC (chủ nền tảng)? Chỉ shop gốc mới dùng kho media
     LEGACY (ảnh bảng giá/phòng trong media/) và map phòng cứng theo tên homestay.
@@ -185,37 +224,9 @@ class Brain:
         _has_room  = bool(re.search(r'\b[123]\d{2}\b', text))
         _has_home  = any(k in tl_check for k in ["haru", "mochi", "staycation"])
 
-        # ── Override availability_check ──
-        _day_kw = [
-            # Hôm nay
-            "hôm nay", "ngày hôm nay", "hnay", "tnay", "t.nay",
-            "tối nay", "tối này", "đêm nay", "đêm này",
-            "chiều nay", "chiều này", "sáng nay", "sáng này", "trưa nay",
-            # Ngày mai
-            "ngày mai", "tối mai", "chiều mai", "sáng mai", "trưa mai",
-            "hôm sau", "mai chiều", "mai tối", "mai sáng",
-            # Mốt
-            "ngày mốt", "ngày kia",
-            # Thứ trong tuần
-            "thứ 2", "thứ hai", "thứ 3", "thứ ba",
-            "thứ 4", "thứ tư",  "thứ 5", "thứ năm",
-            "thứ 6", "thứ sáu", "thứ 7", "thứ bảy",
-            "chủ nhật", "cuối tuần", "tuần sau", "tuần tới",
-            "tháng sau", "tháng tới",
-            # Tiếng Anh phổ biến
-            "tonight", "tomorrow",
-        ]
-        _avail_kw = [
-            "còn phòng", "phòng trống", "còn trống", "có phòng", "còn chỗ",
-            "có chỗ", "có chỗ trống", "chỗ trống",
-            "đặt được", "book được", "trống không", "trống ko", "trống chưa",
-            "còn ko", "còn không", "còn gì không", "còn gì ko",
-            "check lịch", "xem lịch", "kiểm tra lịch", "lịch trống",
-            "phòng nào trống", "ca nào trống", "ca nào còn", "kết quả", "check xong",
-            "qua đêm", "ca đêm", "ca trưa", "ca chiều", "ca sáng",
-            "slot", "available",
-        ]
-        _has_day   = any(k in tl_check for k in _day_kw)
+        # ── Override availability_check (bộ từ khoá module-level DAY_KEYWORDS/
+        # AVAIL_KEYWORDS — Test Bot dùng chung để preview khớp production) ──
+        _has_day   = any(k in tl_check for k in DAY_KEYWORDS)
         # Viết tắt thứ: t2-t7, cn
         if not _has_day:
             _has_day = bool(re.search(r'\bt[2-7]\b|\bcn\b', tl_check))
@@ -231,9 +242,8 @@ class Brain:
                 r'ngày\s+\d+|\d{1,2}[/\.]\d{1,2}|\d{1,2}\s+tháng\s+\d+',
                 tl_check
             ))
-        _has_avail = any(k in tl_check for k in _avail_kw)
-        # "còn...ko/không" cách nhau — vd "còn p qua đêm tối nay ko"
-        _has_avail = _has_avail or bool(re.search(r'còn.{0,30}(ko|không)\b', tl_check))
+        # (gồm cả "còn...ko/không" cách nhau — vd "còn p qua đêm tối nay ko")
+        _has_avail = mentions_availability(tl_check)
 
         if intent == "other" and not use_ai_reply:
             # Case 1: nêu ngày + hỏi phòng

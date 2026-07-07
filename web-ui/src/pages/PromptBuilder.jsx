@@ -244,16 +244,14 @@ export default function PromptBuilder() {
     setBusy(true);
     const r = await promptApi.generate(linkList, instructions, genModel);
     setBusy(false);
-    const warnTail = "";
     if (r.ok && r.body?.draft) {
       setDraft(r.body.draft);
       setChunks(r.body.chunks || []);
       setGaps(r.body.gaps || []);
       setSources(r.body.sources || []);
-      if (warnTail) setMsg(warnTail.trim());
       setTimeout(() => document.querySelector(".draft-box")?.scrollIntoView({ behavior: "smooth" }), 80);
     } else {
-      setMsg("❌ " + (r.body?.error || (r.status === 0 ? "Không kết nối được máy chủ (5005)" : "Tạo thất bại")) + warnTail);
+      setMsg("❌ " + (r.body?.error || (r.status === 0 ? "Không kết nối được máy chủ (5005)" : "Tạo thất bại")));
     }
   }
 

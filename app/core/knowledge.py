@@ -221,10 +221,13 @@ def _score(chunk: dict, q_tokens: set, q_norm: str, idf: dict) -> float:
 FULL_KB_CHAR_BUDGET = 24_000
 
 
-def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> list:
-    """Top-k mẩu liên quan tới câu hỏi + LUÔN kèm mẩu pinned (thông tin nền) —
-    kho lớn cũng không bao giờ mất mẩu ghim. Kho trống → []."""
-    chunks = list_chunks(shop)
+def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 6,
+             chunks: list = None) -> list:
+    """Top-k mẩu liên quan tới câu hỏi + LUÔN kèm mẩu pinned (thông tin nền,
+    tối đa 4 — chống prompt phình khi shop ghim nhiều) — kho lớn cũng không mất
+    mẩu ghim. chunks: truyền kho đã đọc sẵn để khỏi query DB lần 2. Kho trống → []."""
+    if chunks is None:
+        chunks = list_chunks(shop)
     if not chunks:
         return []
     q_norm = " ".join(_tokens(query))
@@ -236,10 +239,10 @@ def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> list:
     pinned = [c for c in chunks if c["pinned"]]
     if not top:
         return pinned[:k] if pinned else chunks[:1]
-    # Ghép pinned vào CUỐI (không trùng) — bot luôn có thông tin nền của shop,
+    # Ghép pinned vào CUỐI (không trùng, tối đa 4) — bot luôn có thông tin nền,
     # còn hits[0] vẫn là mẩu khớp nhất (debug/test dựa vào thứ tự này)
     seen = {c["id"] for c in top}
-    return top + [c for c in pinned if c["id"] not in seen]
+    return top + [c for c in pinned if c["id"] not in seen][:4]
 
 
 def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> tuple:
@@ -256,7 +259,8 @@ def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> tuple:
         # pinned trước cho quen mắt, rồi theo id — thứ tự ổn định
         chunks.sort(key=lambda c: (0 if c.get("pinned") else 1, c["id"]))
         return chunks, "full"
-    return retrieve(query, shop, k), "retrieval"
+    # tái dùng kho đã đọc — khỏi query DB + parse JSON lần 2 mỗi tin nhắn
+    return retrieve(query, shop, k, chunks=chunks), "retrieval"
 
 
 def format_block(chunks: list) -> str:

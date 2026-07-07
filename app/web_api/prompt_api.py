@@ -166,15 +166,9 @@ def _shop_config_context(ws: str) -> str:
                          "liên hệ ngay' nếu chế độ là nhắn/gọi):\n" + "\n".join(ev_lines))
     except Exception:
         pass
-    # (b) Câu trả lời mẫu của shop (tối đa 30)
-    try:
-        rows = db.query("SELECT title, content FROM canned_replies "
-                        "WHERE tenant=? ORDER BY id LIMIT 30", (ws,))
-        if rows:
-            parts.append("CÂU TRẢ LỜI MẪU CHỦ SHOP ĐÃ SOẠN (tham khảo giọng điệu + nội dung):\n"
-                         + "\n".join(f"- {r['title']}: {r['content']}" for r in rows))
-    except Exception:
-        pass
+    # (b) Câu trả lời mẫu: KHÔNG đưa vào đây nữa — đã được GHÉP CỨNG thành 1 mẩu
+    # tri thức nguyên văn sau generate (xem endpoint) → tránh bơm kép làm AI
+    # sinh mẩu trùng nội dung
     # (c) Lịch đặt chỗ (Google Sheets) đã nối — bot tra trực tiếp khi khách hỏi
     try:
         rows = db.query("SELECT name FROM shop_sheets WHERE tenant=? ORDER BY id", (ws,))
@@ -301,10 +295,11 @@ def register_prompt_routes(app):
         # AI sinh não có thể lược mất mục nó coi là "tham khảo"; ghép tay thì
         # đảm bảo 100% vào kho, shop xoá được trong bước duyệt nếu không muốn)
         try:
-            if r.get("chunks"):
+            if True:   # ghép cả khi chunks rỗng (não chế độ cũ) — câu mẫu không được sót
                 rows = db.query("SELECT title, content FROM canned_replies "
                                 "WHERE tenant=? ORDER BY id LIMIT 30", (ws,))
                 if rows:
+                    r.setdefault("chunks", [])
                     r["chunks"].append({
                         "title": "Câu trả lời mẫu của shop",
                         "content": "Chủ shop đã soạn sẵn các câu trả lời sau — khi khách "
@@ -416,14 +411,11 @@ def register_prompt_routes(app):
         # (mô phỏng brain flow — trước đây Test Bot bỏ qua bước này nên AI tự bịa
         # "còn chỗ", shop không thử được luồng lịch)
         try:
-            # Lớp regex bắt "hỏi lịch" như brain thật — AI đôi khi phán nhầm "other"
-            # với câu không dấu/persona lạ ("con phong khong", "ngay 1/11...")
+            # Bắt "hỏi lịch" bằng ĐÚNG bộ nhận diện của brain (dùng chung
+            # AVAIL_KEYWORDS/mentions_availability) — Test Bot khớp production
+            from app.core.brain import mentions_availability
             _low = message.lower()
-            _asks_room = any(k in _low for k in (
-                "còn phòng", "con phong", "phòng trống", "phong trong",
-                "còn chỗ", "con cho", "hết phòng", "het phong",
-                "lịch trống", "lich trong", "đặt được không", "dat duoc khong"))
-            if _asks_room and out.get("intent") in ("other", "unknown_question", None):
+            if mentions_availability(_low) and out.get("intent") in ("other", "unknown_question", None):
                 out["intent"] = "availability_check"
             if out.get("intent") == "availability_check":
                 from app.core.sheets import format_availability_for_ai

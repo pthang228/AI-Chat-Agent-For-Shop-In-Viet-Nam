@@ -59,18 +59,25 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
+_gcreds = None    # cache credentials — token sống ~1 giờ, khỏi refresh mỗi lượt
+
+
 def _google_token() -> str:
     """Access token của SERVICE ACCOUNT (scope drive.readonly) — đọc mọi file
     Google (Docs/Drive) shop đã share cho email service account, không cần
-    để công khai. Thiếu credentials/lỗi → ''."""
+    để công khai. Credentials cache module-level, chỉ refresh khi hết hạn.
+    Thiếu credentials/lỗi → ''."""
+    global _gcreds
     try:
-        from google.oauth2.service_account import Credentials
         from google.auth.transport.requests import Request as _GRequest
-        creds = Credentials.from_service_account_file(
-            Config.GOOGLE_CREDENTIALS_FILE,
-            scopes=["https://www.googleapis.com/auth/drive.readonly"])
-        creds.refresh(_GRequest())
-        return creds.token or ""
+        if _gcreds is None:
+            from google.oauth2.service_account import Credentials
+            _gcreds = Credentials.from_service_account_file(
+                Config.GOOGLE_CREDENTIALS_FILE,
+                scopes=["https://www.googleapis.com/auth/drive.readonly"])
+        if not _gcreds.valid:
+            _gcreds.refresh(_GRequest())
+        return _gcreds.token or ""
     except Exception as e:
         log.info(f"[PromptBuilder] không lấy được token Google ({e})")
         return ""
@@ -98,10 +105,19 @@ def _drive_get(file_id: str, export_mime: str = None):
         return None, ""
 
 
+_gsheet_cache = {}          # sheet_id → (timestamp, text)
+_GSHEET_CACHE_TTL = 120     # giây — 1 lần Dạy AI: phân loại + fetch chỉ đọc sheet 1 lần
+
+
 def _gsheet_text(sheet_id: str) -> str:
     """Đọc Google Sheet bằng SERVICE ACCOUNT (sheet chỉ cần share Người xem cho
     email service account — không cần để công khai). Gom tối đa 5 tab, mỗi tab
-    300 dòng, dạng CSV thô. Lỗi (chưa share/thiếu credentials) → ''."""
+    300 dòng, dạng CSV thô. Cache 120s để 1 lượt Dạy AI (phân loại rồi fetch)
+    không đọc trùng cùng sheet 2 lần. Lỗi (chưa share/thiếu credentials) → ''."""
+    import time as _time
+    hit = _gsheet_cache.get(sheet_id)
+    if hit and _time.time() - hit[0] < _GSHEET_CACHE_TTL:
+        return hit[1]
     try:
         from app.core.sheets import _get_client
         ss = _get_client().open_by_key(sheet_id)
@@ -115,6 +131,7 @@ def _gsheet_text(sheet_id: str) -> str:
         out = "\n".join(parts).strip()
         if out:
             log.info(f"[PromptBuilder] đọc sheet {sheet_id[:12]}… bằng service account OK")
+            _gsheet_cache[sheet_id] = (_time.time(), out)
         return out
     except Exception as e:
         log.info(f"[PromptBuilder] đọc sheet bằng service account lỗi ({e}) → thử CSV công khai")
@@ -150,6 +167,13 @@ def _docx_text(data: bytes) -> str:
         return ""
 
 
+def _clip_ok(url: str, text: str) -> dict:
+    """Kết quả đọc link OK — cắt bớt theo MAX_LINK_CHARS ở MỘT chỗ duy nhất."""
+    if len(text) > MAX_LINK_CHARS:
+        text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
+    return {"url": url, "ok": True, "text": text}
+
+
 def fetch_link(url: str) -> dict:
     """Tải 1 link dữ liệu → {url, ok, text|error}.
     Đọc được: trang web/HTML, text, Google Docs (tự chuyển sang bản xuất text),
@@ -166,9 +190,7 @@ def fetch_link(url: str) -> dict:
         data, _ = _drive_get(m.group(1), export_mime="text/plain")
         text = (data or b"").decode("utf-8", "ignore").strip()
         if text:
-            if len(text) > MAX_LINK_CHARS:
-                text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
-            return {"url": url, "ok": True, "text": text}
+            return _clip_ok(url, text)
         url = f"https://docs.google.com/document/d/{m.group(1)}/export?format=txt"
     # File up lên Google Drive (PDF/Word/txt…): Drive API bằng service account;
     # lỗi → thử link tải công khai
@@ -193,9 +215,7 @@ def fetch_link(url: str) -> dict:
             if not text:
                 return {"url": url, "ok": False, "error": "File Drive không bóc được chữ "
                         "(scan ảnh / định dạng lạ?) — dán nội dung trực tiếp vào ô hướng dẫn"}
-            if len(text) > MAX_LINK_CHARS:
-                text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
-            return {"url": url, "ok": True, "text": text}
+            return _clip_ok(url, text)
         url = f"https://drive.google.com/uc?export=download&id={m.group(1)}"
     # Google Sheets DỮ LIỆU (bảng giá, danh mục… — KHÔNG phải lịch đặt chỗ, UI đã
     # tách nhánh đó): ƯU TIÊN đọc bằng SERVICE ACCOUNT (shop chỉ cần share cho
@@ -204,9 +224,7 @@ def fetch_link(url: str) -> dict:
     if m:
         text = _gsheet_text(m.group(1))
         if text:
-            if len(text) > MAX_LINK_CHARS:
-                text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
-            return {"url": url, "ok": True, "text": text}
+            return _clip_ok(url, text)
         url = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv"
     try:
         r = requests.get(url, timeout=FETCH_TIMEOUT, headers={
@@ -240,9 +258,7 @@ def fetch_link(url: str) -> dict:
             text = _strip_html(raw) if "html" in ctype or raw.lstrip()[:1] == "<" else raw.strip()
         if not text:
             return {"url": url, "ok": False, "error": "trang không có nội dung chữ"}
-        if len(text) > MAX_LINK_CHARS:
-            text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
-        return {"url": url, "ok": True, "text": text}
+        return _clip_ok(url, text)
     except Exception as e:
         return {"url": url, "ok": False, "error": str(e)[:200]}
 
@@ -297,14 +313,8 @@ def _call_ai_long(messages: list, model_key: str = None, owner: str = None) -> s
     if model_key:
         try:
             from app.core import ai_models
-            m = ai_models.CATALOG[model_key]
-            base_url, _ = ai_models.PROVIDERS[m["provider"]]
-            api_key = ai_models._api_key(m["provider"])
-            if not api_key:
-                raise RuntimeError(f"thiếu API key provider {m['provider']}")
-            client = OpenAI(api_key=api_key, base_url=base_url,
-                            timeout=Config.AI_LONG_TIMEOUT)
-            r = _gen_full(client, m["model"], messages, owner=owner, model_key=model_key)
+            client, model_id = ai_models.client_for(model_key, Config.AI_LONG_TIMEOUT)
+            r = _gen_full(client, model_id, messages, owner=owner, model_key=model_key)
             log.info(f"[PromptBuilder] dùng model shop chọn: {model_key}")
             return r
         except Exception as e:
