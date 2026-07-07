@@ -212,16 +212,18 @@ def _score(chunk: dict, q_tokens: set, q_norm: str, idf: dict) -> float:
     return s
 
 
-# Ngưỡng "kho đủ nhỏ để nhồi HẾT vào prompt" (ký tự content, ~3k token).
-# Anthropic khuyến nghị: KB dưới ngưỡng token → đưa TOÀN BỘ vào context, bỏ
-# retrieval → 0 rủi ro "tra trượt mẩu đúng". Shop nhỏ (≤~25 mẩu) hưởng lợi này;
-# shop lớn vượt ngưỡng → quay về retrieve top-k (chống prompt phình + lost-in-middle).
-FULL_KB_CHAR_BUDGET = 9000
+# Ngưỡng "kho đủ nhỏ để nhồi HẾT vào prompt" (ký tự content, ~8k token).
+# Kho dưới ngưỡng → đưa TOÀN BỘ dữ liệu shop vào MỌI tin nhắn, bỏ retrieval
+# → bot "học hết", 0 rủi ro tra trượt câu hỏi đặc thù. Đại đa số shop nằm
+# dưới ngưỡng này (24k ký tự ≈ 40-60 mẩu chi tiết); chi phí thêm không đáng kể
+# (DeepSeek ~6,5đ/1M token input). Shop cực lớn vượt ngưỡng → retrieve top-k
+# (chống prompt phình + lost-in-middle) nhưng LUÔN kèm các mẩu ghim.
+FULL_KB_CHAR_BUDGET = 24_000
 
 
-def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 4) -> list:
-    """Top-k mẩu liên quan tới câu hỏi. Không mẩu nào match → trả mẩu pinned
-    (thông tin chung) để bot vẫn có nền; kho trống → []."""
+def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> list:
+    """Top-k mẩu liên quan tới câu hỏi + LUÔN kèm mẩu pinned (thông tin nền) —
+    kho lớn cũng không bao giờ mất mẩu ghim. Kho trống → []."""
     chunks = list_chunks(shop)
     if not chunks:
         return []
@@ -231,13 +233,16 @@ def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 4) -> list:
     scored = [(_score(c, q_tokens, q_norm, idf), c) for c in chunks]
     scored.sort(key=lambda x: (-x[0], x[1]["id"]))
     top = [c for s, c in scored[:k] if s > 0]
-    if top:
-        return top
     pinned = [c for c in chunks if c["pinned"]]
-    return pinned[:k] if pinned else chunks[:1]
+    if not top:
+        return pinned[:k] if pinned else chunks[:1]
+    # Ghép pinned vào CUỐI (không trùng) — bot luôn có thông tin nền của shop,
+    # còn hits[0] vẫn là mẩu khớp nhất (debug/test dựa vào thứ tự này)
+    seen = {c["id"] for c in top}
+    return top + [c for c in pinned if c["id"] not in seen]
 
 
-def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 4) -> tuple:
+def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> tuple:
     """Chọn mẩu đưa vào prompt cho 1 câu hỏi. Trả (chunks, mode):
     - Kho NHỎ (tổng content ≤ FULL_KB_CHAR_BUDGET) → TRẢ HẾT (mode='full'):
       không retrieval, không bao giờ tra trượt — bot thấy toàn bộ dữ liệu shop.

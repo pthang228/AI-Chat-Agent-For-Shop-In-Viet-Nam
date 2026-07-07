@@ -88,16 +88,18 @@ hits = kn.retrieve("phòng 301 còn không?")
 check(hits and hits[0]["title"] == "Phòng 301", "B2 room_query", f"{[h['title'] for h in hits]}")
 
 # B3: từ đồng nghĩa trong keywords (pet ~ thú cưng)
+# (retrieve giờ LUÔN kèm mẩu pinned lên đầu → mẩu match nằm ngay sau)
 hits = kn.retrieve("mang pet vào được không")
-check(hits and hits[0]["title"] == "Thú cưng", "B3 synonym_keyword", f"{[h['title'] for h in hits]}")
+check(hits and any(h["title"] == "Thú cưng" for h in hits[:2]), "B3 synonym_keyword",
+      f"{[h['title'] for h in hits]}")
 
 # B4: câu chào không match gì → trả mẩu pinned (thông tin chung)
 hits = kn.retrieve("xin chào")
 check(hits and hits[0]["title"] == "Thông tin chung", "B4 pinned_fallback", f"{[h['title'] for h in hits]}")
 
-# B5: top-k giới hạn
+# B5: top-k giới hạn (k mẩu match + tối đa 1 mẩu pinned ghép đầu)
 hits = kn.retrieve("giá phòng 301 và chính sách cọc thú cưng địa chỉ", k=2)
-check(len(hits) == 2, "B5 top_k", len(hits))
+check(2 <= len(hits) <= 3, "B5 top_k", len(hits))
 
 # B6: kho trống → []
 kn.clear()

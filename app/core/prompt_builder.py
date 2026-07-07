@@ -144,6 +144,11 @@ NHIỆM VỤ: từ (1) DỮ LIỆU CỦA SHOP và (2) HƯỚNG DẪN CỦA CHỦ
 ]
  QUY TẮC phần 2:
  · Mỗi mẩu = MỘT chủ đề gọn (1 phòng/1 dịch vụ/1 chính sách/1 nhóm FAQ) — 10-60 mẩu.
+ · PHỦ KÍN 100%: TUYỆT ĐỐI KHÔNG bỏ sót bất kỳ thông tin nào chủ shop đã cung cấp —
+   mọi dịch vụ, mọi mức giá, mọi chính sách, mọi ghi chú đều phải nằm trong ít nhất 1 mẩu.
+   Thà nhiều mẩu còn hơn thiếu dữ liệu. KHÔNG tóm tắt làm mất chi tiết/số liệu.
+ · FAQ: TỪNG DÒNG "câu hỏi → câu trả lời" chủ shop ghi phải vào knowledge — nội dung
+   giữ nguyên ý và số liệu, câu hỏi gốc đưa vào keywords của mẩu đó.
  · "keywords": 5-15 cụm từ khách thật sự gõ khi hỏi về mẩu đó (vd mẩu giá phòng: "giá", "bao nhiêu tiền", "nhiêu 1 đêm", "bảng giá", "phí"...). Nghĩ như KHÁCH, không phải như chủ shop.
  · Mẩu đầu tiên: title "Thông tin chung", content = tên shop, địa chỉ, SĐT, giờ mở cửa, tóm tắt dịch vụ — đặt "pinned": true. Các mẩu khác "pinned": false.
  · Số liệu phải CHÍNH XÁC theo dữ liệu; không bịa; chỗ thiếu ghi "(chủ shop bổ sung sau)".
