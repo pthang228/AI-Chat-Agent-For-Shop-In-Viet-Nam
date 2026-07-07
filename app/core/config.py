@@ -41,7 +41,7 @@ class Config:
     GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
     # Timeout gọi AI (giây) — tránh 1 request treo giữ mãi 1 thread/1 khách chờ.
     AI_TIMEOUT       = int(os.getenv("AI_TIMEOUT", "60"))        # trả lời khách
-    AI_LONG_TIMEOUT  = int(os.getenv("AI_LONG_TIMEOUT", "120"))  # sinh prompt/dạy AI (dài hơn)
+    AI_LONG_TIMEOUT  = int(os.getenv("AI_LONG_TIMEOUT", "300"))  # sinh prompt/dạy AI (8k token output mất 2-4 phút)
 
     # Google Sheets
     GOOGLE_CREDENTIALS_FILE = _resolve(os.getenv("GOOGLE_CREDENTIALS_FILE"), "google_credentials.json")

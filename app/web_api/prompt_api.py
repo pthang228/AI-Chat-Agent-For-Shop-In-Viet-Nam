@@ -69,6 +69,56 @@ def _test_photos(message: str, out: dict) -> list:
 log = logging.getLogger("prompt_api")
 
 
+def _classify_sheet_link(url: str, note: str, owner: str = None) -> str:
+    """Sheet là 'booking' (LỊCH ĐẶT CHỖ — nối cho bot tra realtime) hay 'data'
+    (DỮ LIỆU TĨNH — AI đọc vào não)? Quyết định 3 lớp:
+    1. Mô tả shop ghi rõ ràng → theo mô tả.
+    2. Nội dung sheet nhiều ô Trống/Đã đặt → lịch.
+    3. Mơ hồ → hỏi AI phân loại (1 câu, rẻ). Không đọc được → data (an toàn:
+       fetch_link sẽ tự báo lỗi rõ nếu không đọc nổi)."""
+    n = (note or "").lower()
+    if re.search(r"lịch|lich\b|đặt\s*ch|dat\s*ch|booking|calendar", n):
+        return "booking"
+    if re.search(r"bảng\s*giá|bang\s*gia|menu|giá\b|gia\b|dịch\s*vụ|dich\s*vu|danh\s*mục|chính\s*sách", n):
+        return "data"
+    from app.core.prompt_builder import _gsheet_text
+    from app.core.sheets import extract_sheet_id
+    sid = extract_sheet_id(url)
+    txt = _gsheet_text(sid) if sid else ""
+    if not txt:
+        return "data"
+    low = txt[:8000].lower()
+    if len(re.findall(r"trống|đã đặt|da dat|booked", low)) >= 5:
+        return "booking"
+    try:
+        from app.core import ai_models
+        ans = ai_models.chat([{"role": "user", "content":
+            f"Shop mô tả sheet: '{note or '(không ghi)'}'. 500 ký tự đầu nội dung:\n{txt[:500]}\n\n"
+            "Đây là LỊCH ĐẶT CHỖ theo ngày/ca (thay đổi hằng ngày, bot phải tra trực tiếp) "
+            "hay DỮ LIỆU TĨNH (bảng giá/danh mục/chính sách — nên dạy vào bộ não)? "
+            "Trả lời đúng 1 từ: LICH hoặc DULIEU."}],
+            owner=owner, max_tokens=5, temperature=0)
+        if "LICH" in (ans or "").upper():
+            return "booking"
+    except Exception as e:
+        log.info(f"[prompt] AI phân loại sheet lỗi ({e}) → coi là dữ liệu")
+    return "data"
+
+
+def _connect_booking_sheet(db, ws: str, url: str, name: str) -> str:
+    """Nối 1 sheet lịch vào shop_sheets (trùng thì thôi). Trả tên chi nhánh."""
+    from app.core.sheets import extract_sheet_id
+    from datetime import datetime
+    sid = extract_sheet_id(url)
+    name = (name or "").strip()[:60] or "Chi nhánh"
+    if sid and not db.query(
+            "SELECT 1 FROM shop_sheets WHERE tenant=? AND sheet_id=?", (ws, sid)):
+        db.execute("INSERT INTO shop_sheets(tenant, name, sheet_id, created_at) "
+                   "VALUES (?,?,?,?)", (ws, name, sid, datetime.now().isoformat()))
+        log.info(f"[prompt] {ws} nối sheet lịch '{name}' ({sid[:12]}…) từ Dạy AI")
+    return name
+
+
 def _shop_config_context(ws: str) -> str:
     """Gom DỮ LIỆU CẤU HÌNH SHOP (hệ thống tự đính kèm khi Dạy AI) theo workspace:
     liên hệ khẩn cấp, câu trả lời mẫu, lịch đặt chỗ đã nối, bộ ảnh. TUYỆT ĐỐI
@@ -190,9 +240,34 @@ def register_prompt_routes(app):
             return {"ok": False, "error": "Mô hình không hợp lệ"}, 400
         if model and model not in ai_models.available_keys():
             return {"ok": False, "error": "Mô hình này máy chủ chưa cấu hình API key"}, 400
-        # Gom cấu hình shop (liên hệ khẩn, câu mẫu, lịch, bộ ảnh — KHÔNG bank_*)
+        # Log THÔ những gì trình duyệt gửi — để chẩn đoán "0 link" (link đi nhầm
+        # nhánh lịch? ô link trống? bản UI cũ?)
+        log.info(f"[prompt] generate body: links={[(l if isinstance(l, str) else l.get('url','?')) for l in links]}"
+                 f" model={model!r} instr={len(instructions)} ký tự")
         from app.web_api.auth_api import workspace_of
         ws = workspace_of(u)
+        # Link Google Sheets → TỰ NHẬN DIỆN theo mô tả shop ghi + nội dung sheet:
+        # LỊCH ĐẶT CHỖ → nối cho bot tra realtime (không nhét vào não — lịch đổi
+        # hằng ngày); DỮ LIỆU TĨNH → giữ lại cho AI đọc như link thường.
+        routed_sources, kept = [], []
+        for lk in links:
+            lurl = lk if isinstance(lk, str) else (lk.get("url") or "")
+            lnote = "" if isinstance(lk, str) else (lk.get("note") or "")
+            if "docs.google.com/spreadsheets" in lurl.lower():
+                kind = _classify_sheet_link(lurl, lnote, owner=ws)
+                log.info(f"[prompt] nhận diện sheet {lurl[:60]}… ('{lnote[:40]}') → {kind}")
+                if kind == "booking":
+                    name = _connect_booking_sheet(get_db(), ws, lurl, lnote)
+                    instructions = ((instructions + "\n\n") if instructions else "") + (
+                        f"Shop đã nối Google Sheet lịch đặt chỗ '{name}' — bot tự tra khi "
+                        f"khách hỏi lịch trống, KHÔNG bịa lịch.")
+                    routed_sources.append({
+                        "url": lurl, "ok": True,
+                        "info": f"📅 nhận diện là LỊCH ĐẶT CHỖ → đã nối ('{name}'), bot tra trực tiếp — không nhét vào não"})
+                    continue
+            kept.append(lk)
+        links = kept
+        # Gom cấu hình shop (liên hệ khẩn, câu mẫu, lịch, bộ ảnh — KHÔNG bank_*)
         extra_context = _shop_config_context(ws)
         try:
             r = prompt_builder.generate(links, instructions, model=model or None,
@@ -220,6 +295,8 @@ def register_prompt_routes(app):
                     })
         except Exception as e:
             log.error(f"[prompt] ghép câu mẫu lỗi: {e}")
+        if routed_sources:
+            r["sources"] = routed_sources + (r.get("sources") or [])
         log.info(f"[prompt] {u['username']} tạo bộ não ({r['mode']}, {len(r['draft'])} ký tự, "
                  f"{len(r['chunks'])} mẩu, {len(links)} link)")
         return {"ok": True, **r}
@@ -315,6 +392,50 @@ def register_prompt_routes(app):
         except Exception as e:
             log.error(f"[prompt] test lỗi: {e}", exc_info=True)
             return {"ok": False, "error": f"Gọi AI thất bại: {e}"}, 502
+        # KHÁCH HỎI LỊCH → Test Bot cũng TRA GOOGLE SHEET THẬT như kênh thật
+        # (mô phỏng brain flow — trước đây Test Bot bỏ qua bước này nên AI tự bịa
+        # "còn chỗ", shop không thử được luồng lịch)
+        try:
+            # Lớp regex bắt "hỏi lịch" như brain thật — AI đôi khi phán nhầm "other"
+            # với câu không dấu/persona lạ ("con phong khong", "ngay 1/11...")
+            _low = message.lower()
+            _asks_room = any(k in _low for k in (
+                "còn phòng", "con phong", "phòng trống", "phong trong",
+                "còn chỗ", "con cho", "hết phòng", "het phong",
+                "lịch trống", "lich trong", "đặt được không", "dat duoc khong"))
+            if _asks_room and out.get("intent") in ("other", "unknown_question", None):
+                out["intent"] = "availability_check"
+            if out.get("intent") == "availability_check":
+                from app.core.sheets import format_availability_for_ai
+                from app.core.brain import _infer_date_from_text
+                from app.web_api.auth_api import workspace_of
+                ws = workspace_of(u)
+                ci = out.get("checkin") or _infer_date_from_text(message)
+                co = out.get("checkout") or ci
+                if not ci:
+                    out["reply"] = "Bạn muốn kiểm tra lịch ngày nào ạ? 📅"
+                else:
+                    log.info(f"[prompt] test bot TRA LỊCH: {ci} → {co} (shop {ws})")
+                    ctx = format_availability_for_ai(ci, co, tenant=ws)
+                    if "[KHONG_CO_SHEET]" in ctx:
+                        out["reply"] = (f"Mình đã ghi nhận bạn muốn ngày {ci} rồi nha! 📅 "
+                                        "Chủ shop sẽ kiểm tra lịch và xác nhận sớm nhất 😊\n\n"
+                                        "(Ghi chú test: shop chưa nối Google Sheet lịch — "
+                                        "nối ở Bước 2 trang Dạy AI để bot tự tra)")
+                    elif "[CHUA_CO_LICH]" in ctx:
+                        out["reply"] = (f"Ngày {ci} hệ thống chưa ghi nhận booking nào — "
+                                        "các phòng vẫn còn trống bạn ơi! 😊 "
+                                        "Bạn muốn đặt phòng nào thì báo mình nhé!")
+                    elif "KHÔNG có ca trống" in ctx or "NGHIÊM CẤM" in ctx:
+                        out["reply"] = (f"Dạ ngày {ci} không còn ca trống nào bạn ơi 😢 "
+                                        "Bạn thử ngày khác nhé!")
+                    else:
+                        out["reply"] = (f"Dạ, mình kiểm tra cho bạn nè! 😊\n\n{ctx}\n\n"
+                                        "Bạn muốn đặt phòng nào thì báo mình nhé!")
+                    if isinstance(out.get("debug"), dict):
+                        out["debug"]["sheet_checked"] = True
+        except Exception as e:
+            log.error(f"[prompt] test tra lịch lỗi: {e}", exc_info=True)
         out["photos"] = _test_photos(message, out)   # ảnh bot sẽ gửi (preview)
         log.info(f"[prompt] {u['username']} test bot: '{message[:60]}' → intent={out.get('intent')}"
                  f" ({len(out['photos'])} ảnh)")

@@ -59,6 +59,68 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
+def _google_token() -> str:
+    """Access token của SERVICE ACCOUNT (scope drive.readonly) — đọc mọi file
+    Google (Docs/Drive) shop đã share cho email service account, không cần
+    để công khai. Thiếu credentials/lỗi → ''."""
+    try:
+        from google.oauth2.service_account import Credentials
+        from google.auth.transport.requests import Request as _GRequest
+        creds = Credentials.from_service_account_file(
+            Config.GOOGLE_CREDENTIALS_FILE,
+            scopes=["https://www.googleapis.com/auth/drive.readonly"])
+        creds.refresh(_GRequest())
+        return creds.token or ""
+    except Exception as e:
+        log.info(f"[PromptBuilder] không lấy được token Google ({e})")
+        return ""
+
+
+def _drive_get(file_id: str, export_mime: str = None):
+    """Tải file Google Drive qua Drive API bằng service account.
+    export_mime: đặt khi là Google Docs (xuất text). Trả (bytes, content_type)
+    hoặc (None, '') nếu không share/không lấy được token."""
+    token = _google_token()
+    if not token:
+        return None, ""
+    base = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+    url = f"{base}/export?mimeType={export_mime}" if export_mime else f"{base}?alt=media"
+    try:
+        r = requests.get(url, headers={"Authorization": f"Bearer {token}"},
+                         timeout=FETCH_TIMEOUT)
+        if r.status_code >= 400:
+            log.info(f"[PromptBuilder] Drive API HTTP {r.status_code} cho {file_id[:10]}… "
+                     "(file chưa share cho service account?)")
+            return None, ""
+        return r.content, (r.headers.get("Content-Type") or "").lower()
+    except Exception as e:
+        log.info(f"[PromptBuilder] Drive API lỗi: {e}")
+        return None, ""
+
+
+def _gsheet_text(sheet_id: str) -> str:
+    """Đọc Google Sheet bằng SERVICE ACCOUNT (sheet chỉ cần share Người xem cho
+    email service account — không cần để công khai). Gom tối đa 5 tab, mỗi tab
+    300 dòng, dạng CSV thô. Lỗi (chưa share/thiếu credentials) → ''."""
+    try:
+        from app.core.sheets import _get_client
+        ss = _get_client().open_by_key(sheet_id)
+        parts = []
+        for ws in ss.worksheets()[:5]:
+            rows = ws.get_all_values()
+            if not rows:
+                continue
+            parts.append(f"### Tab: {ws.title}")
+            parts += [", ".join(cell for cell in row) for row in rows[:300]]
+        out = "\n".join(parts).strip()
+        if out:
+            log.info(f"[PromptBuilder] đọc sheet {sheet_id[:12]}… bằng service account OK")
+        return out
+    except Exception as e:
+        log.info(f"[PromptBuilder] đọc sheet bằng service account lỗi ({e}) → thử CSV công khai")
+        return ""
+
+
 def _pdf_text(data: bytes) -> str:
     """Bóc chữ từ PDF (pypdf; máy cũ có PyPDF2 cũng chạy). Lỗi/scan ảnh → ''."""
     try:
@@ -97,11 +159,55 @@ def fetch_link(url: str) -> dict:
         return {"url": url, "ok": False, "error": "link trống"}
     if not re.match(r"^https?://", url, re.I):
         url = "https://" + url
-    # Google Docs: trang viewer toàn JS không đọc được → dùng bản XUẤT TEXT
-    # (doc phải công khai "Bất kỳ ai có đường liên kết")
+    # Google Docs: ƯU TIÊN Drive API bằng service account (chỉ cần share cho
+    # email service account); lỗi → thử bản xuất text công khai
     m = re.search(r"docs\.google\.com/document/d/([A-Za-z0-9_-]+)", url)
     if m:
+        data, _ = _drive_get(m.group(1), export_mime="text/plain")
+        text = (data or b"").decode("utf-8", "ignore").strip()
+        if text:
+            if len(text) > MAX_LINK_CHARS:
+                text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
+            return {"url": url, "ok": True, "text": text}
         url = f"https://docs.google.com/document/d/{m.group(1)}/export?format=txt"
+    # File up lên Google Drive (PDF/Word/txt…): Drive API bằng service account;
+    # lỗi → thử link tải công khai
+    m = re.search(r"drive\.google\.com/(?:file/d/|open\?id=|uc\?[^ ]*id=)([A-Za-z0-9_-]+)", url)
+    if m:
+        data, ctype = _drive_get(m.group(1))
+        if data:
+            if any(t in ctype for t in ("image/", "video/", "audio/")):
+                return {"url": url, "ok": False, "error": "File ảnh/video/âm thanh — AI chỉ "
+                        "đọc được CHỮ. Ảnh sản phẩm thì dùng Thư viện ảnh nhé"}
+            if data[:5] == b"%PDF-" or "pdf" in ctype:
+                text = _pdf_text(data)
+            elif data[:2] == b"PK" or "wordprocessingml" in ctype:
+                text = _docx_text(data)
+            else:
+                text = data.decode("utf-8", "ignore")
+                # File nhị phân lạ decode ra rác (nhiều ký tự không in được) → bỏ
+                head = text[:2000]
+                if head and sum(c.isprintable() or c in "\n\t" for c in head) < len(head) * 0.7:
+                    text = ""
+            text = (text or "").strip()
+            if not text:
+                return {"url": url, "ok": False, "error": "File Drive không bóc được chữ "
+                        "(scan ảnh / định dạng lạ?) — dán nội dung trực tiếp vào ô hướng dẫn"}
+            if len(text) > MAX_LINK_CHARS:
+                text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
+            return {"url": url, "ok": True, "text": text}
+        url = f"https://drive.google.com/uc?export=download&id={m.group(1)}"
+    # Google Sheets DỮ LIỆU (bảng giá, danh mục… — KHÔNG phải lịch đặt chỗ, UI đã
+    # tách nhánh đó): ƯU TIÊN đọc bằng SERVICE ACCOUNT (shop chỉ cần share cho
+    # email service account, không cần công khai); lỗi → thử bản xuất CSV công khai
+    m = re.search(r"docs\.google\.com/spreadsheets/d/([A-Za-z0-9_-]+)", url)
+    if m:
+        text = _gsheet_text(m.group(1))
+        if text:
+            if len(text) > MAX_LINK_CHARS:
+                text = text[:MAX_LINK_CHARS] + "\n…(đã cắt bớt)"
+            return {"url": url, "ok": True, "text": text}
+        url = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv"
     try:
         r = requests.get(url, timeout=FETCH_TIMEOUT, headers={
             "User-Agent": "Mozilla/5.0 (NovaChat prompt-builder)"})
@@ -138,15 +244,62 @@ def fetch_link(url: str) -> dict:
 
 # ── Gọi AI sinh prompt (max_tokens lớn hơn _call_ai thường) ─────────
 
+GEN_MAX_TOKENS = 8000    # trần MỖI VÒNG (8192 = trần cứng DeepSeek/1 lượt)
+GEN_MAX_ROUNDS = 10      # bị cắt → tự "viết tiếp" tối đa 10 vòng ≈ 80k token output
+
+
+def _gen_full(client, model: str, messages: list,
+              owner: str = None, model_key: str = None) -> str:
+    """Gọi AI sinh não; output CHẠM TRẦN max_tokens (finish_reason='length') →
+    tự nối 'viết tiếp chính xác từ chỗ dừng' tới khi trọn vẹn (tối đa GEN_MAX_ROUNDS).
+    Bộ não dài bao nhiêu cũng không bị cắt cụt giữa chừng nữa.
+    Có owner+model_key → ghi token vào billing (usage) như mọi lượt AI khác."""
+    out, msgs = [], list(messages)
+    total_in = total_out = 0
+    for i in range(GEN_MAX_ROUNDS):
+        r = client.chat.completions.create(
+            model=model, messages=msgs, max_tokens=GEN_MAX_TOKENS, temperature=0.4)
+        ch = r.choices[0]
+        text = ch.message.content or ""
+        out.append(text)
+        try:
+            u = r.usage
+            total_in += u.prompt_tokens or 0
+            total_out += u.completion_tokens or 0
+        except Exception:
+            pass
+        if getattr(ch, "finish_reason", None) != "length":
+            break
+        log.info(f"[PromptBuilder] output chạm trần {GEN_MAX_TOKENS} — viết tiếp (vòng {i + 2}/{GEN_MAX_ROUNDS})")
+        msgs = msgs + [
+            {"role": "assistant", "content": text},
+            {"role": "user", "content": "(Output vừa rồi bị cắt vì giới hạn độ dài.) "
+             "VIẾT TIẾP CHÍNH XÁC từ ký tự đang dừng — không lặp lại phần đã viết, "
+             "không lời dẫn, không mở code fence mới."},
+        ]
+    if owner and model_key and (total_in or total_out):
+        try:
+            from app.core import billing
+            billing.record_token_usage(owner, model_key, total_in, total_out)
+        except Exception:
+            pass
+    return "".join(out)
+
+
 def _call_ai_long(messages: list, model_key: str = None, owner: str = None) -> str:
-    # Shop chọn model để DẠY → thử ai_models.chat trước (tự ghi token vào billing);
-    # lỗi → rơi xuống chuỗi DeepSeek→Groq cũ (giữ nguyên hành vi mặc định).
+    # Shop chọn model để DẠY → gọi model đó (kèm tự-viết-tiếp khi output dài);
+    # lỗi → rơi xuống chuỗi DeepSeek→Groq mặc định.
     if model_key:
         try:
             from app.core import ai_models
-            r = ai_models.chat(messages, owner=owner, model_key=model_key,
-                               max_tokens=6000, temperature=0.4,
-                               timeout=Config.AI_LONG_TIMEOUT)
+            m = ai_models.CATALOG[model_key]
+            base_url, _ = ai_models.PROVIDERS[m["provider"]]
+            api_key = ai_models._api_key(m["provider"])
+            if not api_key:
+                raise RuntimeError(f"thiếu API key provider {m['provider']}")
+            client = OpenAI(api_key=api_key, base_url=base_url,
+                            timeout=Config.AI_LONG_TIMEOUT)
+            r = _gen_full(client, m["model"], messages, owner=owner, model_key=model_key)
             log.info(f"[PromptBuilder] dùng model shop chọn: {model_key}")
             return r
         except Exception as e:
@@ -155,20 +308,19 @@ def _call_ai_long(messages: list, model_key: str = None, owner: str = None) -> s
         try:
             client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com",
                             timeout=Config.AI_LONG_TIMEOUT)
-            r = client.chat.completions.create(
-                model="deepseek-chat", messages=messages, max_tokens=6000, temperature=0.4)
+            r = _gen_full(client, "deepseek-chat", messages,
+                          owner=owner, model_key="deepseek-chat")
             log.info("[PromptBuilder] dùng DeepSeek")
-            return r.choices[0].message.content or ""
+            return r
         except Exception as e:
             log.error(f"[PromptBuilder] DeepSeek lỗi: {e}")
     if Config.GROQ_API_KEY:
         try:
             client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1",
                             timeout=Config.AI_LONG_TIMEOUT)
-            r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", messages=messages, max_tokens=6000, temperature=0.4)
+            r = _gen_full(client, "llama-3.3-70b-versatile", messages)
             log.info("[PromptBuilder] dùng Groq")
-            return r.choices[0].message.content or ""
+            return r
         except Exception as e:
             log.error(f"[PromptBuilder] Groq lỗi: {e}")
     raise RuntimeError("Không gọi được AI (kiểm tra DEEPSEEK_API_KEY/GROQ_API_KEY trong .env)")
@@ -213,6 +365,8 @@ NHIỆM VỤ: từ (1) DỮ LIỆU CỦA SHOP và (2) HƯỚNG DẪN CỦA CHỦ
  Tối đa 8 mục, chỉ nêu thứ THẬT SỰ quan trọng với khách. Đủ thông tin rồi → trả [].)
 
 YÊU CẦU CHUNG:
+0. Output phải TRỌN VẸN cả 3 phần (không dừng giữa chừng) — content mỗi mẩu viết CÔ ĐỌNG,
+   đủ số liệu nhưng không văn vẻ dài dòng, không lặp lại thông tin giữa các mẩu.
 1. Viết tiếng Việt. Tôn trọng tuyệt đối HƯỚNG DẪN CỦA CHỦ SHOP — ưu tiên hơn dữ liệu nếu mâu thuẫn.
 2. Tham khảo PROMPT MẪU chỉ để học giọng điệu/quy trình — KHÔNG bê số liệu của prompt mẫu vào (đó là shop khác).
 3. CHỈ trả về đúng 3 phần với các dòng phân cách ===PERSONA===, ===KNOWLEDGE===, ===GAPS=== — không lời dẫn, không giải thích, không code fence.
@@ -220,7 +374,9 @@ YÊU CẦU CHUNG:
 
 
 def _loads_json_loose(raw: str):
-    """Parse JSON; kèm rác trước/sau → bóc đoạn [...] ngoài cùng. Hỏng → None."""
+    """Parse JSON; kèm rác trước/sau → bóc đoạn [...] ngoài cùng. Output bị CẮT CỤT
+    (AI chạm max_tokens giữa chừng) → vớt các phần tử còn NGUYÊN VẸN thay vì vứt hết
+    (trước đây parse fail → rơi về chế độ cũ, shop thấy nguyên văn JSON thô). Hỏng → None."""
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw).strip()
     try:
@@ -230,6 +386,17 @@ def _loads_json_loose(raw: str):
         if m:
             try:
                 return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+    # Cứu mảng bị cắt cụt: cắt tới '}' cuối cùng còn nguyên rồi tự đóng ']'
+    start = raw.find("[")
+    if start >= 0:
+        end = raw.rfind("}")
+        if end > start:
+            try:
+                out = json.loads(raw[start:end + 1] + "]")
+                log.warning(f"[PromptBuilder] JSON bị cắt cụt — vớt được {len(out)} phần tử nguyên vẹn")
+                return out
             except json.JSONDecodeError:
                 pass
     return None

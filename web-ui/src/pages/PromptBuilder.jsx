@@ -207,7 +207,8 @@ export default function PromptBuilder() {
   function setLink(i, k, v) { setLinks((ls) => ls.map((x, j) => (j === i ? { ...x, [k]: v } : x))); }
   function addLink() { setLinks((ls) => [...ls, { url: "", note: "" }]); }
   function rmLink(i) { setLinks((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ url: "", note: "" }])); }
-  // Google Sheets nhận ra qua URL → nối lịch đặt chỗ (không cần shop chọn mục đích)
+  // Google Sheets: BACKEND tự nhận diện lịch/dữ liệu (đọc mô tả shop ghi +
+  // nội dung sheet + AI phân loại khi mơ hồ) — frontend chỉ gửi link + mô tả.
   const isSheetUrl = (u) => /docs\.google\.com\/spreadsheets/i.test(u || "");
 
   function setG(key, v) { setGuide((g) => ({ ...g, [key]: v })); }
@@ -229,57 +230,21 @@ export default function PromptBuilder() {
     return parts.join("\n\n");
   }
 
-  // Link "Lịch đặt chỗ" → nối vào /sheets (bot tra trực tiếp), KHÔNG đưa vào generate.
-  // 409 (trùng) coi như đã nối; 400 (không phải link Google Sheets) → báo lỗi rõ,
-  // không chặn các link khác. Trả {lines (dòng thêm vào hướng dẫn), warns}.
-  async function connectBookingSheets(bookings) {
-    const lines = [], warns = [];
-    for (const l of bookings) {
-      const name = (l.note || "").trim() || "Chi nhánh";
-      try {
-        const r = await fetch(HOST.bridge + "/sheets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-          body: JSON.stringify({ name, link: l.url }),
-        });
-        const b = await r.json().catch(() => null);
-        if (b?.ok || r.status === 409) {
-          lines.push(`Shop đã nối Google Sheet lịch đặt chỗ (bot tự tra khi khách hỏi lịch trống): ${name}`);
-        } else {
-          warns.push(`⚠️ Link lịch đặt chỗ "${l.url}" chưa nối được: ${b?.error || "lỗi máy chủ"}`);
-        }
-      } catch {
-        warns.push(`⚠️ Link lịch đặt chỗ "${l.url}" chưa nối được: không kết nối được máy chủ (5005)`);
-      }
-    }
-    return { lines, warns };
-  }
-
   async function doGenerate() {
-    let instructions = buildInstructions();
-    const filled = links.filter((l) => l.url.trim());
-    // Google Sheets → nối lịch đặt chỗ (bot tra trực tiếp); link khác → AI đọc nội dung
-    const linkList = filled
-      .filter((l) => !isSheetUrl(l.url))
+    const instructions = buildInstructions();
+    // Gửi HẾT link (kể cả Google Sheets) — backend tự nhận diện lịch/dữ liệu
+    // theo mô tả + nội dung sheet, kết quả báo lại trong "Kết quả đọc link"
+    const linkList = links.filter((l) => l.url.trim())
       .map((l) => ({ url: l.url.trim(), note: (l.note || "").trim() }));
-    const bookings = filled.filter((l) => isSheetUrl(l.url));
-    if (!instructions && linkList.length === 0 && bookings.length === 0) {
+    if (!instructions && linkList.length === 0) {
       setMsg("❌ Điền ít nhất một ô (hoặc dán 1 link) rồi hãy tạo nhé.");
       return;
     }
     setMsg(""); setDraft(null); setChunks([]); setGaps([]); setSources([]);
     setBusy(true);
-    // Nối các sheet lịch đặt chỗ TRƯỚC, rồi mới nhờ AI soạn não
-    const { lines, warns } = await connectBookingSheets(bookings);
-    if (lines.length) instructions = [instructions, ...lines].filter(Boolean).join("\n\n");
-    if (!instructions && linkList.length === 0) {
-      setBusy(false);
-      setMsg(warns.join("\n") || "❌ Không còn dữ liệu nào để dạy — kiểm tra lại link nhé.");
-      return;
-    }
     const r = await promptApi.generate(linkList, instructions, genModel);
     setBusy(false);
-    const warnTail = warns.length ? "\n" + warns.join("\n") : "";
+    const warnTail = "";
     if (r.ok && r.body?.draft) {
       setDraft(r.body.draft);
       setChunks(r.body.chunks || []);
@@ -451,7 +416,7 @@ export default function PromptBuilder() {
                      onChange={(e) => setLink(i, "url", e.target.value)} />
               <input style={{ flex: "2 1 320px" }}
                      placeholder={isSheetUrl(l.url)
-                       ? "Mục đích (vd: lịch đặt phòng cơ sở 1) — dùng làm tên chi nhánh"
+                       ? 'Mô tả sheet này là gì — vd "lịch đặt phòng cơ sở 1", "bảng giá dịch vụ"…'
                        : "Mục đích / nội dung link — vd: bảng giá phòng, menu món, chính sách…"}
                      value={l.note} onChange={(e) => setLink(i, "note", e.target.value)} />
               <button className="btn-mini danger" onClick={() => rmLink(i)} title="Xoá link này">✕</button>
@@ -459,7 +424,10 @@ export default function PromptBuilder() {
           ))}
           {links.some((l) => isSheetUrl(l.url)) && (
             <div className="prompt-help" style={{ marginTop: 10, borderColor: "var(--brand, #7C3AED)" }}>
-              <b style={{ color: "var(--brand, #7C3AED)" }}>📅 Có link Google Sheet — sẽ tự nối làm lịch đặt chỗ.</b>
+              <b style={{ color: "var(--brand, #7C3AED)" }}>
+                🔎 Link Google Sheet — hệ thống TỰ NHẬN DIỆN theo mô tả bạn ghi + nội dung sheet:
+                lịch đặt chỗ → nối cho bot tra trực tiếp · dữ liệu (bảng giá…) → AI đọc vào não.
+              </b>
               {svcEmail
                 ? <p className="hint" style={{ margin: "6px 0 0" }}>
                     Để bot đọc được, mở Google Sheet → <b>Share</b> → thêm email này (quyền <b>Người xem</b>):{" "}
@@ -482,19 +450,18 @@ export default function PromptBuilder() {
               ❓ Link không đọc được?
             </summary>
             <div className="hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
-              Link phải để <b>công khai</b> (ai có link cũng xem được, không cần đăng nhập).
-              <br />• <b>Google Docs / Sheets:</b> bấm <b>Share</b> → đổi sang <b>"Bất kỳ ai có đường liên kết"</b>.
               {svcEmail && (
-                <>
-                  <br />• <b>Google Sheet lịch đặt chỗ:</b> <b>Share</b> cho email này (quyền Người xem):{" "}
+                <>• <b>Mọi file trên Google</b> (Docs, Sheets, PDF/Word trong Drive): chỉ cần bấm{" "}
+                  <b>Share</b> → thêm email này (quyền <b>Người xem</b>) — không cần để công khai:{" "}
                   <code style={{ wordBreak: "break-all" }}>{svcEmail}</code>{" "}
                   <button type="button" className="btn-mini"
                           onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg("✅ Đã copy email service account."); }}>
                     📋 Copy
                   </button>
-                </>
+                  <br /></>
               )}
-              <br />• <b>Link riêng tư</b> (Facebook cá nhân, Drive giới hạn…): AI không đọc được — dán thẳng nội dung vào ô hướng dẫn bên dưới.
+              • <b>Link ngoài Google</b> (website, fanpage…): phải để <b>công khai</b> — ai mở cũng xem được, không cần đăng nhập.
+              <br />• Link không share/công khai được: dán thẳng nội dung vào ô <b>hướng dẫn thêm</b> bên dưới.
             </div>
           </details>
         </div>
@@ -536,6 +503,7 @@ export default function PromptBuilder() {
             {sources.map((s, i) => (
               <div key={i} className="hint" style={{ padding: "2px 0" }}>
                 {s.ok ? "✅" : "❌"} {s.url} {!s.ok && <i>— {s.error}</i>}
+                {s.ok && s.info && <i> — {s.info}</i>}
               </div>
             ))}
           </div>

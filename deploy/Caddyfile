@@ -63,10 +63,11 @@
 		reverse_proxy bridge:5005
 	}
 
-	# ── Còn lại = dashboard React (SPA): file tĩnh nếu có, không thì index.html ──
+	# ── Còn lại = dashboard React (SPA): file tĩnh nếu có ({path}.html cho các
+	# trang tĩnh như /privacy-policy — Meta App Review cần URL này), không thì SPA ──
 	handle {
 		root * /srv
-		try_files {path} /index.html
+		try_files {path} {path}.html /index.html
 		file_server
 	}
 }

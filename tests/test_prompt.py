@@ -137,13 +137,28 @@ with patch.object(pb, 'requests') as mreq, \
           "B11 extra_context_included", user_msg[:200])
 
 # _call_ai_long với model_key → đi qua ai_models.chat (max_tokens/temperature dạy AI)
-import app.core.ai_models as am_mod
-with patch.object(am_mod, 'chat', return_value="OK-model") as mchat:
+from app.core.config import Config as _Cfg
+_Cfg.OPENAI_API_KEY = "sk-test-b12"
+
+def _mkresp(text, finish):
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=text), finish_reason=finish)]
+    resp.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
+    return resp
+
+with patch.object(pb, "OpenAI") as mopen:
+    mclient = mopen.return_value
+    # Vòng 1 chạm trần (finish_reason='length') → tự viết tiếp vòng 2
+    mclient.chat.completions.create.side_effect = [
+        _mkresp("PHẦN-1|", "length"), _mkresp("PHẦN-2", "stop")]
     out = pb._call_ai_long([{"role": "user", "content": "x"}],
                            model_key="gpt-4o-mini", owner="o@x.vn")
-    check(out == "OK-model" and mchat.call_args[1]["model_key"] == "gpt-4o-mini"
-          and mchat.call_args[1]["max_tokens"] == 6000,
-          "B12 call_ai_long_uses_ai_models_chat", f"{mchat.call_args}")
+    call1 = mclient.chat.completions.create.call_args_list[0][1]
+    check(out == "PHẦN-1|PHẦN-2" and call1["model"] == "gpt-4o-mini"
+          and call1["max_tokens"] == pb.GEN_MAX_TOKENS
+          and mclient.chat.completions.create.call_count == 2,
+          "B12 gen_full_viet_tiep_khi_cham_tran",
+          f"out={out!r} calls={mclient.chat.completions.create.call_count}")
 
 print("\n── C. apply / current / restore ──")
 cur = pb.current()

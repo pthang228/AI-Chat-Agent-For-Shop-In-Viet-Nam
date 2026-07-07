@@ -74,6 +74,7 @@ def register_sheets_routes(app):
         if n >= MAX_SHEETS:
             return {"ok": False, "error": f"Tối đa {MAX_SHEETS} sheet mỗi shop"}, 400
         if db.query("SELECT 1 FROM shop_sheets WHERE tenant=? AND sheet_id=?", (ws, sid)):
+            log.info(f"[Sheets] {ws} thêm sheet TRÙNG ({sid[:12]}…) → 409 (đã nối từ trước)")
             return {"ok": False, "error": "Sheet này đã được thêm rồi"}, 409
         db.execute(
             "INSERT INTO shop_sheets(tenant, name, sheet_id, created_at) VALUES (?,?,?,?)",
