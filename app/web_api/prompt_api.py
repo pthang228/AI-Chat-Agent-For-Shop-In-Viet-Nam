@@ -188,6 +188,24 @@ def register_prompt_routes(app):
         except Exception as e:
             log.error(f"[prompt] generate lỗi: {e}", exc_info=True)
             return {"ok": False, "error": f"Tạo prompt thất bại: {e}"}, 502
+        # CÂU TRẢ LỜI MẪU → mẩu tri thức CỐ ĐỊNH ghép thẳng (không qua AI —
+        # AI sinh não có thể lược mất mục nó coi là "tham khảo"; ghép tay thì
+        # đảm bảo 100% vào kho, shop xoá được trong bước duyệt nếu không muốn)
+        try:
+            if r.get("chunks"):
+                rows = db.query("SELECT title, content FROM canned_replies "
+                                "WHERE tenant=? ORDER BY id LIMIT 30", (ws,))
+                if rows:
+                    r["chunks"].append({
+                        "title": "Câu trả lời mẫu của shop",
+                        "content": "Chủ shop đã soạn sẵn các câu trả lời sau — khi khách "
+                                   "hỏi đúng ý thì trả lời theo NGUYÊN VĂN nội dung:\n"
+                                   + "\n".join(f"- {row['title']}: {row['content']}" for row in rows),
+                        "keywords": [row["title"] for row in rows if row["title"]][:15],
+                        "pinned": False,
+                    })
+        except Exception as e:
+            log.error(f"[prompt] ghép câu mẫu lỗi: {e}")
         log.info(f"[prompt] {u['username']} tạo bộ não ({r['mode']}, {len(r['draft'])} ký tự, "
                  f"{len(r['chunks'])} mẩu, {len(links)} link)")
         return {"ok": True, **r}
