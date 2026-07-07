@@ -114,14 +114,16 @@ with patch.object(pb, 'requests') as mreq, \
           and "Phòng 201 giá 500k" in user_msg and r["sources"][0]["ok"],
           "B8 dict_link_note_included", user_msg[:200])
 
-# Link Google Sheets → không fetch, đưa ghi chú (kèm mô tả shop) vào prompt, flow không gãy
+# Link Google Sheets DỮ LIỆU tới generate → ĐỌC THẬT qua _gsheet_text (service
+# account) và nội dung vào prompt (sheet LỊCH đã bị prompt_api tách trước đó)
 with patch.object(pb, 'requests') as mreq, \
+     patch.object(pb, '_gsheet_text', return_value="Massage 60p, 400000") as mgs, \
      patch.object(pb, '_call_ai_long', return_value=FAKE_PROMPT) as mai:
-    r = pb.generate([{"url": "https://docs.google.com/spreadsheets/d/abc123/edit", "note": "lịch đặt phòng"}], "")
+    r = pb.generate([{"url": "https://docs.google.com/spreadsheets/d/abc123/edit", "note": "bảng giá"}], "")
     user_msg = mai.call_args[0][0][1]["content"]
-    check(not mreq.get.called and "Link Google Sheets" in user_msg
-          and "lịch đặt phòng" in user_msg and r["sources"][0]["ok"],
-          "B9 gsheet_note_no_fetch", user_msg[:200])
+    check(mgs.called and "Massage 60p, 400000" in user_msg
+          and "bảng giá" in user_msg and r["sources"][0]["ok"],
+          "B9 gsheet_data_duoc_doc_that", user_msg[:200])
 
 # Model shop chọn để DẠY + extra_context (cấu hình shop tự đính kèm) → truyền xuống AI
 with patch.object(pb, 'requests') as mreq, \

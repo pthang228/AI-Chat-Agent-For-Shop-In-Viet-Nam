@@ -77,9 +77,13 @@ def _classify_sheet_link(url: str, note: str, owner: str = None) -> str:
     3. Mơ hồ → hỏi AI phân loại (1 câu, rẻ). Không đọc được → data (an toàn:
        fetch_link sẽ tự báo lỗi rõ nếu không đọc nổi)."""
     n = (note or "").lower()
-    if re.search(r"lịch|lich\b|đặt\s*ch|dat\s*ch|booking|calendar", n):
+    kw_book = bool(re.search(r"lịch|lich\b|đặt\s*ch|dat\s*ch|booking|calendar", n))
+    kw_data = bool(re.search(r"bảng\s*giá|bang\s*gia|menu|giá\b|gia\b|dịch\s*vụ|dich\s*vu|danh\s*mục|chính\s*sách", n))
+    # Chỉ theo mô tả khi RÕ RÀNG 1 phía; hỗn hợp ("bảng giá + lịch làm việc") →
+    # rơi xuống lớp nội dung/AI, tránh nối nhầm sheet giá làm lịch đặt chỗ
+    if kw_book and not kw_data:
         return "booking"
-    if re.search(r"bảng\s*giá|bang\s*gia|menu|giá\b|gia\b|dịch\s*vụ|dich\s*vu|danh\s*mục|chính\s*sách", n):
+    if kw_data and not kw_book:
         return "data"
     from app.core.prompt_builder import _gsheet_text
     from app.core.sheets import extract_sheet_id
@@ -98,25 +102,35 @@ def _classify_sheet_link(url: str, note: str, owner: str = None) -> str:
             "hay DỮ LIỆU TĨNH (bảng giá/danh mục/chính sách — nên dạy vào bộ não)? "
             "Trả lời đúng 1 từ: LICH hoặc DULIEU."}],
             owner=owner, max_tokens=5, temperature=0)
-        if "LICH" in (ans or "").upper():
+        up = (ans or "").upper()
+        if "LICH" in up or "LỊCH" in up:   # AI hay trả có dấu — Ị ≠ I
             return "booking"
     except Exception as e:
         log.info(f"[prompt] AI phân loại sheet lỗi ({e}) → coi là dữ liệu")
     return "data"
 
 
-def _connect_booking_sheet(db, ws: str, url: str, name: str) -> str:
-    """Nối 1 sheet lịch vào shop_sheets (trùng thì thôi). Trả tên chi nhánh."""
+def _connect_booking_sheet(db, ws: str, url: str, name: str) -> tuple:
+    """Nối 1 sheet lịch vào shop_sheets. Trả (name, err):
+    err=None khi ĐÃ NỐI (hoặc trùng — coi như nối rồi); err=lý do khi KHÔNG nối
+    được (link lệch dạng, vượt trần) — caller phải báo ❌ thay vì '✅ đã nối' ảo.
+    Cùng luật với POST /sheets (sheets_api) — kể cả trần MAX_SHEETS."""
     from app.core.sheets import extract_sheet_id
+    from app.web_api.sheets_api import MAX_SHEETS
     from datetime import datetime
     sid = extract_sheet_id(url)
     name = (name or "").strip()[:60] or "Chi nhánh"
-    if sid and not db.query(
-            "SELECT 1 FROM shop_sheets WHERE tenant=? AND sheet_id=?", (ws, sid)):
-        db.execute("INSERT INTO shop_sheets(tenant, name, sheet_id, created_at) "
-                   "VALUES (?,?,?,?)", (ws, name, sid, datetime.now().isoformat()))
-        log.info(f"[prompt] {ws} nối sheet lịch '{name}' ({sid[:12]}…) từ Dạy AI")
-    return name
+    if not sid:
+        return name, "không bóc được sheet ID từ link (kiểm tra lại link)"
+    if db.query("SELECT 1 FROM shop_sheets WHERE tenant=? AND sheet_id=?", (ws, sid)):
+        return name, None    # đã nối từ trước
+    n = db.query("SELECT COUNT(*) AS n FROM shop_sheets WHERE tenant=?", (ws,))[0]["n"]
+    if n >= MAX_SHEETS:
+        return name, f"shop đã đạt tối đa {MAX_SHEETS} sheet lịch — xoá bớt rồi thêm lại"
+    db.execute("INSERT INTO shop_sheets(tenant, name, sheet_id, created_at) "
+               "VALUES (?,?,?,?)", (ws, name, sid, datetime.now().isoformat()))
+    log.info(f"[prompt] {ws} nối sheet lịch '{name}' ({sid[:12]}…) từ Dạy AI")
+    return name, None
 
 
 def _shop_config_context(ws: str) -> str:
@@ -257,7 +271,13 @@ def register_prompt_routes(app):
                 kind = _classify_sheet_link(lurl, lnote, owner=ws)
                 log.info(f"[prompt] nhận diện sheet {lurl[:60]}… ('{lnote[:40]}') → {kind}")
                 if kind == "booking":
-                    name = _connect_booking_sheet(get_db(), ws, lurl, lnote)
+                    name, err = _connect_booking_sheet(get_db(), ws, lurl, lnote)
+                    if err:
+                        # KHÔNG nối được → báo ❌ thật, không dạy AI "đã nối" ảo
+                        routed_sources.append({
+                            "url": lurl, "ok": False,
+                            "error": f"nhận diện là LỊCH ĐẶT CHỖ nhưng chưa nối được: {err}"})
+                        continue
                     instructions = ((instructions + "\n\n") if instructions else "") + (
                         f"Shop đã nối Google Sheet lịch đặt chỗ '{name}' — bot tự tra khi "
                         f"khách hỏi lịch trống, KHÔNG bịa lịch.")

@@ -216,7 +216,9 @@ def fetch_link(url: str) -> dict:
                     + (" — link chưa để công khai?" if r.status_code in (401, 403) else "")}
         ctype = (r.headers.get("Content-Type") or "").lower()
         path = url.split("?")[0].lower()
-        if "pdf" in ctype or path.endswith(".pdf"):
+        # Nhận diện theo cả ctype LẪN byte đầu file — server hay trả
+        # application/octet-stream cho PDF/DOCX (vd link tải Drive công khai)
+        if "pdf" in ctype or path.endswith(".pdf") or r.content[:5] == b"%PDF-":
             text = _pdf_text(r.content)
             if not text:
                 return {"url": url, "ok": False, "error": "PDF không bóc được chữ "
@@ -226,6 +228,9 @@ def fetch_link(url: str) -> dict:
             if not text:
                 return {"url": url, "ok": False, "error": "File .docx không đọc được — "
                         "dán nội dung trực tiếp vào ô hướng dẫn"}
+        elif any(t in ctype for t in ("image/", "video/", "audio/")):
+            return {"url": url, "ok": False, "error": "File ảnh/video/âm thanh — AI chỉ "
+                    "đọc được CHỮ. Ảnh sản phẩm thì dùng Thư viện ảnh nhé"}
         elif ("application/" in ctype and "json" not in ctype
               and "xml" not in ctype and "html" not in ctype):
             return {"url": url, "ok": False, "error": f"Định dạng chưa hỗ trợ ({ctype.split(';')[0]}) "
@@ -318,7 +323,10 @@ def _call_ai_long(messages: list, model_key: str = None, owner: str = None) -> s
         try:
             client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1",
                             timeout=Config.AI_LONG_TIMEOUT)
-            r = _gen_full(client, "llama-3.3-70b-versatile", messages)
+            # Ghi usage như model mặc định (Groq không có trong catalog giá —
+            # tính theo giá deepseek-chat để số "đã tiêu" của shop không bị hụt)
+            r = _gen_full(client, "llama-3.3-70b-versatile", messages,
+                          owner=owner, model_key="deepseek-chat")
             log.info("[PromptBuilder] dùng Groq")
             return r
         except Exception as e:
@@ -424,9 +432,6 @@ def _parse_hybrid(raw: str) -> tuple:
     return persona, chunks, gaps
 
 
-_GSHEET_RE = re.compile(r"docs\.google\.com/spreadsheets", re.I)
-
-
 def _norm_links(links: list) -> list:
     """Mỗi phần tử: string URL hoặc dict {url, note} → list (url, note).
     Giữ tương thích ngược với mảng string cũ."""
@@ -453,16 +458,8 @@ def generate(links: list, instructions: str, model: str = None, owner: str = Non
     Trả {draft, chunks, mode, sources} — chunks rỗng nghĩa là chế độ cũ."""
     results = []
     for url, note in _norm_links(links):
-        if _GSHEET_RE.search(url):
-            # Google Sheets: fetch_link thường không đọc được (trang login/JS) →
-            # không fetch, đưa ghi chú vào prompt để AI biết link là gì, flow không gãy
-            text = ("Link Google Sheets (lịch/bảng tính)"
-                    + (f" — shop mô tả: {note}." if note else ".")
-                    + " Không đọc trực tiếp được nội dung; nếu là lịch đặt chỗ hãy nhắc"
-                      " shop chọn mục đích '📅 Lịch đặt chỗ' cho link đó ở trang Dạy AI"
-                      " để bot tra lịch trực tiếp.")
-            results.append({"url": url, "ok": True, "text": text, "note": ""})
-            continue
+        # (Sheet LỊCH ĐẶT CHỖ đã bị prompt_api tách nhánh trước khi tới đây —
+        # sheet còn lại là DỮ LIỆU, fetch_link tự đọc bằng service account/CSV)
         r = fetch_link(url)
         r["note"] = note
         results.append(r)
