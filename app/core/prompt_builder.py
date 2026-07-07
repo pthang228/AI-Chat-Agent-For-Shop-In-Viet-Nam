@@ -59,21 +59,74 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
+def _pdf_text(data: bytes) -> str:
+    """Bóc chữ từ PDF (pypdf; máy cũ có PyPDF2 cũng chạy). Lỗi/scan ảnh → ''."""
+    try:
+        from pypdf import PdfReader
+    except ModuleNotFoundError:
+        try:
+            from PyPDF2 import PdfReader
+        except ModuleNotFoundError:
+            return ""
+    import io
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((p.extract_text() or "") for p in reader.pages[:40]).strip()
+    except Exception:
+        return ""
+
+
+def _docx_text(data: bytes) -> str:
+    """Bóc chữ từ .docx (zip chứa XML — chỉ cần stdlib)."""
+    import io
+    import zipfile
+    try:
+        xml = zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml") \
+                     .decode("utf-8", "ignore")
+        return _strip_html(xml.replace("</w:p>", "\n"))
+    except Exception:
+        return ""
+
+
 def fetch_link(url: str) -> dict:
-    """Tải 1 link dữ liệu → {url, ok, text|error}."""
+    """Tải 1 link dữ liệu → {url, ok, text|error}.
+    Đọc được: trang web/HTML, text, Google Docs (tự chuyển sang bản xuất text),
+    PDF (bóc chữ), file .docx. Loại khác → báo lỗi rõ để shop dán nội dung tay."""
     url = (url or "").strip()
     if not url:
         return {"url": url, "ok": False, "error": "link trống"}
     if not re.match(r"^https?://", url, re.I):
         url = "https://" + url
+    # Google Docs: trang viewer toàn JS không đọc được → dùng bản XUẤT TEXT
+    # (doc phải công khai "Bất kỳ ai có đường liên kết")
+    m = re.search(r"docs\.google\.com/document/d/([A-Za-z0-9_-]+)", url)
+    if m:
+        url = f"https://docs.google.com/document/d/{m.group(1)}/export?format=txt"
     try:
         r = requests.get(url, timeout=FETCH_TIMEOUT, headers={
             "User-Agent": "Mozilla/5.0 (NovaChat prompt-builder)"})
         if r.status_code >= 400:
-            return {"url": url, "ok": False, "error": f"HTTP {r.status_code}"}
+            return {"url": url, "ok": False, "error": f"HTTP {r.status_code}"
+                    + (" — link chưa để công khai?" if r.status_code in (401, 403) else "")}
         ctype = (r.headers.get("Content-Type") or "").lower()
-        raw = r.text
-        text = _strip_html(raw) if "html" in ctype or raw.lstrip()[:1] == "<" else raw.strip()
+        path = url.split("?")[0].lower()
+        if "pdf" in ctype or path.endswith(".pdf"):
+            text = _pdf_text(r.content)
+            if not text:
+                return {"url": url, "ok": False, "error": "PDF không bóc được chữ "
+                        "(file scan ảnh?) — dán nội dung trực tiếp vào ô hướng dẫn"}
+        elif "wordprocessingml" in ctype or path.endswith(".docx"):
+            text = _docx_text(r.content)
+            if not text:
+                return {"url": url, "ok": False, "error": "File .docx không đọc được — "
+                        "dán nội dung trực tiếp vào ô hướng dẫn"}
+        elif ("application/" in ctype and "json" not in ctype
+              and "xml" not in ctype and "html" not in ctype):
+            return {"url": url, "ok": False, "error": f"Định dạng chưa hỗ trợ ({ctype.split(';')[0]}) "
+                    "— hãy xuất ra Google Docs/PDF hoặc dán nội dung trực tiếp"}
+        else:
+            raw = r.text
+            text = _strip_html(raw) if "html" in ctype or raw.lstrip()[:1] == "<" else raw.strip()
         if not text:
             return {"url": url, "ok": False, "error": "trang không có nội dung chữ"}
         if len(text) > MAX_LINK_CHARS:

@@ -75,17 +75,31 @@ def _shop_config_context(ws: str) -> str:
     KHÔNG gồm tài khoản ngân hàng/QR (bank_*). Lỗi bảng nào bỏ qua bảng đó."""
     db = get_db()
     parts = []
-    # (a) Liên hệ khẩn cấp (notify_config)
+    # (a) Liên hệ khẩn cấp + KHI NÀO BÁO/GỌI CHỦ (notify_config — cả events)
     try:
         from app.core import notify
         cfg = notify.get_config(ws)
+        SHARE_VI = {"off": "KHÔNG bao giờ đưa số cho khách",
+                    "strict": "chỉ đưa khi khách hỏi thẳng xin số/gặp chủ",
+                    "ask": "đưa khi khách xin gặp người thật HOẶC bot không trả lời được",
+                    "greeting": "luôn kèm số ở tin nhắn chào đầu tiên"}
+        MODE_VI = {"off": "KHÔNG báo", "notify": "hệ thống NHẮN TIN cho chủ",
+                   "call": "hệ thống NHẮN + GỌI ĐIỆN cho chủ ngay"}
         contact = [x for x in (
             f"SĐT khẩn: {cfg['emergency_phone']}" if cfg["emergency_phone"] else "",
             f"Zalo: {cfg['emergency_zalo']}" if cfg["emergency_zalo"] else "",
             f"Telegram: {cfg['emergency_tele']}" if cfg["emergency_tele"] else "") if x]
         if contact:
-            parts.append("LIÊN HỆ KHẨN CẤP CỦA SHOP (bot đưa cho khách khi cần, "
-                         f"chế độ đưa số: {cfg['share_mode']}): " + " · ".join(contact))
+            parts.append("LIÊN HỆ KHẨN CẤP CỦA SHOP (chế độ đưa số cho khách: "
+                         f"{SHARE_VI.get(cfg['share_mode'], cfg['share_mode'])}): "
+                         + " · ".join(contact))
+        ev = cfg.get("events") or {}
+        ev_lines = [f"- {label}: {MODE_VI.get(ev.get(key, default), ev.get(key, default))}"
+                    for key, (label, default) in notify.EVENTS.items()]
+        if ev_lines:
+            parts.append("KHI NÀO HỆ THỐNG BÁO CHỦ SHOP (bot trấn an khách đúng theo "
+                         "cấu hình này — vd khách xin gặp chủ thì nói 'đã báo, chủ sẽ "
+                         "liên hệ ngay' nếu chế độ là nhắn/gọi):\n" + "\n".join(ev_lines))
     except Exception:
         pass
     # (b) Câu trả lời mẫu của shop (tối đa 30)
