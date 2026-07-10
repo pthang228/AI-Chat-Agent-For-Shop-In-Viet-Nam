@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Landing from "./pages/Landing.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
+import ForgotPassword from "./pages/ForgotPassword.jsx";
 import AppDetail from "./pages/AppDetail.jsx";
 import Settings from "./pages/Settings.jsx";
 import Billing from "./pages/Billing.jsx";
@@ -34,6 +35,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/forgot" element={<ForgotPassword />} />
         <Route path="/" element={<Home />} />
         <Route path="/app/:id" element={<Protected><AppDetail /></Protected>} />
         <Route path="/settings" element={<Protected><Settings /></Protected>} />

@@ -36,6 +36,7 @@ def check(cond, name, detail=""):
 
 db = get_db()
 db.execute("DELETE FROM users"); db.execute("DELETE FROM auth_tokens"); db.execute("DELETE FROM user_apps")
+db.execute("DELETE FROM password_resets")
 
 flask_app = Flask(__name__)
 auth_mod.register_auth_routes(flask_app)
@@ -132,6 +133,25 @@ check(r.status_code == 200, "D3 google_set_first_pw")
 r = api.post("/auth/login", json={"username": "google@user.vn", "password": "pwmoi"})
 check(r.status_code == 200, "D4 google_then_pw_login")
 
+# Đặt GOOGLE_CLIENT_ID → id_token của app KHÁC (aud lạ) bị từ chối, aud đúng thì qua
+def _tokeninfo_aud(aud):
+    def f(url, params=None, timeout=None):
+        m = MagicMock(); m.status_code = 200
+        m.json.return_value = {"email": "google@user.vn", "email_verified": "true",
+                               "name": "Google User", "picture": "", "aud": aud}
+        return m
+    return f
+
+with patch.object(auth_mod.Config, 'GOOGLE_CLIENT_ID', 'myapp.apps.googleusercontent.com'):
+    with patch.object(auth_mod, 'requests') as mreq:
+        mreq.get.side_effect = _tokeninfo_aud("appkhac.apps.googleusercontent.com")
+        r = api.post("/auth/google", json={"credential": "JWT_APP_KHAC"})
+    check(r.status_code == 401, "D5 google_wrong_aud_rejected")
+    with patch.object(auth_mod, 'requests') as mreq:
+        mreq.get.side_effect = _tokeninfo_aud("myapp.apps.googleusercontent.com")
+        r = api.post("/auth/google", json={"credential": "JWT_DUNG"})
+    check(r.status_code == 200, "D6 google_right_aud_ok")
+
 print("\n── E. Apps của user ──")
 r = api.post("/auth/apps", json={"name": "Haru Zalo", "channel": "zalo"}, headers=bearer(tok))
 b = r.get_json()
@@ -158,6 +178,79 @@ check(len(r.get_json()) == 1, "E5 deleted", f"{r.get_json()}")
 
 r = api.get("/auth/apps")
 check(r.status_code == 401, "E6 apps_need_auth")
+
+print("\n── F. Quên mật khẩu (OTP qua email) ──")
+import re
+import app.core.mailer as mailer_mod
+
+sent = {}
+def _fake_send(to, subject, body):
+    sent["to"] = to; sent["body"] = body
+    return True
+
+# SMTP chưa cấu hình → báo rõ 503, không nổ
+with patch.object(mailer_mod, 'configured', return_value=False):
+    r = api.post("/auth/forgot", json={"username": "chu@homestay.vn"})
+check(r.status_code == 503, "F1 forgot_no_smtp_503")
+
+with patch.object(mailer_mod, 'configured', return_value=True), \
+     patch.object(mailer_mod, 'send_mail', side_effect=_fake_send):
+    r = api.post("/auth/forgot", json={"username": "chu@homestay.vn"})
+    check(r.status_code == 200 and r.get_json()["ok"], "F2 forgot_ok")
+    # Email lạ → vẫn câu chung chung (chống dò tài khoản), KHÔNG gửi mail
+    before = dict(sent)
+    r = api.post("/auth/forgot", json={"username": "khongton@x.vn"})
+    check(r.status_code == 200 and r.get_json()["ok"] and sent == before,
+          "F3 forgot_unknown_generic_no_mail")
+
+check(sent.get("to") == "chu@homestay.vn", "F4 mail_to_user", f"{sent.get('to')}")
+code = re.search(r"\b(\d{6})\b", sent["body"]).group(1)
+
+# Mã không lưu thô trong DB (chỉ sha256)
+row = db.query("SELECT code_hash FROM password_resets WHERE username='chu@homestay.vn'")[0]
+check(code not in row["code_hash"] and len(row["code_hash"]) == 64, "F5 code_hashed")
+
+wrong = "000000" if code != "000000" else "111111"
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": wrong, "new_password": "moimoi"})
+check(r.status_code == 401, "F6 reset_wrong_code")
+
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": code, "new_password": "ab"})
+check(r.status_code == 400, "F7 reset_pw_too_short")
+
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": code, "new_password": "moimoi"})
+check(r.status_code == 200, "F8 reset_ok")
+r = api.post("/auth/login", json={"username": "chu@homestay.vn", "password": "moimoi"})
+check(r.status_code == 200, "F9 login_new_pw")
+
+# Mã dùng 1 lần — dùng lại phải chết
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": code, "new_password": "khac1"})
+check(r.status_code == 401, "F10 code_single_use")
+
+# Mọi phiên cũ bị huỷ sau reset (token cấp trước đó hết hiệu lực)
+r = api.get("/auth/me", headers=bearer(tok))
+check(r.status_code == 401, "F11 old_sessions_revoked")
+
+# Nhập sai quá RESET_MAX_ATTEMPTS lần → mã bị huỷ (429)
+with patch.object(mailer_mod, 'configured', return_value=True), \
+     patch.object(mailer_mod, 'send_mail', side_effect=_fake_send):
+    api.post("/auth/forgot", json={"username": "chu@homestay.vn"})
+code2 = re.search(r"\b(\d{6})\b", sent["body"]).group(1)
+wrong2 = "999999" if code2 != "999999" else "888888"
+for _ in range(auth_mod.RESET_MAX_ATTEMPTS):
+    api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": wrong2, "new_password": "moimoi"})
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": code2, "new_password": "moimoi"})
+check(r.status_code == 429, "F12 too_many_attempts_kills_code")
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": code2, "new_password": "moimoi"})
+check(r.status_code == 401, "F13 code_deleted_after_429")
+
+# Mã hết hạn → từ chối
+with patch.object(mailer_mod, 'configured', return_value=True), \
+     patch.object(mailer_mod, 'send_mail', side_effect=_fake_send):
+    api.post("/auth/forgot", json={"username": "chu@homestay.vn"})
+code3 = re.search(r"\b(\d{6})\b", sent["body"]).group(1)
+db.execute("UPDATE password_resets SET expires_at='2000-01-01T00:00:00' WHERE username='chu@homestay.vn'")
+r = api.post("/auth/reset", json={"username": "chu@homestay.vn", "code": code3, "new_password": "moimoi"})
+check(r.status_code == 401, "F14 expired_code_rejected")
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

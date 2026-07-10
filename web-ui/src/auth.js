@@ -116,6 +116,20 @@ export async function updateProfile({ homestay, email }) {
   return r.body.user;
 }
 
+// Quên mật khẩu: gửi mã OTP 6 số về email (server trả câu chung chung chống dò tài khoản).
+export async function forgotPassword(username) {
+  const r = await authApi.forgot((username || "").trim().toLowerCase());
+  if (!r.ok) fail(r, "Không gửi được mã — thử lại sau");
+  return r.body?.message || "Đã gửi mã về email của bạn (hiệu lực 15 phút).";
+}
+
+// Đặt mật khẩu mới bằng mã OTP — thành công thì mọi phiên cũ bị huỷ, đăng nhập lại.
+export async function resetPassword({ username, code, newPassword }) {
+  const r = await authApi.reset((username || "").trim().toLowerCase(), code, newPassword);
+  if (!r.ok) fail(r, "Đặt lại mật khẩu thất bại");
+  return true;
+}
+
 export async function changePassword({ oldPassword, newPassword }) {
   const r = await authApi.password(getToken(), oldPassword, newPassword);
   if (!r.ok) fail(r, "Đổi mật khẩu thất bại");

@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_tokens_user ON auth_tokens(username);
 
+-- Mã quên mật khẩu (OTP 6 số gửi email) — mỗi user 1 mã đang hiệu lực
+CREATE TABLE IF NOT EXISTS password_resets (
+    username   TEXT PRIMARY KEY,
+    code_hash  TEXT NOT NULL,               -- sha256(mã) — không lưu mã thô
+    attempts   INTEGER NOT NULL DEFAULT 0,  -- đếm nhập sai, quá 5 lần huỷ mã
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL                -- hết hạn sau 15 phút
+);
+
 -- App (kênh chat) của từng user — thay localStorage hb_apps
 CREATE TABLE IF NOT EXISTS user_apps (
     id         TEXT PRIMARY KEY,

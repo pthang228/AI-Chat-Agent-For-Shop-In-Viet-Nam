@@ -48,6 +48,17 @@ class Config:
     # OpenAI (multi-model cho shop chọn — GPT-5/4o/4.1…); trống = chỉ có DeepSeek/Groq
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
+    # Đăng nhập Google (OAuth Client ID) — backend kiểm id_token đúng app của mình
+    # (khớp aud). CÙNG giá trị với VITE_GOOGLE_CLIENT_ID bên web-ui/.env.
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+    # Email hệ thống (mã quên mật khẩu) — Gmail: bật xác minh 2 bước rồi tạo App Password
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))       # 587 STARTTLS | 465 SSL
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASS = os.getenv("SMTP_PASS", "")
+    SMTP_FROM = os.getenv("SMTP_FROM", "")               # trống = dùng SMTP_USER
+
     HARU_SHEET_ID           = os.getenv("HARU_SHEET_ID",  "")   # sheet lịch phòng chi nhánh 1 (legacy Zalo gốc)
     MOCHI_SHEET_ID          = os.getenv("MOCHI_SHEET_ID", "")   # sheet lịch phòng chi nhánh 2 (legacy Zalo gốc)
 

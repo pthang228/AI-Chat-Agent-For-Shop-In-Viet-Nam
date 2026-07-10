@@ -84,6 +84,7 @@ export default function Login() {
 
         <div className="auth-row">
           <label className="remember"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Ghi nhớ đăng nhập</label>
+          <Link to="/forgot" className="auth-link">Quên mật khẩu?</Link>
         </div>
 
         {err && <div className="err">{err}</div>}

@@ -5,7 +5,10 @@ Gắn vào bridge (cổng 5005, tiến trình "não bộ" luôn chạy) qua regi
   POST /auth/register {username,password,homestay}      → {token, user}
   POST /auth/login    {username,password}               → {token, user}
   POST /auth/google   {credential}  (id_token từ GIS)   → {token, user}
-       — token được XÁC THỰC PHÍA SERVER qua Google tokeninfo (không tin client).
+       — token được XÁC THỰC PHÍA SERVER qua Google tokeninfo (không tin client);
+         nếu đặt GOOGLE_CLIENT_ID trong .env thì kiểm luôn aud đúng app của mình.
+  POST /auth/forgot   {username}     → gửi mã OTP 6 số về email (hạn 15 phút)
+  POST /auth/reset    {username,code,new_password} → đặt mật khẩu mới, huỷ mọi phiên cũ
   GET  /auth/me                    (Bearer)             → {user}
   POST /auth/logout                (Bearer)             → xoá token thiết bị này
   POST /auth/update   {homestay,email}      (Bearer)
@@ -26,6 +29,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import request, jsonify
 
+from app.core.config import Config
 from app.core.db import get_db
 
 log = logging.getLogger("auth_api")
@@ -33,6 +37,8 @@ log = logging.getLogger("auth_api")
 PBKDF2_ITERS = 200_000
 TOKEN_TTL_DAYS = 30
 GOOGLE_TOKENINFO = "https://oauth2.googleapis.com/tokeninfo"
+RESET_CODE_TTL_MIN = 15     # mã quên mật khẩu sống 15 phút
+RESET_MAX_ATTEMPTS = 5      # nhập sai quá 5 lần → huỷ mã, phải xin mã mới
 
 
 # ── Mật khẩu ────────────────────────────────────────────────────────
@@ -219,6 +225,82 @@ def register_auth_routes(app):
         token = _issue_token(db, username)
         return {"ok": True, "token": token, "user": _public_user(u)}
 
+    # ── Quên mật khẩu (OTP 6 số qua email) ──────────────────────────
+
+    def _hash_reset_code(code: str) -> str:
+        return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+    @app.route("/auth/forgot", methods=["POST"])
+    def auth_forgot():
+        from app.core import mailer
+        data = request.get_json(force=True, silent=True) or {}
+        username = (data.get("username") or "").strip().lower()
+        if not username or "@" not in username:
+            return {"ok": False, "error": "Vui lòng nhập email tài khoản"}, 400
+        if not mailer.configured():
+            return {"ok": False, "error":
+                    "Máy chủ chưa cấu hình email gửi mã (SMTP_USER/SMTP_PASS trong .env) — "
+                    "liên hệ hỗ trợ để đặt lại mật khẩu."}, 503
+        # Chống dò tài khoản: email lạ vẫn trả câu chung chung y hệt
+        generic = {"ok": True, "message":
+                   "Nếu email này có tài khoản, mã đặt lại đã được gửi — "
+                   "kiểm tra hộp thư (cả mục Spam). Mã có hiệu lực 15 phút."}
+        rows = db.query("SELECT * FROM users WHERE username=?", (username,))
+        if not rows:
+            return generic
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        now = datetime.now()
+        db.execute(
+            "INSERT OR REPLACE INTO password_resets(username, code_hash, attempts, created_at, expires_at) "
+            "VALUES (?,?,0,?,?)",
+            (username, _hash_reset_code(code), now.isoformat(),
+             (now + timedelta(minutes=RESET_CODE_TTL_MIN)).isoformat()))
+        shop = rows[0]["homestay"] or username
+        sent = mailer.send_mail(
+            username, "Mã đặt lại mật khẩu",
+            f"Xin chào {shop},\n\n"
+            f"Mã đặt lại mật khẩu của bạn là: {code}\n\n"
+            f"Mã có hiệu lực trong {RESET_CODE_TTL_MIN} phút. "
+            f"Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này — "
+            f"tài khoản của bạn vẫn an toàn.")
+        if not sent:
+            return {"ok": False, "error": "Không gửi được email — thử lại sau ít phút."}, 502
+        log.info(f"[auth] gửi mã đặt lại mật khẩu cho {username}")
+        return generic
+
+    @app.route("/auth/reset", methods=["POST"])
+    def auth_reset():
+        data = request.get_json(force=True, silent=True) or {}
+        username = (data.get("username") or "").strip().lower()
+        code = (data.get("code") or "").strip()
+        new_pw = data.get("new_password") or ""
+        if not username or not code:
+            return {"ok": False, "error": "Thiếu email hoặc mã xác nhận"}, 400
+        if len(new_pw) < 4:
+            return {"ok": False, "error": "Mật khẩu mới tối thiểu 4 ký tự"}, 400
+        bad = ({"ok": False, "error": "Mã không đúng hoặc đã hết hạn — yêu cầu mã mới."}, 401)
+        rows = db.query("SELECT * FROM password_resets WHERE username=?", (username,))
+        if not rows:
+            return bad
+        r = rows[0]
+        if datetime.now() > datetime.fromisoformat(r["expires_at"]):
+            db.execute("DELETE FROM password_resets WHERE username=?", (username,))
+            return bad
+        if r["attempts"] >= RESET_MAX_ATTEMPTS:
+            db.execute("DELETE FROM password_resets WHERE username=?", (username,))
+            return {"ok": False, "error": "Nhập sai quá nhiều lần — yêu cầu mã mới."}, 429
+        if not hmac.compare_digest(_hash_reset_code(code), r["code_hash"]):
+            db.execute("UPDATE password_resets SET attempts=attempts+1 WHERE username=?",
+                       (username,))
+            return bad
+        db.execute("UPDATE users SET password_hash=? WHERE username=?",
+                   (hash_password(new_pw), username))
+        db.execute("DELETE FROM password_resets WHERE username=?", (username,))
+        # Đổi mật khẩu qua quên-mật-khẩu → huỷ MỌI phiên đang đăng nhập (kể cả kẻ lạ)
+        db.execute("DELETE FROM auth_tokens WHERE username=?", (username,))
+        log.info(f"[auth] {username} đặt lại mật khẩu qua email")
+        return {"ok": True}
+
     @app.route("/auth/google", methods=["POST"])
     def auth_google():
         """Nhận id_token (credential) từ Google Identity Services, xác thực
@@ -234,6 +316,10 @@ def register_auth_routes(app):
         if r.status_code != 200:
             return {"ok": False, "error": "Google từ chối token đăng nhập"}, 401
         info = r.json()
+        # Chặn id_token của APP KHÁC (vẫn là token Google hợp lệ nhưng aud lạ) —
+        # chỉ kiểm khi đã cấu hình GOOGLE_CLIENT_ID trong .env.
+        if Config.GOOGLE_CLIENT_ID and info.get("aud") != Config.GOOGLE_CLIENT_ID:
+            return {"ok": False, "error": "Token Google không thuộc ứng dụng này"}, 401
         email = (info.get("email") or "").strip().lower()
         if not email or info.get("email_verified") not in ("true", True):
             return {"ok": False, "error": "Email Google chưa xác minh"}, 401

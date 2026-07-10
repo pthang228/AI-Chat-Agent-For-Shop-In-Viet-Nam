@@ -566,6 +566,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         app,
         public_exact={
             "/auth/login", "/auth/register", "/auth/google",
+            "/auth/forgot", "/auth/reset",
             "/incoming", "/payhook", "/support/chat",
         },
         public_prefixes=("/photos/file", "/photos/media", "/media"),

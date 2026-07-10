@@ -140,6 +140,7 @@ class LoginGuard:
 login_guard = LoginGuard()
 _login_limiter = RateLimiter(limit=10, window=60.0)     # 10 lần thử login/IP/phút
 _signup_limiter = RateLimiter(limit=5, window=300.0)    # 5 đăng ký/IP/5 phút
+_forgot_limiter = RateLimiter(limit=3, window=600.0)    # 3 lần xin mã reset/IP/10 phút (mỗi lần = 1 email)
 _global_limiter = RateLimiter(limit=300, window=60.0)   # trần chung 300 req/IP/phút
 
 # Endpoint nhạy cảm → limiter riêng (khắt khe hơn trần chung)
@@ -147,6 +148,8 @@ _SENSITIVE = {
     "/auth/login": _login_limiter,
     "/auth/google": _login_limiter,
     "/auth/register": _signup_limiter,
+    "/auth/forgot": _forgot_limiter,
+    "/auth/reset": _login_limiter,   # chống dò mã OTP (key theo path|IP nên không đụng /auth/login)
 }
 
 

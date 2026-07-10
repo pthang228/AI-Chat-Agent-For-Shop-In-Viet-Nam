@@ -33,6 +33,10 @@ export const authApi = {
     j("/auth/login", json({ username, password })),
   google: (credential) =>
     j("/auth/google", json({ credential })),
+  forgot: (username) =>
+    j("/auth/forgot", json({ username })),
+  reset: (username, code, newPassword) =>
+    j("/auth/reset", json({ username, code, new_password: newPassword })),
   me: (token) => j("/auth/me", auth(token)),
   logout: (token) => j("/auth/logout", auth(token, "POST")),
   update: (token, { homestay, email }) =>
