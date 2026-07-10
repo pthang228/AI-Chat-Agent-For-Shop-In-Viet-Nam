@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { broadcastApi } from "../broadcastApi.js";
+import { customersApi } from "../customersApi.js";
 import { ChannelTile } from "./ChannelIcon.jsx";
+import { STAGES } from "./CustomersSection.jsx";
 
 /*
  * TIN NHẮN HÀNG LOẠT (broadcast/remarketing) — chỉ CHỦ shop.
@@ -23,6 +25,8 @@ const SEGMENTS = [
   { key: "all",      label: "Tất cả khách" },
   { key: "active",   label: "Có nhắn trong … ngày (khách còn ấm)" },
   { key: "inactive", label: "Im lặng hơn … ngày (đánh thức khách cũ)" },
+  { key: "tag",      label: "Theo nhãn 🏷 (VIP, khách sỉ…)" },
+  { key: "stage",    label: "Theo vòng đời (tiềm năng / khách quen…)" },
 ];
 
 const ST = {
@@ -44,6 +48,9 @@ export default function BroadcastSection() {
   const [chans, setChans] = useState(["zalo"]);
   const [segType, setSegType] = useState("all");
   const [days, setDays] = useState(30);
+  const [segTag, setSegTag] = useState("");
+  const [segStage, setSegStage] = useState("lead");
+  const [allTags, setAllTags] = useState([]);
   const [preview, setPreview] = useState(null);   // {count, by_channel}
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,7 +61,19 @@ export default function BroadcastSection() {
   const [detail, setDetail] = useState(null);
   const timer = useRef(null);
 
-  const segment = useMemo(() => ({ type: segType, days: Number(days) || 30 }), [segType, days]);
+  const segment = useMemo(
+    () => ({ type: segType, days: Number(days) || 30, tag: segTag, stage: segStage }),
+    [segType, days, segTag, segStage]);
+
+  useEffect(() => {   // nhãn cho segment "tag" — nạp 1 lần
+    customersApi.tags().then((r) => {
+      if (r.ok && Array.isArray(r.body)) {
+        setAllTags(r.body);
+        if (r.body.length && !segTag) setSegTag(r.body[0].tag);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadList() {
     const r = await broadcastApi.list();
@@ -153,10 +172,28 @@ export default function BroadcastSection() {
               <span>{s.label}</span>
             </label>
           ))}
-          {segType !== "all" && (
+          {(segType === "active" || segType === "inactive") && (
             <div className="bc-days">
               <input type="number" min="1" max="365" value={days}
                      onChange={(e) => setDays(e.target.value)} /> ngày
+            </div>
+          )}
+          {segType === "tag" && (
+            <div className="bc-days">
+              {allTags.length === 0
+                ? <span className="hint">Chưa có nhãn nào — gắn nhãn cho khách ở mục Khách hàng trước.</span>
+                : (
+                  <select value={segTag} onChange={(e) => setSegTag(e.target.value)} style={{ width: "auto" }}>
+                    {allTags.map((t) => <option key={t.tag} value={t.tag}>🏷 {t.tag} ({t.count} khách)</option>)}
+                  </select>
+                )}
+            </div>
+          )}
+          {segType === "stage" && (
+            <div className="bc-days">
+              <select value={segStage} onChange={(e) => setSegStage(e.target.value)} style={{ width: "auto" }}>
+                {Object.entries(STAGES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
             </div>
           )}
         </div>

@@ -175,9 +175,16 @@ def _a_add_canned(username, args):
     if not content:
         raise ValueError("Thiếu nội dung câu trả lời mẫu")
     title = str((args or {}).get("title") or "").strip()[:60] or content[:30]
-    get_db().execute(
-        "INSERT INTO canned_replies (title, content, created_at) VALUES (?,?,?)",
-        (title, content[:2000], datetime.now().isoformat()))
+    # MULTI-TENANT: đóng dấu workspace của người ra lệnh — thiếu là câu mẫu
+    # rơi vào workspace chủ nền tảng (tenant='' được coi là của chủ đầu tiên)
+    db = get_db()
+    ws = username
+    rows = db.query("SELECT role, owner_username FROM users WHERE username=?", (username,))
+    if rows and rows[0]["role"] == "staff" and rows[0]["owner_username"]:
+        ws = rows[0]["owner_username"]
+    db.execute(
+        "INSERT INTO canned_replies (title, content, created_at, tenant) VALUES (?,?,?,?)",
+        (title, content[:2000], datetime.now().isoformat(), ws))
     return f"Đã tạo câu trả lời mẫu \"{title}\"."
 
 

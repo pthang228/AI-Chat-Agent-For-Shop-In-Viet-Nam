@@ -144,6 +144,11 @@ class Config:
         "http://localhost:5173,http://localhost:5174,http://localhost:5183,http://localhost:5186,"
         "http://127.0.0.1:5173,http://127.0.0.1:5174"
     ).split(",") if o.strip()]
+    # Bảo mật mạng (security.py). FORCE_HTTPS: bật header HSTS (chỉ khi ĐÃ chạy
+    # HTTPS thật — production sau reverse proxy). TRUST_PROXY: tin X-Forwarded-For
+    # để rate-limit đúng IP client khi có nginx/cloudflare đứng trước.
+    FORCE_HTTPS = os.getenv("FORCE_HTTPS", "false").strip().lower() in ("1", "true", "yes", "on")
+    TRUST_PROXY = os.getenv("TRUST_PROXY", "false").strip().lower() in ("1", "true", "yes", "on")
 
     # Bot
     ROOMS_PHOTOS_DIR  = _resolve(os.getenv("ROOMS_PHOTOS_DIR"), "media/rooms_photos")

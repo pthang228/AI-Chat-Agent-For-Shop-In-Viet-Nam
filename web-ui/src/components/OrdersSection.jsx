@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ordersApi, ORDER_STATUS, NEXT_STATUS, vnd } from "../ordersApi.js";
+import { loyaltyApi } from "../loyaltyApi.js";
 import { ChannelTile } from "./ChannelIcon.jsx";
 
 /*
@@ -79,6 +80,9 @@ export default function OrdersSection() {
         </div>
       )}
 
+      {/* Mã giảm giá */}
+      <VoucherCard />
+
       {/* Filter + tạo */}
       <div className="od-bar">
         <div className="od-tabs">
@@ -134,6 +138,10 @@ export default function OrdersSection() {
                 <span>👤 {o.customer_name || o.user_id || "—"}</span>
                 {o.phone && <span>📞 {o.phone}</span>}
                 <span>🗓 {fmtDue(o.due_at)}</span>
+                {o.voucher_code && (
+                  <span className="od-voucher" title={`Đã giảm ${vnd(o.discount)}`}>
+                    🎟️ {o.voucher_code} −{vnd(o.discount)}</span>
+                )}
                 <b className="od-total">{vnd(o.total)}</b>
               </div>
               {o.items?.length > 0 && (
@@ -168,6 +176,91 @@ export default function OrdersSection() {
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
         />
+      )}
+    </div>
+  );
+}
+
+/* ── Card quản lý mã giảm giá (loyalty) ── */
+function VoucherCard() {
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState(null);
+  const [f, setF] = useState({ code: "", kind: "amount", value: "", min_total: "", max_uses: "", expires_at: "" });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+
+  async function load() {
+    const r = await loyaltyApi.vouchers();
+    setList(r.ok && Array.isArray(r.body) ? r.body : []);
+  }
+  useEffect(() => { if (open && list === null) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open]);
+
+  async function create(e) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setMsg("");
+    const r = await loyaltyApi.createVoucher({
+      code: f.code, kind: f.kind,
+      value: parseInt(String(f.value).replace(/[.,]/g, ""), 10) || 0,
+      min_total: parseInt(String(f.min_total).replace(/[.,]/g, ""), 10) || 0,
+      max_uses: parseInt(f.max_uses, 10) || 0,
+      expires_at: f.expires_at || null,
+    });
+    setBusy(false);
+    if (r.ok) { setMsg("✅ Đã tạo mã " + r.body.voucher.code); setF({ code: "", kind: "amount", value: "", min_total: "", max_uses: "", expires_at: "" }); load(); }
+    else setMsg("❌ " + (r.body?.error || "Tạo mã thất bại"));
+  }
+  async function toggle(v) { await loyaltyApi.updateVoucher(v.id, { active: v.active ? 0 : 1 }); load(); }
+  async function del(v) {
+    if (!confirm(`Xoá mã ${v.code}?`)) return;
+    await loyaltyApi.deleteVoucher(v.id); load();
+  }
+
+  return (
+    <div className="panel vc-card">
+      <div className="vc-head" onClick={() => setOpen((o) => !o)}>
+        <b>🎟️ Mã giảm giá</b>
+        <span className="hint">Tạo mã khuyến mãi, áp vào đơn khi chốt · đơn hoàn tất tự cộng ⭐ điểm cho khách (10.000đ = 1 điểm)</span>
+        <span className="btn-mini">{open ? "Thu gọn ▲" : "Mở ▼"}</span>
+      </div>
+      {open && (
+        <div className="vc-body">
+          <form className="vc-form" onSubmit={create}>
+            <input style={{ width: 130 }} placeholder="MÃ (GIAM50K)" value={f.code}
+                   onChange={(e) => setF((s) => ({ ...s, code: e.target.value.toUpperCase() }))} required />
+            <select value={f.kind} onChange={set("kind")} style={{ width: "auto" }}>
+              <option value="amount">Giảm thẳng (đ)</option>
+              <option value="percent">Giảm %</option>
+            </select>
+            <input style={{ width: 110 }} placeholder={f.kind === "percent" ? "% (VD 10)" : "đ (VD 50000)"}
+                   value={f.value} onChange={set("value")} required />
+            <input style={{ width: 130 }} placeholder="Đơn tối thiểu (đ)" value={f.min_total} onChange={set("min_total")} />
+            <input style={{ width: 100 }} placeholder="Số lượt (0=∞)" value={f.max_uses} onChange={set("max_uses")} />
+            <input type="date" style={{ width: 140 }} title="Hạn dùng (bỏ trống = không hạn)"
+                   value={f.expires_at} onChange={set("expires_at")} />
+            <button className="btn-primary sm" type="submit" disabled={busy}>{busy ? "…" : "＋ Tạo mã"}</button>
+          </form>
+          {msg && <div className="savemsg">{msg}</div>}
+          {list === null ? <p className="hint">Đang tải…</p>
+            : list.length === 0 ? <p className="hint">Chưa có mã nào — tạo mã đầu tiên ở trên.</p>
+            : (
+              <div className="vc-list">
+                {list.map((v) => (
+                  <div key={v.id} className={"vc-row" + (v.active ? "" : " off")}>
+                    <b className="vc-code">{v.code}</b>
+                    <span>{v.kind === "percent" ? `−${v.value}%` : `−${vnd(v.value)}`}</span>
+                    <span className="hint">{v.min_total ? `đơn ≥ ${vnd(v.min_total)}` : "mọi đơn"}</span>
+                    <span className="hint">dùng {v.used}{v.max_uses ? `/${v.max_uses}` : ""}</span>
+                    <span className="hint">{v.expires_at ? `hạn ${String(v.expires_at).slice(0, 10)}` : "không hạn"}</span>
+                    <button className={"tggl sm" + (v.active ? " on" : "")} title={v.active ? "Đang bật — bấm để tắt" : "Đang tắt — bấm để bật"}
+                            onClick={() => toggle(v)} />
+                    <button className="btn-mini danger" onClick={() => del(v)}>Xoá</button>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
       )}
     </div>
   );
@@ -249,11 +342,48 @@ function OrderModal({ order, onClose, onSaved }) {
         </div>
         <label>Ghi chú</label>
         <input value={f.note} onChange={set("note")} placeholder="Ca chiều · khách xin checkin sớm…" />
+        {order && <VoucherApply order={order} onApplied={onSaved} />}
         <div className="modal-actions">
           <button type="button" className="btn-ghost" onClick={onClose}>Huỷ</button>
           <button type="submit" className="btn-primary sm" disabled={busy}>{busy ? "Đang lưu…" : "💾 Lưu đơn"}</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/* ── Áp mã giảm giá vào đơn (trong modal sửa đơn) ── */
+function VoucherApply({ order, onApplied }) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  if (order.voucher_code) {
+    return <p className="hint" style={{ marginTop: 8 }}>
+      🎟️ Đơn đã áp mã <b>{order.voucher_code}</b> (giảm {vnd(order.discount)}).</p>;
+  }
+  if (!["draft", "awaiting_payment"].includes(order.status)) return null;
+
+  async function apply() {
+    if (!code.trim() || busy) return;
+    setBusy(true); setMsg("");
+    const r = await loyaltyApi.applyToOrder(order.id, code.trim());
+    setBusy(false);
+    if (r.ok && r.body?.ok) { setMsg("✅ Đã áp mã — tổng tiền mới " + vnd(r.body.order.total)); onApplied(); }
+    else setMsg("❌ " + (r.body?.error || "Áp mã thất bại"));
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <label>🎟️ Mã giảm giá</label>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input style={{ flex: 1 }} placeholder="VD: GIAM50K" value={code}
+               onChange={(e) => setCode(e.target.value.toUpperCase())} />
+        <button type="button" className="btn-mini" onClick={apply} disabled={busy || !code.trim()}>
+          {busy ? "…" : "Áp mã"}
+        </button>
+      </div>
+      {msg && <div className="savemsg" style={{ marginTop: 4 }}>{msg}</div>}
     </div>
   );
 }

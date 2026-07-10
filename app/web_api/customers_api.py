@@ -2,21 +2,28 @@
 API CRM Khách hàng — gắn vào bridge 5005 (đọc thẳng SQLite dùng chung nên thấy
 khách của MỌI kênh). Tất cả sau auth guard (Bearer).
 
-  GET   /customers?q=&platform=&limit=&offset=      → danh sách gộp mọi kênh
-  GET   /customers/<account>/<user_id>              → hồ sơ đầy đủ (profile+stats+memory+history)
-  PATCH /customers/<account>/<user_id>              → cập nhật hồ sơ (ghi audit)
+  GET   /customers?q=&platform=&tag=&stage=&limit=&offset= → danh sách gộp mọi kênh (+đếm phễu)
+  GET   /customers/<account>/<user_id>              → hồ sơ đầy đủ (profile+stats+memory+history+followups)
+  PATCH /customers/<account>/<user_id>              → cập nhật hồ sơ kèm tags/stage (ghi audit)
   POST  /customers/<account>/<user_id>/scan         → quét SĐT/email từ hội thoại (regex)
   GET   /customers/<account>/<user_id>/orders       → đơn hàng của khách
   POST  /customers/<account>/<user_id>/memory       → thêm ghi nhớ tay {content}
   POST  /customers/<account>/<user_id>/memory/ai    → AI quét hội thoại bóc facts (chậm vài giây)
   DELETE /customers/memory/<id>                     → xoá 1 ghi nhớ
+  GET   /customers/tags                             → mọi tag đang dùng (filter/autocomplete)
+  GET   /customers/duplicates                       → nhóm hồ sơ trùng SĐT (gợi ý gộp)
+  POST  /customers/merge {primary, duplicate}       → gộp hồ sơ dup vào primary
+  POST  /customers/<account>/<user_id>/points       → cộng/trừ điểm tay {delta, reason}
+  POST  /customers/<account>/<user_id>/followups    → thêm nhắc việc {note, due_at}
+  GET   /followups                                  → việc pending toàn shop (+due_count)
+  POST  /followups/<id>/done · DELETE /followups/<id>
 """
 
 import logging
 
 from flask import request, jsonify
 
-from app.core import customers
+from app.core import customers, followups
 from app.core.db import get_db
 
 log = logging.getLogger("customers_api")
@@ -42,7 +49,32 @@ def register_customers_routes(app):
             limit, offset = 200, 0
         return jsonify(customers.list_customers(
             q=request.args.get("q", ""), platform=request.args.get("platform", ""),
+            tag=request.args.get("tag", ""), stage=request.args.get("stage", ""),
             limit=limit, offset=offset, tenant_ws=_ws()))
+
+    @app.route("/customers/tags")
+    def customers_tags():
+        return jsonify(customers.all_tags(tenant_ws=_ws()))
+
+    @app.route("/customers/duplicates")
+    def customers_duplicates():
+        return jsonify(customers.find_duplicates(tenant_ws=_ws()))
+
+    @app.route("/customers/merge", methods=["POST"])
+    def customers_merge():
+        data = request.get_json(force=True, silent=True) or {}
+        prim, dup = data.get("primary") or {}, data.get("duplicate") or {}
+        for c in (prim, dup):
+            if not c.get("account") or not c.get("user_id"):
+                return {"ok": False, "error": "Thiếu primary/duplicate {account, user_id}"}, 400
+            if not _owns(c["account"], c["user_id"]):
+                return {"ok": False, "error": "không thấy khách"}, 404
+        try:
+            profile = customers.merge_customers(
+                prim["account"], prim["user_id"], dup["account"], dup["user_id"])
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return {"ok": True, "profile": profile}
 
     @app.route("/customers/<account>/<path:user_id>")
     def customers_get(account, user_id):
@@ -102,5 +134,60 @@ def register_customers_routes(app):
     def customers_memory_del(mid):
         customers.delete_memory(mid)
         return {"ok": True}
+
+    # ── Điểm thưởng (chỉnh tay — đơn done tự cộng qua loyalty) ──────
+    @app.route("/customers/<account>/<path:user_id>/points", methods=["POST"])
+    def customers_points(account, user_id):
+        if not _owns(account, user_id):
+            return {"ok": False, "error": "không thấy khách"}, 404
+        data = request.get_json(force=True, silent=True) or {}
+        try:
+            delta = int(data.get("delta") or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "delta phải là số"}, 400
+        if delta == 0:
+            return {"ok": False, "error": "delta = 0"}, 400
+        pts = customers.adjust_points(account, user_id, delta,
+                                      reason=str(data.get("reason") or "chỉnh tay")[:100])
+        return {"ok": True, "points": pts}
+
+    # ── Nhắc việc follow-up ─────────────────────────────────────────
+    @app.route("/customers/<account>/<path:user_id>/followups", methods=["POST"])
+    def followups_add(account, user_id):
+        if not _owns(account, user_id):
+            return {"ok": False, "error": "không thấy khách"}, 404
+        data = request.get_json(force=True, silent=True) or {}
+        try:
+            f = followups.create(account, user_id, data.get("note"), data.get("due_at"),
+                                 created_by=_username(), tenant=_ws() or "")
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return {"ok": True, "followup": f}
+
+    @app.route("/followups")
+    def followups_list():
+        return jsonify(followups.list_pending(tenant_ws=_ws()))
+
+    @app.route("/followups/<int:fid>/done", methods=["POST"])
+    def followups_done(fid):
+        f = followups.mark_done(fid)
+        if not f:
+            return {"ok": False, "error": "không thấy nhắc việc"}, 404
+        return {"ok": True, "followup": f}
+
+    @app.route("/followups/<int:fid>", methods=["DELETE"])
+    def followups_del(fid):
+        followups.remove(fid)
+        return {"ok": True}
+
+    def _username() -> str:
+        """User đang đăng nhập (rỗng khi guard tắt trong test)."""
+        try:
+            from app.web_api.auth_api import _user_for_token, _bearer
+            u = _user_for_token(get_db(), _bearer())
+            return (u or {}).get("username", "") if isinstance(u, dict) else \
+                   (u["username"] if u else "")
+        except Exception:
+            return ""
 
     return app

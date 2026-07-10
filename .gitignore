@@ -37,3 +37,6 @@ data/prompt_backups/
 test_db_*.sqlite*
 media/outbox/
 docs/*.mp4
+# Du lieu runtime per-shop (prompt da day + anh thu vien shop upload)
+data/prompts/
+media/photo_library/

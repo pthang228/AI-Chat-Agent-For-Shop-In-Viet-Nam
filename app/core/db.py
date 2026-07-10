@@ -217,6 +217,48 @@ CREATE TABLE IF NOT EXISTS customer_history (
 );
 CREATE INDEX IF NOT EXISTS idx_chist_cust ON customer_history(account, user_id);
 
+-- NHẮC VIỆC FOLLOW-UP: "hẹn chăm lại khách này ngày X" — CRM hiện panel việc
+-- đến hạn (khách hỏi giá chưa chốt, hẹn gọi lại...). status pending|done.
+CREATE TABLE IF NOT EXISTS followups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    account    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    note       TEXT NOT NULL DEFAULT '',
+    due_at     TEXT NOT NULL,                    -- ISO ngày (giờ) cần chăm
+    status     TEXT NOT NULL DEFAULT 'pending',  -- pending | done
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    done_at    TEXT,
+    tenant     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_fu_due ON followups(status, due_at);
+CREATE INDEX IF NOT EXISTS idx_fu_cust ON followups(account, user_id);
+
+-- MÃ GIẢM GIÁ (voucher) — chủ tạo, áp vào đơn khi chốt (loyalty.py)
+CREATE TABLE IF NOT EXISTS vouchers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code       TEXT UNIQUE NOT NULL,             -- KHACHVIP10...
+    kind       TEXT NOT NULL DEFAULT 'amount',   -- amount (đ) | percent (%)
+    value      INTEGER NOT NULL DEFAULT 0,
+    min_total  INTEGER NOT NULL DEFAULT 0,       -- đơn tối thiểu mới được áp
+    max_uses   INTEGER NOT NULL DEFAULT 0,       -- 0 = không giới hạn
+    used       INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT,                             -- ISO, NULL = không hết hạn
+    active     INTEGER NOT NULL DEFAULT 1,
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    tenant     TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS voucher_redemptions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    voucher_id INTEGER NOT NULL,
+    order_id   INTEGER NOT NULL DEFAULT 0,
+    user_id    TEXT NOT NULL DEFAULT '',
+    amount     INTEGER NOT NULL DEFAULT 0,       -- số tiền đã giảm
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vred_v ON voucher_redemptions(voucher_id);
+
 -- CÂU TRẢ LỜI MẪU (canned replies) — chủ soạn sẵn, bấm 1 chạm chèn vào ô chat
 CREATE TABLE IF NOT EXISTS canned_replies (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,6 +386,18 @@ class Db:
             ("billing", "usage_limit",   "INTEGER NOT NULL DEFAULT 0"),
             ("billing", "usage_spent",   "INTEGER NOT NULL DEFAULT 0"),
             ("billing", "usage_period",  "TEXT NOT NULL DEFAULT ''"),
+            # CRM nâng cấp: tag (JSON array), vòng đời (rỗng = tự suy từ đơn hàng),
+            # gộp hồ sơ trùng SĐT ("account|user_id" hồ sơ chính), điểm thưởng.
+            # LƯU Ý: mọi INSERT OR REPLACE vào customers phải ghi ĐỦ các cột này
+            # (OR REPLACE = xoá dòng cũ chèn dòng mới — thiếu cột là mất dữ liệu).
+            ("customers", "tags",        "TEXT NOT NULL DEFAULT '[]'"),
+            ("customers", "stage",       "TEXT NOT NULL DEFAULT ''"),
+            ("customers", "merged_into", "TEXT NOT NULL DEFAULT ''"),
+            ("customers", "points",      "INTEGER NOT NULL DEFAULT 0"),
+            # Voucher áp vào đơn + chống cộng điểm 2 lần khi đơn done
+            ("orders", "voucher_code",   "TEXT NOT NULL DEFAULT ''"),
+            ("orders", "discount",       "INTEGER NOT NULL DEFAULT 0"),
+            ("orders", "points_awarded", "INTEGER NOT NULL DEFAULT 0"),
         ]
         for table, col, decl in adds:
             try:

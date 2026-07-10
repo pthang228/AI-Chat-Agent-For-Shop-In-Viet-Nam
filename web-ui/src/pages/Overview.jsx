@@ -12,14 +12,9 @@ import OrdersSection from "../components/OrdersSection.jsx";
 import PostsSection from "../components/PostsSection.jsx";
 import CustomersSection from "../components/CustomersSection.jsx";
 import BroadcastSection from "../components/BroadcastSection.jsx";
+import { useI18n } from "../i18n.jsx";
 
-const PERIODS = [
-  { key: "today", label: "Hôm nay" },
-  { key: "7d",    label: "7 ngày"  },
-  { key: "30d",   label: "30 ngày" },
-  { key: "month", label: "Tháng"   },
-  { key: "year",  label: "Năm"     },
-];
+const PERIODS = ["today", "7d", "30d", "month", "year"];
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -38,18 +33,19 @@ function Kpi({ icon, label, value, accent }) {
 }
 
 const SECTION_TITLE = {
-  overview:  "Tổng quan",
-  chat:      "Hội thoại",
-  customers: "Khách hàng",
-  chatbot:   "Chatbot",
-  orders:    "Đơn hàng",
-  broadcast: "Tin nhắn hàng loạt",
-  posts:     "Bài viết & bình luận (Facebook + TikTok)",
-  stats:     "Thống kê",
+  overview:  "nav.overview",
+  chat:      "nav.chat",
+  customers: "nav.customers",
+  chatbot:   "nav.chatbot",
+  orders:    "nav.orders",
+  broadcast: "nav.broadcast",
+  posts:     "sec.posts_full",
+  stats:     "nav.stats",
 };
 
 export default function Overview() {
   const nav = useNavigate();
+  const { t } = useI18n();
   const user = currentUser();
   const staff = isStaff(user);
   const hostName = user?.homestay || user?.username || "";
@@ -86,7 +82,7 @@ export default function Overview() {
   }, [stats]);
 
   async function doLogout() {
-    if (!confirm("Đăng xuất sẽ TẮT bot (ngừng tự trả lời khách) trên mọi kênh. Tiếp tục?")) return;
+    if (!confirm(t("logout.confirm"))) return;
     await logoutAndStopBots();
     nav("/login");
   }
@@ -104,13 +100,13 @@ export default function Overview() {
 
       <div className="shell-main">
         <header className="shell-top">
-          <h2 className="shell-title">{SECTION_TITLE[section]}</h2>
+          <h2 className="shell-title">{t(SECTION_TITLE[section])}</h2>
           <div className="shell-top-right">
-            <Link to="/settings" className="user-pill" title="Cài đặt tài khoản">
+            <Link to="/settings" className="user-pill" title={t("nav.settings")}>
               <span className="avatar">{initials(hostName)}</span>{hostName}
             </Link>
             <button className="btn-ghost" onClick={doLogout}>
-              <IcLogout width={15} height={15} /> Đăng xuất
+              <IcLogout width={15} height={15} /> {t("logout")}
             </button>
           </div>
         </header>
@@ -123,23 +119,23 @@ export default function Overview() {
                 <Link to="/billing" className={"bill-banner" + (bill.active ? (bill.on_trial ? " trial" : "") : " expired")}>
                   {bill.active
                     ? bill.on_trial
-                      ? <>🎁 Đang dùng thử — còn <b>{bill.days_left}</b> ngày. <u>Xem gói dịch vụ →</u></>
-                      : <>📦 Gói {bill.tier_label} · {bill.plan_label} — còn <b>{bill.days_left}</b> ngày. <u>Gia hạn →</u></>
-                    : <>⛔ <b>Gói dịch vụ đã hết hạn</b> — bot đã tạm ngừng trả lời khách. <u>Gia hạn ngay →</u></>}
+                      ? <>{t("bill.trial", { n: bill.days_left })} <u>{t("bill.trial_link")}</u></>
+                      : <>{t("bill.plan", { tier: bill.tier_label, plan: bill.plan_label, n: bill.days_left })} <u>{t("bill.renew")}</u></>
+                    : <><b>{t("bill.expired")}</b> <u>{t("bill.renew_now")}</u></>}
                 </Link>
               )}
 
               <div className="ov-head">
                 <div>
-                  <div className="hello">Chào mừng trở lại, {hostName}!</div>
-                  <p className="page-sub">Tổng quan hoạt động của shop</p>
+                  <div className="hello">{t("ov.hello", { name: hostName })}</div>
+                  <p className="page-sub">{t("ov.sub")}</p>
                 </div>
                 <div className="period-bar">
                   {PERIODS.map((p) => (
-                    <button key={p.key}
-                            className={"period-btn" + (period === p.key ? " active" : "")}
-                            onClick={() => setPeriod(p.key)}>
-                      {p.label}
+                    <button key={p}
+                            className={"period-btn" + (period === p ? " active" : "")}
+                            onClick={() => setPeriod(p)}>
+                      {t("period." + p)}
                     </button>
                   ))}
                 </div>
@@ -147,10 +143,10 @@ export default function Overview() {
 
               {/* Hàng KPI */}
               <div className="kpi-row">
-                <Kpi icon="✉️" label="Tổng tin nhắn"     value={kpi.msg}  accent="#4C6EF5" />
-                <Kpi icon="💬" label="Tổng hội thoại"    value={kpi.conv} accent="#7C3AED" />
-                <Kpi icon="🤖" label="Tỷ lệ AI trả lời"  value={kpi.rate} accent="#23a065" />
-                <Kpi icon="⏱" label="Thời gian phản hồi TB" value="—" accent="#cf9536" />
+                <Kpi icon="✉️" label={t("kpi.msg")}     value={kpi.msg}  accent="#4C6EF5" />
+                <Kpi icon="💬" label={t("kpi.conv")}    value={kpi.conv} accent="#7C3AED" />
+                <Kpi icon="🤖" label={t("kpi.rate")}    value={kpi.rate} accent="#23a065" />
+                <Kpi icon="⏱" label={t("kpi.latency")} value="—" accent="#cf9536" />
               </div>
 
               {/* 4 biểu đồ */}
@@ -171,8 +167,8 @@ export default function Overview() {
           ) : (
             <div className="ov-placeholder">
               <div className="ov-ph-ic">🚧</div>
-              <h3>{SECTION_TITLE[section]}</h3>
-              <p>Khu vực này đang được phát triển. Sidebar và bố cục đã sẵn sàng để gắn tính năng.</p>
+              <h3>{t(SECTION_TITLE[section])}</h3>
+              <p>{t("ov.placeholder")}</p>
             </div>
           )}
         </main>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchStats, periodDates } from "../statsApi.js";
+import { useI18n } from "../i18n.jsx";
 
 /* ── Bảng màu kênh (khớp Dashboard/StatsPanel) ── */
 const CH = {
@@ -141,12 +142,13 @@ function LineChart({ labels, series, yMax, yTicks = 4, ySuffix = "", height = 21
 
 /* ── Donut SVG cho "Tin nhắn theo nền tảng" ── */
 function Donut({ data }) {
+  const { t } = useI18n();
   const entries = Object.entries(data).filter(([, v]) => v > 0);
   const total = entries.reduce((a, [, v]) => a + v, 0);
   const R = 70, SW = 26, C = 90, circ = 2 * Math.PI * R;
 
   if (total === 0) {
-    return <div className="don-empty">Chưa có dữ liệu</div>;
+    return <div className="don-empty">{t("chart.empty")}</div>;
   }
 
   let acc = 0;
@@ -203,6 +205,7 @@ function ChartCard({ title, extra, children }) {
  * Lấy data thật qua fetchStats("all", period).
  * ───────────────────────────────────────────────────────── */
 export default function OverviewCharts({ period = "30d", onData }) {
+  const { t } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -228,11 +231,11 @@ export default function OverviewCharts({ period = "30d", onData }) {
   }, [data, period]);
 
   if (loading) {
-    return <div className="ov-loading"><div className="stats-spinner" /> Đang tải biểu đồ…</div>;
+    return <div className="ov-loading"><div className="stats-spinner" /> {t("chart.loading")}</div>;
   }
   if (!data) {
     return <p className="hint" style={{ textAlign: "center", padding: 24 }}>
-      ⚠️ Không tải được dữ liệu — kiểm tra server (cổng 5005) đang chạy không.
+      {t("chart.load_fail")}
     </p>;
   }
 
@@ -242,40 +245,40 @@ export default function OverviewCharts({ period = "30d", onData }) {
   return (
     <div className="charts-grid">
       {/* 1 — Hội thoại & tin nhắn theo ngày */}
-      <ChartCard title="Hội thoại & tin nhắn theo ngày">
+      <ChartCard title={t("chart.conv_msg")}>
         <LineChart
           labels={built.days}
           series={[
-            { name: "Hội thoại", color: "#4C6EF5", values: built.conv },
-            { name: "Tin nhắn",  color: "#7C3AED", values: built.msg, fill: true },
+            { name: t("nav.chat"), color: "#4C6EF5", values: built.conv },
+            { name: t("chart.messages"),  color: "#7C3AED", values: built.msg, fill: true },
           ]}
         />
       </ChartCard>
 
       {/* 2 — Tin nhắn theo nền tảng (donut) */}
-      <ChartCard title="Tin nhắn theo nền tảng">
+      <ChartCard title={t("chart.by_platform")}>
         <Donut data={byChannel} />
       </ChartCard>
 
       {/* 3 — Thời gian phản hồi (giây) */}
-      <ChartCard title="Thời gian phản hồi (giây)">
+      <ChartCard title={t("chart.latency")}>
         <LineChart
           labels={built.days}
           ySuffix="s"
           yMax={28}
           series={[
-            { name: "Trung bình", color: "#23a065", values: built.days.map(() => 0) },
+            { name: t("chart.avg"), color: "#23a065", values: built.days.map(() => 0) },
             { name: "P95",        color: "#cf9536", values: built.days.map(() => 0), dash: true },
           ]}
         />
-        <div className="chart-note">Chưa đo thời gian phản hồi — sẽ hiển thị khi bật theo dõi.</div>
+        <div className="chart-note">{t("chart.latency_note")}</div>
       </ChartCard>
 
       {/* 4 — Tỷ lệ AI trả lời theo ngày */}
       <ChartCard
-        title="Tỷ lệ AI trả lời theo ngày"
+        title={t("chart.ai_rate")}
         extra={<span className="chart-sub">
-          <b style={{ color: "var(--ok)" }}>{botMsg} thành công</b> / <b>0 thất bại</b>
+          <b style={{ color: "var(--ok)" }}>{botMsg} {t("chart.ok")}</b> / <b>0 {t("chart.fail")}</b>
         </span>}
       >
         <LineChart
@@ -284,7 +287,7 @@ export default function OverviewCharts({ period = "30d", onData }) {
           yMax={100}
           yTicks={4}
           series={[
-            { name: "Tỷ lệ AI trả lời", color: "#23a065", values: built.aiRate, fill: true },
+            { name: t("kpi.rate"), color: "#23a065", values: built.aiRate, fill: true },
           ]}
         />
       </ChartCard>

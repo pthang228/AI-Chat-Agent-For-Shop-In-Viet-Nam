@@ -194,18 +194,28 @@ def register_auth_routes(app):
 
     @app.route("/auth/login", methods=["POST"])
     def auth_login():
+        from app.web_api.security import login_guard, client_ip
         data = request.get_json(force=True, silent=True) or {}
         username = (data.get("username") or "").strip().lower()
         password = data.get("password") or ""
+        ip = client_ip()
+        # CHỐNG DÒ MẬT KHẨU: đang bị khoá tạm → từ chối NGAY, không đụng DB/hash
+        wait = login_guard.locked_for(username, ip)
+        if wait > 0:
+            return {"ok": False, "code": "locked", "error":
+                    f"Nhập sai quá nhiều lần — thử lại sau {int(wait) + 1} giây."}, 429
         rows = db.query("SELECT * FROM users WHERE username=?", (username,))
         if not rows:
+            login_guard.record_fail(username, ip)
             return {"ok": False, "error": "Sai email hoặc mật khẩu", "code": "not_found"}, 401
         u = rows[0]
         if not u["password_hash"] or not verify_password(password, u["password_hash"]):
+            login_guard.record_fail(username, ip)
             return {"ok": False, "error": "Sai email hoặc mật khẩu"}, 401
         if _blocked(db, u):
             return {"ok": False, "error": "Tài khoản đã bị khoá bởi quản trị nền tảng — "
                     "liên hệ hỗ trợ để mở lại", "code": "blocked"}, 403
+        login_guard.record_success(username, ip)   # đăng nhập đúng → xoá bộ đếm sai
         token = _issue_token(db, username)
         return {"ok": True, "token": token, "user": _public_user(u)}
 

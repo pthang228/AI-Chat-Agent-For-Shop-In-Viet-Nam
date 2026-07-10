@@ -57,10 +57,13 @@ def _channel_of_account(account: str) -> str:
 # ── Tập khách (audience) ─────────────────────────────────────────────
 
 def audience(channels: list, segment: dict, tenant_ws: str = None) -> list[dict]:
-    """Danh sách khách sẽ nhận tin: lọc theo kênh + mức hoạt động.
-    segment: {type: "all" | "active" | "inactive", days: N}
+    """Danh sách khách sẽ nhận tin: lọc theo kênh + mức hoạt động / nhãn / vòng đời.
+    segment: {type: "all" | "active" | "inactive" | "tag" | "stage", days: N,
+              tag: "...", stage: "lead|customer|repeat|dormant"}
       - active   : có nhắn trong N ngày gần đây (khách còn ấm)
       - inactive : IM LẶNG hơn N ngày (khách cũ cần đánh thức)
+      - tag      : hồ sơ CRM có nhãn này (hội thoại đã gộp dùng nhãn hồ sơ CHÍNH)
+      - stage    : vòng đời khách (gán tay hoặc tự suy từ đơn — cùng logic CRM)
     tenant_ws: MULTI-TENANT — chỉ khách của shop này (bắt buộc ở production).
     """
     channels = [c for c in (channels or []) if c in CHANNELS]
@@ -72,6 +75,27 @@ def audience(channels: list, segment: dict, tenant_ws: str = None) -> list[dict]
     except (TypeError, ValueError):
         days = 30
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+
+    # Segment theo hồ sơ CRM (tag/stage) — nạp profile + số đơn 1 lần
+    from app.core import customers as _cust
+    profs, done_by_user = {}, {}
+    if seg_type in ("tag", "stage"):
+        profs = {(r["account"], r["user_id"]): _cust._row_profile(r)
+                 for r in get_db().query("SELECT * FROM customers")}
+        done_by_user = _cust._done_orders_by_user(get_db())
+    want_tag = str((segment or {}).get("tag", "")).strip().lower()
+    want_stage = str((segment or {}).get("stage", "")).strip()
+
+    def _prof_resolved(key):
+        """Profile của hội thoại; đã gộp → dùng hồ sơ CHÍNH (tag/stage nằm ở đó)."""
+        p = profs.get(key)
+        if p and p["merged_into"]:
+            try:
+                pa, pu = p["merged_into"].split("|", 1)
+                return profs.get((pa, pu)) or p
+            except ValueError:
+                pass
+        return p
 
     tw, tp = "", ()
     if tenant_ws:
@@ -95,6 +119,17 @@ def audience(channels: list, segment: dict, tenant_ws: str = None) -> list[dict]
             continue
         if seg_type == "inactive" and lu >= cutoff:
             continue
+        if seg_type == "tag":
+            p = _prof_resolved((r["account"], r["user_id"]))
+            if not want_tag or not p \
+               or want_tag not in [t.lower() for t in p["tags"]]:
+                continue
+        if seg_type == "stage":
+            p = _prof_resolved((r["account"], r["user_id"]))
+            st = (p["stage"] if p else "") \
+                or _cust.derive_stage(done_by_user.get(str(r["user_id"]), 0), lu)
+            if not want_stage or st != want_stage:
+                continue
         out.append({"account": r["account"], "user_id": r["user_id"],
                     "name": r["name"] or "", "channel": ch})
     return out

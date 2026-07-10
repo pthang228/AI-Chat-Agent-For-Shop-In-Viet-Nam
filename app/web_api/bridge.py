@@ -183,6 +183,8 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     # CORS siết theo ALLOWED_ORIGINS + mở header Authorization (client gửi Bearer).
     install_cors(app)
+    from app.web_api.security import install_security
+    install_security(app)   # rate-limit login/đăng ký + trần chung + security headers
 
     # Auth thật (users/token/apps trong SQLite) — web React đăng nhập qua đây
     from app.web_api.auth_api import register_auth_routes
@@ -522,6 +524,10 @@ def create_bridge(brain, conv_manager) -> Flask:
     # CRM Khách hàng (gộp mọi kênh — đọc thẳng SQLite dùng chung)
     from app.web_api.customers_api import register_customers_routes
     register_customers_routes(app)
+
+    # Loyalty: mã giảm giá + điểm thưởng (đi cùng CRM/đơn hàng)
+    from app.web_api.loyalty_api import register_loyalty_routes
+    register_loyalty_routes(app)
 
     # Copilot quản trị — trợ lý AI giúp chủ shop cài đặt & vận hành
     from app.web_api.copilot_api import register_copilot_routes

@@ -148,6 +148,8 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
 
     # CORS siết theo ALLOWED_ORIGINS + mở header Authorization (client gửi Bearer).
     install_cors(app)
+    from app.web_api.security import install_security
+    install_security(app, enable_global_limit=False)  # headers + rate-limit endpoint nhạy cảm (webhook không dính trần chung)
     # Bảo vệ: mọi API /meta/* quản trị cần Bearer token; webhook nền tảng + phục
     # vụ media + payhook (SePay gọi) + config thì công khai. Cổng 5006 phơi ra
     # internet qua ngrok nên đây là lỗ hổng cần bịt nhất.

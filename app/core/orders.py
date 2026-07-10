@@ -145,7 +145,14 @@ def update(order_id, **fields) -> dict | None:
     sets.append("updated_at=?"); params.append(_now())
     params.append(order_id)
     get_db().execute(f"UPDATE orders SET {', '.join(sets)} WHERE id=?", tuple(params))
-    return get(order_id)
+    o = get(order_id)
+    # Đơn hoàn tất → cộng điểm thưởng cho khách (loyalty tự chống cộng lặp qua
+    # points_awarded + tự nuốt lỗi — không kéo sập việc đổi trạng thái đơn)
+    if o and fields.get("status") == "done":
+        from app.core import loyalty
+        loyalty.award_points(o)
+        o = get(order_id)
+    return o
 
 
 def add_event(order_id, event: str) -> dict | None:

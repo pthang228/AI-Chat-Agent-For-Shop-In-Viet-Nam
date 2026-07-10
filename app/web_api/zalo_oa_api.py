@@ -225,6 +225,8 @@ def handle_event(oa_id, sender, text, name, brain, conv_manager, store=None):
 def create_zalo_oa_api(brain, conv_manager, channel, store=None) -> Flask:
     app = Flask(__name__)
     install_cors(app)
+    from app.web_api.security import install_security
+    install_security(app, enable_global_limit=False)  # headers + rate-limit endpoint nhạy cảm (webhook không dính trần chung)
     install_auth_guard(
         app,
         public_exact={"/zalooa/webhook", "/zalooa/config"},

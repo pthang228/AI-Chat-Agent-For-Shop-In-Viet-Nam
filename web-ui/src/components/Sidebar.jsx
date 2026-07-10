@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import LogoMark from "./LogoMark.jsx";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * Sidebar dọc kiểu AloChat — dùng cho trang Overview (bảng điều khiển shop).
@@ -33,27 +34,28 @@ function IcOrders() { return svg(<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0
 function IcUsers()  { return svg(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>); }
 
 const SECTIONS = [
-  { key: "overview",  label: "Tổng quan",        icon: IcOverview },
-  { key: "chat",      label: "Hội thoại",         icon: IcChat },
-  { key: "customers", label: "Khách hàng",        icon: IcUsers },
-  { key: "chatbot",   label: "Chatbot",           icon: IcBot,       ownerOnly: true },
-  { key: "orders",    label: "Đơn hàng",          icon: IcOrders },
-  { key: "broadcast", label: "Tin nhắn hàng loạt", icon: IcBroadcast, ownerOnly: true },
-  { key: "posts",     label: "Bài viết & bình luận", icon: IcPost, note: "FB + TikTok" },
-  { key: "stats",     label: "Thống kê",          icon: IcStats },
+  { key: "overview",  lbl: "nav.overview",  icon: IcOverview },
+  { key: "chat",      lbl: "nav.chat",      icon: IcChat },
+  { key: "customers", lbl: "nav.customers", icon: IcUsers },
+  { key: "chatbot",   lbl: "nav.chatbot",   icon: IcBot,       ownerOnly: true },
+  { key: "orders",    lbl: "nav.orders",    icon: IcOrders },
+  { key: "broadcast", lbl: "nav.broadcast", icon: IcBroadcast, ownerOnly: true },
+  { key: "posts",     lbl: "nav.posts",     icon: IcPost, note: "FB + TikTok" },
+  { key: "stats",     lbl: "nav.stats",     icon: IcStats },
 ];
 function IcShield() { return svg(<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />); }
 
 // Mục điều hướng route thật
 const LINKS = [
-  { to: "/billing",  label: "Gói dịch vụ", icon: IcBox, ownerOnly: true },
-  { to: "/settings", label: "Cài đặt",     icon: IcGear },
+  { to: "/billing",  lbl: "nav.billing",  icon: IcBox, ownerOnly: true },
+  { to: "/settings", lbl: "nav.settings", icon: IcGear },
   // Khu quản trị NỀN TẢNG — chỉ chủ nền tảng (user.platform_admin) thấy
-  { to: "/admin",    label: "Quản trị",    icon: IcShield, platformOnly: true },
+  { to: "/admin",    lbl: "nav.admin",    icon: IcShield, platformOnly: true },
 ];
 
 // staff (nhân viên) chỉ thấy mục vận hành hộp thư — mục quản trị ẩn đi
 export default function Sidebar({ active = "overview", onSelect, collapsed = false, onToggle, staff = false, platformAdmin = false }) {
+  const { t } = useI18n();
   const sections = SECTIONS.filter((s) => !(staff && s.ownerOnly));
   const links = LINKS.filter((l) => !(staff && l.ownerOnly) && !(l.platformOnly && !platformAdmin));
   return (
@@ -63,23 +65,23 @@ export default function Sidebar({ active = "overview", onSelect, collapsed = fal
           <LogoMark size={34} />
           {!collapsed && <span className="sb-logo-txt">Nova<b>Chat</b></span>}
         </Link>
-        <button className="sb-collapse" onClick={onToggle} title={collapsed ? "Mở rộng" : "Thu gọn"}>
+        <button className="sb-collapse" onClick={onToggle} title={collapsed ? t("sb.expand") : t("sb.collapse")}>
           <IcCollapse />
         </button>
       </div>
 
       <nav className="sb-nav">
-        {sections.map(({ key, label, icon: Icon, note }) => (
+        {sections.map(({ key, lbl, icon: Icon, note }) => (
           <button
             key={key}
             className={"sb-item" + (active === key ? " active" : "")}
             onClick={() => onSelect && onSelect(key)}
-            title={label}
+            title={t(lbl)}
           >
             <span className="sb-ico"><Icon /></span>
             {!collapsed && (
               <span className="sb-lbl">
-                {label}
+                {t(lbl)}
                 {note && <span className="sb-note">{note}</span>}
               </span>
             )}
@@ -88,10 +90,10 @@ export default function Sidebar({ active = "overview", onSelect, collapsed = fal
 
         <div className="sb-sep" />
 
-        {links.map(({ to, label, icon: Icon }) => (
-          <Link key={to} to={to} className="sb-item" title={label}>
+        {links.map(({ to, lbl, icon: Icon }) => (
+          <Link key={to} to={to} className="sb-item" title={t(lbl)}>
             <span className="sb-ico"><Icon /></span>
-            {!collapsed && <span className="sb-lbl">{label}</span>}
+            {!collapsed && <span className="sb-lbl">{t(lbl)}</span>}
           </Link>
         ))}
       </nav>
