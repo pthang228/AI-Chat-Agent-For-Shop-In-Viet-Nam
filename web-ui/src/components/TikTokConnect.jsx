@@ -2,9 +2,21 @@ import { useState, useEffect } from "react";
 import { tiktok } from "../tiktokApi.js";
 import GuideBox from "./GuideBox.jsx";
 import { ChannelTile } from "./ChannelIcon.jsx";
+import { useI18n } from "../i18n.jsx";
+
+// Mini-markdown → JSX: **đậm**, *nghiêng*, `code` (giữ định dạng trong chuỗi dịch)
+function rich(s) {
+  return String(s).split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g).map((p, i) => {
+    if (p.startsWith("**") && p.endsWith("**")) return <b key={i}>{p.slice(2, -2)}</b>;
+    if (p.startsWith("`") && p.endsWith("`")) return <code key={i}>{p.slice(1, -1)}</code>;
+    if (p.startsWith("*") && p.endsWith("*") && p.length > 2) return <i key={i}>{p.slice(1, -1)}</i>;
+    return p;
+  });
+}
 
 // Kết nối TikTok ĐA KHÁCH trong web: dán access token TikTok Business + business ID.
 export default function TikTokConnect() {
+  const { t } = useI18n();
   const [cfg, setCfg] = useState(null);   // {verify_token,...} | "offline"
   const [accounts, setAccounts] = useState([]);
   const [token, setToken] = useState("");
@@ -27,7 +39,7 @@ export default function TikTokConnect() {
 
   async function connect() {
     if (!token.trim() || !bizId.trim()) {
-      setMsg("❌ Cần cả access token và Business ID.");
+      setMsg(t("cn2.tiktok_need"));
       return;
     }
     setBusy(true); setMsg("");
@@ -35,21 +47,17 @@ export default function TikTokConnect() {
     setBusy(false);
     if (r.ok && r.body?.ok) {
       setMsg(r.body.verified
-        ? `✅ Đã kết nối & xác thực account ${r.body.account.name || r.body.account.business_id}`
-        : `✅ Đã lưu account ${r.body.account.business_id} (chưa xác thực được với TikTok — token sẽ dùng khi API sẵn sàng)`);
+        ? t("cn2.tiktok_verified", { name: r.body.account.name || r.body.account.business_id })
+        : t("cn2.tiktok_saved", { id: r.body.account.business_id }));
       setToken(""); setBizId(""); setName("");
       refreshAccounts();
     } else {
-      setMsg("❌ " + (r.body?.error || "Kết nối thất bại"));
+      setMsg("❌ " + (r.body?.error || t("cn2.connect_fail")));
     }
   }
 
   async function disconnect(a) {
-    if (!confirm(
-      `Ngắt kết nối account ${a.name || a.business_id}?\n\n` +
-      `Token sẽ bị xoá khỏi hệ thống. Lịch sử hội thoại với khách vẫn còn lưu.\n` +
-      `Bạn có thể kết nối lại bất kỳ lúc nào bằng cách dán token mới.`
-    )) return;
+    if (!confirm(t("cn2.tiktok_disc", { name: a.name || a.business_id }))) return;
     await tiktok.removeAccount(a.business_id);
     refreshAccounts();
   }
@@ -60,13 +68,13 @@ export default function TikTokConnect() {
   }
 
   if (cfg === null)
-    return <div className="connect"><div className="status muted">Đang tải…</div></div>;
+    return <div className="connect"><div className="status muted">{t("team.loading")}</div></div>;
 
   if (cfg === "offline")
     return (
       <div className="connect">
-        <div className="status warn">⚠️ Chưa kết nối được máy chủ TikTok (cổng 5008)</div>
-        <p className="hint">Chạy <code>python -m app.main_tiktok</code> rồi tải lại trang.</p>
+        <div className="status warn">{t("cn2.offline", { name: "TikTok", port: 5008 })}</div>
+        <p className="hint">{t("cn2.run1")} <code>python -m app.main_tiktok</code> {t("cn2.run2")}</p>
       </div>
     );
 
@@ -74,55 +82,49 @@ export default function TikTokConnect() {
 
   return (
     <div className="connect">
-      <div className="status ok"><ChannelTile ch="tiktok" size={22} /> Kết nối TikTok</div>
+      <div className="status ok"><ChannelTile ch="tiktok" size={22} /> {t("cn2.connect_title", { ch: "TikTok" })}</div>
 
       <GuideBox
-        title="📘 Hướng dẫn kết nối — TikTok"
+        title={t("cn2.tiktok_guide_title")}
         steps={[
-          { t: "Bước 1 · Tài khoản TikTok Business", d: <>Tài khoản TikTok của shop phải chuyển sang <b>Business Account</b> (Cài đặt → Tài khoản → Chuyển sang tài khoản Doanh nghiệp — miễn phí).</> },
-          { t: "Bước 2 · Lấy access token", d: <>Vào <b>business.tiktok.com</b> / TikTok for Developers → tạo app (hoặc dùng app của nhà cung cấp) → cấp quyền <b>Business Messaging</b> → copy <b>Access Token</b> và <b>Business ID</b> của tài khoản.</> },
-          { t: "Bước 3 · Dán & kết nối", d: <>Dán token + Business ID vào ô dưới, bấm <b>Kết nối</b>. Sau đó khai webhook nhận tin: <code>{webhookUrl}</code> (verify token: <code>{cfg.verify_token}</code>).</> },
-          { t: "Bước 4 · Đặt chủ nhà", d: <>Chủ nhắn thử account TikTok 1 tin → vào tab <b>Khách hàng</b> → mở hội thoại của chủ → bấm <b>⭐ Đặt làm chủ</b> để nhận tin báo khi khách chốt phòng.</> },
+          { t: t("cn2.tiktok_s1t"), d: <>{rich(t("cn2.tiktok_s1d"))}</> },
+          { t: t("cn2.tiktok_s2t"), d: <>{rich(t("cn2.tiktok_s2d"))}</> },
+          { t: t("cn2.tiktok_s3t"), d: <>{rich(t("cn2.tiktok_s3d", { url: webhookUrl, vt: cfg.verify_token || "" }))}</> },
+          { t: t("cn2.tiktok_s4t"), d: <>{rich(t("cn2.tiktok_s4d"))}</> },
         ]}
-        note={
-          <>
-            ⚠️ <b>Lưu ý:</b> API nhắn tin TikTok (Business Messaging) hiện TikTok chỉ mở cho
-            app được duyệt. Chưa có token thật thì hệ thống vẫn lưu cấu hình và chạy
-            chế độ thử nghiệm — khi TikTok duyệt là dùng được ngay, không phải sửa gì.
-          </>
-        }
+        note={<>{rich(t("cn2.tiktok_note"))}</>}
       />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
         <input
-          placeholder="Dán Access Token TikTok Business…"
+          placeholder={t("cn2.tiktok_token_ph")}
           value={token}
           onChange={(e) => setToken(e.target.value)}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
             style={{ flex: 1, minWidth: 160 }}
-            placeholder="Business ID (bắt buộc)"
+            placeholder={t("cn2.tiktok_bizid_ph")}
             value={bizId}
             onChange={(e) => setBizId(e.target.value)}
           />
           <input
             style={{ flex: 1, minWidth: 160 }}
-            placeholder="Tên hiển thị (tuỳ chọn)"
+            placeholder={t("cn2.tiktok_name_ph")}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
           <button className="btn-primary sm" onClick={connect} disabled={busy}>
-            {busy ? "Đang kết nối…" : "Kết nối"}
+            {busy ? t("cn2.connecting") : t("cn2.connect")}
           </button>
         </div>
       </div>
       {msg && <div className="savemsg" style={{ marginTop: 8 }}>{msg}</div>}
 
       <div className="pages" style={{ marginTop: 14 }}>
-        <h4>Account đã kết nối</h4>
+        <h4>{t("cn2.tiktok_list")}</h4>
         {accounts.length === 0 ? (
-          <p className="hint">Chưa có account nào.</p>
+          <p className="hint">{t("cn2.tiktok_none")}</p>
         ) : (
           <ul className="page-list">
             {accounts.map((a) => (
@@ -135,19 +137,19 @@ export default function TikTokConnect() {
                   <div className="page-sub">Business ID: {a.business_id}</div>
                   <div className="page-sub">
                     {a.owner_registered
-                      ? `Chủ (nhận báo): ${a.owner_name || "đã đăng ký"} ✅`
-                      : "Chưa có chủ — vào tab Khách hàng → ⭐ Đặt làm chủ"}
+                      ? t("cn2.owner", { name: a.owner_name || t("cn2.owner_reg") })
+                      : t("cn2.no_owner")}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                   <button
                     className={"btn-mini" + (a.bot_enabled ? "" : " danger")}
-                    title={a.bot_enabled ? "Bot đang BẬT — bấm để TẮT" : "Bot đang TẮT — bấm để BẬT"}
+                    title={a.bot_enabled ? t("cn2.bot_on_title") : t("cn2.bot_off_title")}
                     onClick={() => toggleAccount(a)}
                   >
-                    {a.bot_enabled ? "🟢 Bot bật" : "🔴 Bot tắt"}
+                    {a.bot_enabled ? t("cn2.bot_on") : t("cn2.bot_off")}
                   </button>
-                  <button className="btn-mini danger" onClick={() => disconnect(a)}>Ngắt</button>
+                  <button className="btn-mini danger" onClick={() => disconnect(a)}>{t("cn2.disconnect")}</button>
                 </div>
               </li>
             ))}

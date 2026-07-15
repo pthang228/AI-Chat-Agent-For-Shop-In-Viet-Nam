@@ -2,10 +2,12 @@ import { useState, useEffect } from "react";
 import { meta, loadFbSdk, fbLogin, buildScope } from "../metaApi.js";
 import GuideBox from "./GuideBox.jsx";
 import { ChannelTile } from "./ChannelIcon.jsx";
+import { useI18n } from "../i18n.jsx";
 
 // Màn "Kết nối Facebook" cho 1 app kênh Messenger/Instagram.
 // Khách bấm đăng nhập FB → chọn Page → backend lưu token + subscribe webhook.
 export default function MetaConnect() {
+  const { t } = useI18n();
   const [cfg, setCfg] = useState(null);       // {app_id, configured} | "offline"
   const [pages, setPages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -34,10 +36,10 @@ export default function MetaConnect() {
       const r = await meta.connect(userToken);
       if (r.ok && r.body?.ok) {
         const n = r.body.pages?.length || 0;
-        setMsg(`✅ Đã kết nối ${n} Page` + (r.body.pages?.some(p => !p.subscribed) ? " (vài Page chưa subscribe được — kiểm tra quyền)" : ""));
+        setMsg(t("cn.meta_connected_n", { n }) + (r.body.pages?.some(p => !p.subscribed) ? " " + t("cn.meta_sub_warn") : ""));
         await refreshPages();
       } else {
-        setMsg("❌ " + (r.body?.error || "Kết nối thất bại"));
+        setMsg("❌ " + (r.body?.error || t("cn.connect_fail")));
       }
     } catch (e) {
       setMsg("❌ " + e.message);
@@ -47,61 +49,59 @@ export default function MetaConnect() {
   }
 
   async function disconnect(pageId) {
-    if (!confirm("Ngắt kết nối Page này?")) return;
+    if (!confirm(t("cn.meta_disconnect_confirm"))) return;
     await meta.removePage(pageId);
     refreshPages();
   }
 
-  if (cfg === null) return <div className="connect"><div className="status muted">Đang tải…</div></div>;
+  if (cfg === null) return <div className="connect"><div className="status muted">{t("cn.loading")}</div></div>;
 
   if (cfg === "offline")
     return (
       <div className="connect">
-        <div className="status warn">⚠️ Chưa kết nối được máy chủ Meta (cổng 5006)</div>
-        <p className="hint">Chạy <code>python scripts/run_meta.py</code> rồi tải lại trang.</p>
+        <div className="status warn">{t("cn.meta_offline")}</div>
+        <p className="hint">{t("cn.offline_run_pre")} <code>python scripts/run_meta.py</code> {t("cn.offline_run_post")}</p>
       </div>
     );
 
   if (!cfg.configured)
     return (
       <div className="connect">
-        <div className="status warn">⚙️ Chưa cấu hình Meta App</div>
+        <div className="status warn">{t("cn.meta_not_configured")}</div>
         <p className="hint">
-          Cần điền <code>FB_APP_ID</code> và <code>FB_APP_SECRET</code> trong <code>.env</code> (đây là app
-          của bạn — vendor — làm 1 lần cho mọi khách), rồi chạy lại máy chủ Meta.
+          {t("cn.meta_cfg_1")} <code>FB_APP_ID</code> {t("cn.meta_cfg_2")} <code>FB_APP_SECRET</code> {t("cn.meta_cfg_3")} <code>.env</code> {t("cn.meta_cfg_4")}
         </p>
       </div>
     );
 
   return (
     <div className="connect">
-      <div className="status ok"><ChannelTile ch="meta" size={22} /> Kết nối Facebook{cfg.enable_ig ? " / Instagram" : ""}</div>
+      <div className="status ok"><ChannelTile ch="meta" size={22} /> {t("cn.meta_title")}{cfg.enable_ig ? " / Instagram" : ""}</div>
 
       <GuideBox
-        title="📘 Hướng dẫn nhanh — Messenger / Instagram"
+        title={t("cn.meta_guide_title")}
         steps={[
-          { t: "Bước 1 · Đăng nhập Facebook", d: <>Bấm <b>Đăng nhập với Facebook</b> bên dưới → chọn đúng <b>Page của shop</b> bạn.</> },
-          { t: "Bước 2 · Bot tự trả lời", d: <>Xong là bot tự trả lời tin nhắn của Page{cfg.enable_ig ? " và Instagram liên kết" : ""}. Bạn <b>không cần</b> đụng gì vào trang lập trình của Facebook.</> },
-          { t: "Bước 3 · Quản lý khách", d: <>Xem & xử lý hội thoại từng khách ở tab <b>Khách hàng</b>.</> },
+          { t: t("cn.meta_g1_t"), d: <>{t("cn.meta_g1_d1")} <b>{t("cn.meta_login_btn")}</b> {t("cn.meta_g1_d2")} <b>{t("cn.meta_g1_b2")}</b>{t("cn.meta_g1_d3")}</> },
+          { t: t("cn.meta_g2_t"), d: <>{t("cn.meta_g2_d1")}{cfg.enable_ig ? " " + t("cn.meta_g2_ig") : ""}. {t("cn.meta_g2_d2")} <b>{t("cn.meta_g2_b")}</b> {t("cn.meta_g2_d3")}</> },
+          { t: t("cn.meta_g3_t"), d: <>{t("cn.meta_g3_d")} <b>{t("cn.tab_customers")}</b>.</> },
         ]}
-        note={<>Vendor đã lo phần app Meta + webhook. Nếu tin nhắn chưa chạy về, báo vendor kiểm tra webhook giúp.</>}
+        note={<>{t("cn.meta_note")}</>}
       />
       {!cfg.enable_ig && (
         <p className="hint">
-          ℹ️ Instagram đang <b>tắt</b>. Bật bằng cách đặt <code>FB_ENABLE_IG=true</code> trong <code>.env</code> sau
-          khi app Meta đã thêm sản phẩm Instagram và có IG Professional liên kết Page, rồi chạy lại máy chủ Meta.
+          {t("cn.meta_ig_off1")} <b>{t("cn.meta_ig_off_b")}</b>. {t("cn.meta_ig_off2")} <code>FB_ENABLE_IG=true</code> {t("cn.meta_ig_off3")} <code>.env</code> {t("cn.meta_ig_off4")}
         </p>
       )}
 
       <button className="btn-fb" onClick={connect} disabled={busy}>
-        <span className="fb-ico">f</span>{busy ? "Đang kết nối…" : "Đăng nhập với Facebook"}
+        <span className="fb-ico">f</span>{busy ? t("cn.connecting") : t("cn.meta_login_btn")}
       </button>
       {msg && <div className="savemsg" style={{ marginTop: 10 }}>{msg}</div>}
 
       <div className="pages">
-        <h4>Page đã kết nối</h4>
+        <h4>{t("cn.meta_pages_title")}</h4>
         {pages.length === 0 ? (
-          <p className="hint">Chưa có Page nào.</p>
+          <p className="hint">{t("cn.meta_no_pages")}</p>
         ) : (
           <ul className="page-list">
             {pages.map((p) => (
@@ -112,7 +112,7 @@ export default function MetaConnect() {
                     Messenger {p.has_ig ? `· Instagram @${p.ig_username || ""}` : ""}
                   </div>
                 </div>
-                <button className="btn-mini danger" onClick={() => disconnect(p.page_id)}>Ngắt</button>
+                <button className="btn-mini danger" onClick={() => disconnect(p.page_id)}>{t("cn.disconnect_btn")}</button>
               </li>
             ))}
           </ul>

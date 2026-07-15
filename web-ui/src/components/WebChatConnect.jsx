@@ -2,12 +2,24 @@ import { useState, useEffect } from "react";
 import { webchat } from "../webchatApi.js";
 import GuideBox from "./GuideBox.jsx";
 import { ChannelTile } from "./ChannelIcon.jsx";
+import { useI18n } from "../i18n.jsx";
+
+// Mini-markdown → JSX: **đậm**, *nghiêng*, `code` (giữ định dạng trong chuỗi dịch)
+function rich(s) {
+  return String(s).split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g).map((p, i) => {
+    if (p.startsWith("**") && p.endsWith("**")) return <b key={i}>{p.slice(2, -2)}</b>;
+    if (p.startsWith("`") && p.endsWith("`")) return <code key={i}>{p.slice(1, -1)}</code>;
+    if (p.startsWith("*") && p.endsWith("*") && p.length > 2) return <i key={i}>{p.slice(1, -1)}</i>;
+    return p;
+  });
+}
 
 /*
  * Kết nối kênh Website — KHÔNG token, KHÔNG chờ duyệt: tạo site → nhận mã nhúng
  * 1 dòng <script> → chủ shop dán vào website của họ là bong bóng chat hiện ngay.
  */
 export default function WebChatConnect() {
+  const { t } = useI18n();
   const [cfg, setCfg] = useState(null);   // {public_base_url,...} | "offline"
   const [sites, setSites] = useState([]);
   const [name, setName] = useState("");
@@ -32,11 +44,11 @@ export default function WebChatConnect() {
     const r = await webchat.createSite(name.trim());
     setBusy(false);
     if (r.ok && r.body?.ok) {
-      setMsg(`✅ Đã tạo site "${r.body.site.name}" — copy mã nhúng bên dưới dán vào website.`);
+      setMsg(t("cn2.web_created", { name: r.body.site.name }));
       setName("");
       refreshSites();
     } else {
-      setMsg("❌ " + (r.body?.error || "Tạo site thất bại"));
+      setMsg("❌ " + (r.body?.error || t("cn2.web_create_fail")));
     }
   }
 
@@ -46,16 +58,12 @@ export default function WebChatConnect() {
       setCopied(s.site_id);
       setTimeout(() => setCopied(""), 2000);
     } catch {
-      prompt("Copy thủ công mã nhúng:", s.snippet);
+      prompt(t("cn2.web_copy_manual"), s.snippet);
     }
   }
 
   async function removeSite(s) {
-    if (!confirm(
-      `Xoá site "${s.name || s.site_id}"?\n\n` +
-      `Widget trên website đang dán mã này sẽ NGỪNG hoạt động.\n` +
-      `Lịch sử hội thoại với khách vẫn còn lưu.`
-    )) return;
+    if (!confirm(t("cn2.web_del_confirm", { name: s.name || s.site_id }))) return;
     await webchat.removeSite(s.site_id);
     refreshSites();
   }
@@ -66,83 +74,78 @@ export default function WebChatConnect() {
   }
 
   if (cfg === null)
-    return <div className="connect"><div className="status muted">Đang tải…</div></div>;
+    return <div className="connect"><div className="status muted">{t("team.loading")}</div></div>;
 
   if (cfg === "offline")
     return (
       <div className="connect">
-        <div className="status warn">⚠️ Chưa kết nối được máy chủ Webchat (cổng 5011)</div>
-        <p className="hint">Chạy <code>python -m app.main_webchat</code> rồi tải lại trang.</p>
+        <div className="status warn">{t("cn2.offline", { name: "Webchat", port: 5011 })}</div>
+        <p className="hint">{t("cn2.run1")} <code>python -m app.main_webchat</code> {t("cn2.run2")}</p>
       </div>
     );
 
   return (
     <div className="connect">
-      <div className="status ok"><ChannelTile ch="webchat" size={22} /> Kênh Website — bong bóng chat trên web của bạn</div>
+      <div className="status ok"><ChannelTile ch="webchat" size={22} /> {t("cn2.web_title")}</div>
 
       {/* Hướng dẫn cho chủ shop KHÔNG RÀNH kỹ thuật */}
       <GuideBox
-        title="📘 Hướng dẫn — dán 1 dòng mã là chạy (không cần duyệt gì cả)"
+        title={t("cn2.web_guide_title")}
         steps={[
-          { t: "Kênh Website là gì?", d: <>Bong bóng chat hiện ở <b>góc phải website của bạn</b> (giống khung chat bạn hay thấy trên các trang bán hàng). Khách đang xem web hỏi là <b>bot trả lời ngay</b> — không cần khách cài app hay đăng nhập gì.</> },
-          { t: "Bước 1 · Tạo site", d: <>Điền tên website (vd "Web Shop Mình") → bấm <b>Tạo mã nhúng</b>. Xong ngay, không chờ ai duyệt.</> },
-          { t: "Bước 2 · Dán mã vào website", d: <>Bấm <b>📋 Copy mã nhúng</b> → gửi cho người làm web của bạn dán vào <b>cuối trang (trước &lt;/body&gt;)</b>. Web WordPress/Haravan/Shopify đều có chỗ dán mã — chỉ 1 dòng duy nhất.</> },
-          { t: "Bước 3 · Thử ngay", d: <>Mở website của bạn → thấy bong bóng chat tím góc phải → nhắn thử 1 câu, bot trả lời là xong. Mọi hội thoại hiện trong tab <b>Hội thoại</b> ở đây, bạn nhắn xen vào lúc nào cũng được (bot tự nhường).</> },
-          { t: "Bước 4 · Nhận thông báo (tuỳ chọn)", d: <>Tự nhắn widget trên web của bạn 1 tin → vào tab <b>Khách hàng</b> → mở hội thoại của mình → <b>⭐ Đặt làm chủ</b>. Muốn nhận báo cả khi không mở web → nối thêm kênh Telegram/Zalo.</> },
+          { t: t("cn2.web_s1t"), d: <>{rich(t("cn2.web_s1d"))}</> },
+          { t: t("cn2.web_s2t"), d: <>{rich(t("cn2.web_s2d"))}</> },
+          { t: t("cn2.web_s3t"), d: <>{rich(t("cn2.web_s3d"))}</> },
+          { t: t("cn2.web_s4t"), d: <>{rich(t("cn2.web_s4d"))}</> },
+          { t: t("cn2.web_s5t"), d: <>{rich(t("cn2.web_s5d"))}</> },
         ]}
-        note={
-          <>
-            ⚠️ <b>Lưu ý:</b> để khách trên internet nhắn được, máy chủ NovaChat phải có
-            <b> địa chỉ công khai</b> (domain/tunnel). Hiện tại: <code>{cfg.public_base_url || "chưa cấu hình — mã nhúng dùng địa chỉ nội bộ, chỉ thử được trên máy này"}</code>
-          </>
-        }
+        note={<>{rich(t("cn2.web_note", { url: cfg.public_base_url || t("cn2.web_nourl") }))}</>}
       />
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
         <input
           style={{ flex: 1, minWidth: 200 }}
-          placeholder="Tên website (vd: Web Shop Mình)…"
+          placeholder={t("cn2.web_name_ph")}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
         <button className="btn-primary sm" onClick={createSite} disabled={busy}>
-          {busy ? "Đang tạo…" : "＋ Tạo mã nhúng"}
+          {busy ? t("team.adding") : t("cn2.web_create")}
         </button>
       </div>
       {msg && <div className="savemsg" style={{ marginTop: 8 }}>{msg}</div>}
 
       <div className="pages" style={{ marginTop: 14 }}>
-        <h4>Site đã tạo</h4>
+        <h4>{t("cn2.web_sites")}</h4>
         {sites.length === 0 ? (
-          <p className="hint">Chưa có site nào — tạo mã nhúng đầu tiên ở trên.</p>
+          <p className="hint">{t("cn2.web_none")}</p>
         ) : (
           <ul className="page-list">
             {sites.map((s) => (
               <li key={s.site_id} className="page-row">
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div className="page-name">{s.name || s.site_id}</div>
-                  <div className="page-sub">Mã site: {s.site_id}</div>
+                  <div className="page-sub">{t("cn2.web_site_code", { id: s.site_id })}</div>
                   <div className="page-sub" style={{ wordBreak: "break-all" }}>
                     <code style={{ fontSize: 11 }}>{s.snippet}</code>
                   </div>
                   <div className="page-sub">
                     {s.owner_registered
-                      ? `Chủ (nhận báo): ${s.owner_name || "đã đăng ký"} ✅`
-                      : "Chưa có chủ — vào tab Khách hàng → ⭐ Đặt làm chủ"}
+                      ? t("cn2.owner", { name: s.owner_name || t("cn2.owner_reg") })
+                      : t("cn2.no_owner")}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                   <button className="btn-mini" onClick={() => copySnippet(s)}>
-                    {copied === s.site_id ? "✅ Đã copy" : "📋 Copy mã nhúng"}
+                    {copied === s.site_id ? t("cn2.web_copied") : t("cn2.web_copy")}
                   </button>
                   <button
                     className={"btn-mini" + (s.bot_enabled ? "" : " danger")}
-                    title={s.bot_enabled ? "Bot đang BẬT — bấm để TẮT" : "Bot đang TẮT — bấm để BẬT"}
+                    title={s.bot_enabled ? t("cn2.bot_on_title") : t("cn2.bot_off_title")}
                     onClick={() => toggleSite(s)}
                   >
-                    {s.bot_enabled ? "🟢 Bot bật" : "🔴 Bot tắt"}
+                    {s.bot_enabled ? t("cn2.bot_on") : t("cn2.bot_off")}
                   </button>
-                  <button className="btn-mini danger" onClick={() => removeSite(s)}>Xoá</button>
+                  <button className="btn-mini danger" onClick={() => removeSite(s)}>{t("team.del")}</button>
                 </div>
               </li>
             ))}

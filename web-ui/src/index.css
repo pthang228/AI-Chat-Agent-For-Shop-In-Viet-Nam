@@ -1581,8 +1581,11 @@ a.stats-icon-btn { text-decoration: none; }
 @media (max-width: 640px) { .od-sum { grid-template-columns: 1fr; } .od-form-2col { grid-template-columns: 1fr; } }
 
 /* ── Form tài khoản nhận tiền (Settings) ── */
-.bank-form { display: grid; grid-template-columns: 130px 1fr 1fr; gap: 10px; }
-.bank-form label { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+.bank-form { display: grid; grid-template-columns: 170px 1fr 1fr; gap: 10px; align-items: end; }
+/* Label dài gãy dòng (vd "Ngân hàng (mã VietQR)") → ghim input xuống ĐÁY ô,
+   3 ô nhập luôn thẳng hàng dù label 1 hay 2 dòng; label quá dài thì cắt … */
+.bank-form > div { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
+.bank-form label { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bank-form input { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 13.5px; background: var(--field); outline: none; }
 .bank-form input:focus { border-color: var(--green); background: var(--card); }
 .bank-preview { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
@@ -1861,3 +1864,17 @@ html[data-theme="dark"] .adm { background: transparent; }
 html[data-theme="dark"] .adm-row:hover td { background: #271e46; }
 html[data-theme="dark"] .adm-danger:hover { background: #3a2019 !important; }
 html[data-theme="dark"] .cu-fudue.late { background: #3a2019; }
+
+/* ── Kho mẫu hội thoại (Style RAG) ─────────────────────────────── */
+.sl-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.sl-item { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--card); }
+.sl-item summary { cursor: pointer; list-style: none; }
+.sl-item summary::-webkit-details-marker { display: none; }
+.sl-intent { margin-left: 8px; font-size: 11px; padding: 1px 8px; border-radius: 99px;
+  background: var(--field, #f1eee9); color: var(--faint); border: 1px solid var(--line); }
+.sl-content { white-space: pre-wrap; font-size: 13px; color: var(--ink);
+  background: var(--field, #f7f5f1); border-radius: 8px; padding: 8px 10px; margin: 8px 0 2px;
+  font-family: inherit; max-height: 220px; overflow-y: auto; }
+.sl-preview { display: block; margin-bottom: 8px; }
+html[data-theme="dark"] .sl-content { background: #271e46; }
+html[data-theme="dark"] .sl-intent { background: #271e46; }

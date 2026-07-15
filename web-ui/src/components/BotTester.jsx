@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { promptApi } from "../promptApi.js";
 import { billing } from "../billingApi.js";
 import { PHOTO_BASE } from "../photoApi.js";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * Test Bot AI — chat thử với bộ não đang dùng (AI THẬT), kèm chẩn đoán từng
@@ -9,27 +10,29 @@ import { PHOTO_BASE } from "../photoApi.js";
  * KHÔNG gửi tới khách nào. Stateless: lịch sử giữ ở UI, gửi lên mỗi lần.
  */
 
-const MODE_LABEL = { hybrid: "⚡ Lai", legacy: "✨ Prompt thường" };
+const MODE_KEY = { hybrid: "bt.mode_hybrid", legacy: "bt.mode_legacy" };
 
 function Diag({ d, intent }) {
+  const { t } = useI18n();
   if (!d) return null;
   return (
     <div className="bt-diag">
-      <span className="bt-chip">{MODE_LABEL[d.mode] || d.mode}</span>
+      <span className="bt-chip">{MODE_KEY[d.mode] ? t(MODE_KEY[d.mode]) : d.mode}</span>
       {intent && <span className="bt-chip">🎯 {intent}</span>}
       {d.mode === "hybrid" && (
         d.chunks?.length
-          ? <span className="bt-chip bt-kb" title="Các mẩu tri thức bot đã tra cho câu này">
+          ? <span className="bt-chip bt-kb" title={t("bt.kb_title")}>
               📚 {d.chunks.map((c) => c.title).join(" · ")}
             </span>
-          : <span className="bt-chip">📚 không tra mẩu nào</span>
+          : <span className="bt-chip">{t("bt.kb_none")}</span>
       )}
-      {d.system_chars && <span className="bt-chip bt-dim">{(d.system_chars / 1000).toFixed(1)}k ký tự context</span>}
+      {d.system_chars && <span className="bt-chip bt-dim">{t("bt.ctx_chars", { n: (d.system_chars / 1000).toFixed(1) })}</span>}
     </div>
   );
 }
 
 export default function BotTester({ onClose }) {
+  const { t: tr } = useI18n();
   const [msgs, setMsgs] = useState([]);   // {role, content, debug?, intent?}
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,7 +71,7 @@ export default function BotTester({ onClose }) {
         photos: r.body.photos || [],
       }]);
     } else {
-      setErr("❌ " + (r.body?.error || (r.status === 0 ? "Không kết nối được máy chủ (5005)" : "Gọi AI thất bại")));
+      setErr("❌ " + (r.body?.error || (r.status === 0 ? tr("bt.err_conn") : tr("bt.err_ai"))));
     }
     inputRef.current?.focus();
   }
@@ -82,23 +85,23 @@ export default function BotTester({ onClose }) {
     <div className="bt-modal" onClick={(e) => e.stopPropagation()}>
       <div className="bt-head">
         <div className="bt-head-title">
-          <b>🧪 Test Bot AI</b>
-          <span className="hint">Chat thử với bộ não đang dùng — không gửi tới khách, không lưu.</span>
+          <b>{tr("bt.title")}</b>
+          <span className="hint">{tr("bt.subtitle")}</span>
           <select className="bt-model" value={model} onChange={(e) => setModel(e.target.value)}
-                  title="Chọn mô hình AI để thử (không đổi model bot đang chạy thật)">
-            <option value="">🧠 Model shop đang dùng</option>
+                  title={tr("bt.model_title")}>
+            <option value="">{tr("bt.model_default")}</option>
             {models.map((m) => (
               <option key={m.key} value={m.key} disabled={!m.available}>
-                {m.label}{m.available ? "" : " — chưa có key"}
+                {m.label}{m.available ? "" : tr("bt.no_key")}
               </option>
             ))}
           </select>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           {msgs.length > 0 && (
-            <button className="btn-mini" onClick={() => { setMsgs([]); setErr(""); }}>↺ Làm mới</button>
+            <button className="btn-mini" onClick={() => { setMsgs([]); setErr(""); }}>{tr("bt.reset")}</button>
           )}
-          {onClose && <button className="btn-mini" onClick={onClose}>✕ Đóng</button>}
+          {onClose && <button className="btn-mini" onClick={onClose}>{tr("bt.close")}</button>}
         </div>
       </div>
 
@@ -106,8 +109,8 @@ export default function BotTester({ onClose }) {
         {msgs.length === 0 && !busy && (
           <div className="bt-empty">
             <div style={{ fontSize: 34 }}>🤖</div>
-            <p className="hint">Nhập tin nhắn như khách thật để xem bot trả lời thế nào.<br />
-              Ví dụ: "giá dịch vụ sao?", "mai còn chỗ không?", "địa chỉ ở đâu?"</p>
+            <p className="hint">{tr("bt.empty1")}<br />
+              {tr("bt.empty2")}</p>
           </div>
         )}
         {msgs.map((m, i) => (
@@ -129,7 +132,7 @@ export default function BotTester({ onClose }) {
         ))}
         {busy && (
           <div className="bt-msg b">
-            <div className="bubble b-bot bt-typing">Bot đang nghĩ<span>.</span><span>.</span><span>.</span></div>
+            <div className="bubble b-bot bt-typing">{tr("bt.typing")}<span>.</span><span>.</span><span>.</span></div>
           </div>
         )}
         <div ref={endRef} />
@@ -140,12 +143,12 @@ export default function BotTester({ onClose }) {
       <div className="bt-input">
         <textarea
           ref={inputRef} rows={2} className="chat-input"
-          placeholder="Nhập tin thử như khách… (Enter gửi · Shift+Enter xuống dòng)"
+          placeholder={tr("bt.input_ph")}
           value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
           disabled={busy}
         />
         <button className="btn-primary sm" onClick={send} disabled={busy || !text.trim()}>
-          {busy ? "…" : "Gửi ↑"}
+          {busy ? "…" : tr("bt.send")}
         </button>
       </div>
     </div>

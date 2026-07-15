@@ -39,6 +39,11 @@ class ConversationState:
     owner_active: bool = False          # True khi chủ nhà đang tự xử lý
     owner_active_since: Optional[datetime] = None   # Thời điểm bật owner_active
     last_updated: datetime = field(default_factory=datetime.now)
+    # TÓM TẮT CUỘN: hội thoại dài vượt cửa sổ raw → AI tóm phần cũ thành vài dòng
+    # trạng thái; summary_upto = messages[:upto] đã nằm trong summary (không gửi lại thô)
+    summary: str = ""
+    summary_upto: int = 0
+    last_intent: str = ""               # intent lượt trước (RAM-only) — style RAG dùng chọn mẫu
 
     # ── Message helpers ───────────────────────────────────────────
 
@@ -52,6 +57,13 @@ class ConversationState:
 
     def get_recent_messages(self, n: int = 20) -> list[dict]:
         return self.messages[-n:]
+
+    def history_for_ai(self, n: int = 20) -> list[dict]:
+        """Cửa sổ lịch sử gửi AI, BIẾT tóm tắt cuộn: tin đã nằm trong summary
+        (messages[:summary_upto]) không gửi thô lại — summary thay mặt chúng.
+        Chưa có summary → y hệt get_recent_messages(n)."""
+        start = max(len(self.messages) - n, min(self.summary_upto, len(self.messages)))
+        return self.messages[start:]
 
     # ── Owner-active helpers ──────────────────────────────────────
 
@@ -123,6 +135,8 @@ class ConversationManager:
                         "",   # avatar — JSON cũ không có
                         "",   # assigned_to — JSON cũ không có
                         "",   # tenant — JSON cũ không có (migrate_tenant sẽ gán chủ đầu tiên)
+                        "",   # summary — JSON cũ không có
+                        0,    # summary_upto
                     ))
                 if rows:
                     self._db.executemany(self._INSERT_SQL, rows)
@@ -170,6 +184,8 @@ class ConversationManager:
                     owner_active  = bool(r["owner_active"]),
                     owner_active_since = datetime.fromisoformat(oas) if oas else None,
                     last_updated  = datetime.fromisoformat(lu) if lu else datetime.now(),
+                    summary       = (r["summary"] if "summary" in r.keys() else "") or "",
+                    summary_upto  = int(r["summary_upto"] or 0) if "summary_upto" in r.keys() else 0,
                 )
             print(f"[Sessions] Load {len(self._sessions)} session(s) account={self._account} từ {self._db.path}")
         except Exception as e:
@@ -180,7 +196,8 @@ class ConversationManager:
     _INSERT_SQL = (
         "INSERT OR REPLACE INTO sessions (account, user_id, name, checkin, checkout,"
         " selected_room, stage, owner_active, owner_active_since, last_updated,"
-        " messages, avatar, assigned_to, tenant) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        " messages, avatar, assigned_to, tenant, summary, summary_upto)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
     def _row(self, s: ConversationState):
         return (
@@ -193,6 +210,8 @@ class ConversationManager:
             s.avatar or "",
             s.assigned_to or "",
             s.tenant or "",
+            s.summary or "",
+            int(s.summary_upto or 0),
         )
 
     def save(self):

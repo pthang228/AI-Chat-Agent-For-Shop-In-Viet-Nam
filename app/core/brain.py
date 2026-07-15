@@ -13,6 +13,7 @@ Toàn bộ logic intent/override/booking nằm ở đây, dùng chung cho mọi 
 import re
 import time
 import logging
+import threading
 from datetime import datetime as _dt, timedelta as _td
 from pathlib import Path
 
@@ -170,13 +171,66 @@ def _infer_date_from_text(text: str):
 class Brain:
     """Logic xử lý tin nhắn, dùng chung cho mọi kênh."""
 
+    # TÓM TẮT CUỘN: vượt ngưỡng tin chưa tóm → AI gộp phần cũ thành vài dòng
+    SUMMARY_TRIGGER = 26   # số tin chưa-tóm tối thiểu mới kích hoạt (26 > cửa sổ 20)
+    SUMMARY_KEEP    = 12   # số tin mới nhất GIỮ THÔ (không tóm) cho ngữ cảnh tươi
+
     def __init__(self, channel: Channel, conv_manager: ConversationManager):
         self.channel = channel
         self.conv_manager = conv_manager
+        self._summarizing: set = set()   # user_id đang tóm nền — chống chạy chồng
 
     # ------------------------------------------------------------------ #
 
     def handle(self, user_id: str, text: str):
+        """Xử lý 1 tin nhắn từ khách, rồi (nền) cập nhật tóm tắt cuộn nếu hội
+        thoại đã dài — chạy SAU khi khách nhận trả lời nên không thêm độ trễ."""
+        try:
+            self._handle_inner(user_id, text)
+        finally:
+            try:
+                self._maybe_summarize(user_id)
+            except Exception as e:
+                log.warning(f"[Summary] hook lỗi (bỏ qua): {e}")
+
+    def _maybe_summarize(self, user_id: str):
+        """Đủ tin chưa-tóm → thread nền gộp tóm tắt cũ + tin cũ thành tóm tắt mới.
+        Khách vẫn được trả lời bình thường dù tóm tắt lỗi/chậm."""
+        conv = self.conv_manager.get(user_id)
+        pending = len(conv.messages) - conv.summary_upto
+        if pending < self.SUMMARY_TRIGGER or user_id in self._summarizing:
+            return
+        cut = len(conv.messages) - self.SUMMARY_KEEP
+        if cut <= conv.summary_upto:
+            return
+        segment = list(conv.messages[conv.summary_upto:cut])
+        old_summary = conv.summary
+        account = getattr(self.conv_manager, "_account", "") or ""
+        self._summarizing.add(user_id)
+
+        def _run():
+            try:
+                from app.core.claude_ai import (summarize_history,
+                                                _owner_of_shop, _resolve_shop)
+                owner = _owner_of_shop(_resolve_shop(user_id, account))
+                new_summary = summarize_history(old_summary, segment,
+                                                owner=owner, account=account)
+                if new_summary and new_summary != old_summary:
+                    c = self.conv_manager.get(user_id)
+                    c.summary = new_summary
+                    c.summary_upto = cut
+                    self.conv_manager.save()
+                    log.info(f"[Summary] {user_id}: tóm {len(segment)} tin cũ "
+                             f"(upto={cut}, {len(new_summary)} ký tự)")
+            except Exception as e:
+                log.warning(f"[Summary] {user_id} lỗi: {e}")
+            finally:
+                self._summarizing.discard(user_id)
+
+        threading.Thread(target=_run, daemon=True,
+                         name=f"summary-{user_id[:20]}").start()
+
+    def _handle_inner(self, user_id: str, text: str):
         """
         Xử lý 1 tin nhắn từ khách.
         text == "" nghĩa là sticker/media không có text (kênh chỉ gọi khi là khách mới).
@@ -199,11 +253,22 @@ class Brain:
 
         # Gửi cho AI phân tích (không bao gồm tin nhắn vừa thêm).
         # user_id + account để AI đọc TRÍ NHỚ VỀ KHÁCH (CRM) → cá nhân hoá.
-        result = analyze_message(text, conv.get_recent_messages(n=20)[:-1],
+        # history_for_ai: tin đã nằm trong TÓM TẮT CUỘN không gửi thô lại;
+        # conv_state: trạng thái + tóm tắt + intent lượt trước (style RAG).
+        result = analyze_message(text, conv.history_for_ai(n=20)[:-1],
                                  user_id=user_id,
-                                 account=getattr(self.conv_manager, "_account", "") or "")
+                                 account=getattr(self.conv_manager, "_account", "") or "",
+                                 conv_state={
+                                     "stage": conv.stage,
+                                     "checkin": conv.checkin,
+                                     "checkout": conv.checkout,
+                                     "selected_room": conv.selected_room,
+                                     "summary": conv.summary,
+                                     "intent": conv.last_intent,
+                                 })
 
         intent        = result.get("intent", "other")
+        conv.last_intent = intent
         checkin       = result.get("checkin")  or conv.checkin
         checkout      = result.get("checkout") or conv.checkout
         reply         = result.get("reply", "")
@@ -649,6 +714,20 @@ class Brain:
                 f"Bot chưa có thông tin để trả lời — chủ nhà vui lòng phản hồi khách nhé!"
             )
             notify.alert(self.channel, "unknown", unknown_msg, cfg=_notify_cfg(conv))
+            # Ghi sổ CÂU BOT BÍ → "Báo cáo não bot" trên trang Dạy AI gom theo tuần,
+            # chủ bổ sung tri thức 1 chạm. Best-effort — không được chết luồng trả lời.
+            try:
+                from app.core.db import get_db
+                from app.core import tenant as _tenant
+                from datetime import datetime as _now
+                get_db().execute(
+                    "INSERT INTO bot_misses (shop, channel, user_id, question, created_at)"
+                    " VALUES (?,?,?,?,?)",
+                    (_tenant.shop_key(getattr(conv, "tenant", "") or None),
+                     getattr(self.conv_manager, "_account", "") or "",
+                     user_id, text[:500], _now.now().isoformat()))
+            except Exception as e:
+                log.warning(f"[misses] ghi câu bí lỗi: {e}")
             self.conv_manager.save()
             return
 

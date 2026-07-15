@@ -23,8 +23,15 @@ from datetime import datetime
 from app.core.db import get_db
 
 DEFAULT_SHOP = "default"          # backend hiện single-tenant; key sẵn cho multi-shop
-MAX_CHUNKS = 200                  # trần số mẩu mỗi shop
+MAX_CHUNKS = 200                  # trần số mẩu FACT mỗi shop
+MAX_STYLE_CHUNKS = 80             # trần số mẩu STYLE (mẫu hội thoại) mỗi shop
 MAX_CONTENT_CHARS = 4000          # trần độ dài 1 mẩu
+
+# 2 loại mẩu trong kho: 'fact' = thông tin tra cứu (giá/chính sách/FAQ);
+# 'style' = mẫu hội thoại dạy GIỌNG + cách xử lý tình huống (số liệu đã thay
+# placeholder lúc ingest — style KHÔNG bao giờ là nguồn số liệu).
+KIND_FACT = "fact"
+KIND_STYLE = "style"
 
 # Từ quá phổ biến trong câu hỏi tiếng Việt — bỏ khi chấm điểm để đỡ nhiễu
 _STOPWORDS = {
@@ -105,12 +112,14 @@ def _row_to_chunk(r) -> dict:
     except Exception:
         kw = []
     return {"id": r["id"], "title": r["title"], "content": r["content"],
-            "keywords": kw, "pinned": bool(r["pinned"])}
+            "keywords": kw, "pinned": bool(r["pinned"]),
+            "kind": (r["kind"] if "kind" in r.keys() else KIND_FACT) or KIND_FACT,
+            "intent": (r["intent"] if "intent" in r.keys() else "") or ""}
 
 
 # ── ingest / add / list / clear ──────────────────────────────────────
 
-def _sanitize(chunks: list, limit: int = MAX_CHUNKS) -> list:
+def _sanitize(chunks: list, limit: int = MAX_CHUNKS, kind: str = KIND_FACT) -> list:
     """Làm sạch mẩu đầu vào (dùng chung cho ingest lẫn add_chunks)."""
     cleaned = []
     for c in (chunks or [])[:limit]:
@@ -125,6 +134,8 @@ def _sanitize(chunks: list, limit: int = MAX_CHUNKS) -> list:
             "content": content,
             "keywords": [str(k).strip() for k in kw if str(k).strip()][:30],
             "pinned": 1 if c.get("pinned") else 0,
+            "kind": KIND_STYLE if (c.get("kind") or kind) == KIND_STYLE else KIND_FACT,
+            "intent": str(c.get("intent") or "").strip()[:60],
         })
     return cleaned
 
@@ -132,30 +143,35 @@ def _sanitize(chunks: list, limit: int = MAX_CHUNKS) -> list:
 def _insert(db, chunks: list, shop: str):
     now = datetime.now().isoformat()
     db.conn.executemany(
-        "INSERT INTO knowledge_chunks (shop, title, content, keywords, pinned, created_at)"
-        " VALUES (?,?,?,?,?,?)",
+        "INSERT INTO knowledge_chunks (shop, title, content, keywords, pinned, created_at, kind, intent)"
+        " VALUES (?,?,?,?,?,?,?,?)",
         [(shop, c["title"], c["content"], json.dumps(c["keywords"], ensure_ascii=False),
-          c["pinned"], now) for c in chunks])
+          c["pinned"], now, c.get("kind") or KIND_FACT, c.get("intent") or "") for c in chunks])
 
 
-def ingest(chunks: list, shop: str = DEFAULT_SHOP) -> int:
-    """Thay TOÀN BỘ tri thức của shop bằng danh sách mẩu mới. Trả số mẩu đã lưu."""
-    cleaned = _sanitize(chunks)
+def ingest(chunks: list, shop: str = DEFAULT_SHOP, kind: str = KIND_FACT) -> int:
+    """Thay TOÀN BỘ tri thức LOẠI kind của shop bằng danh sách mẩu mới.
+    QUAN TRỌNG: chỉ xoá mẩu cùng kind — dạy lại não (fact) KHÔNG quét mất kho
+    mẫu hội thoại (style) và ngược lại. Trả số mẩu đã lưu."""
+    cleaned = _sanitize(chunks, limit=(MAX_STYLE_CHUNKS if kind == KIND_STYLE else MAX_CHUNKS),
+                        kind=kind)
     db = get_db()
     with db.lock:
-        db.conn.execute("DELETE FROM knowledge_chunks WHERE shop=?", (shop,))
+        # DB cũ chưa migrate cột kind sẽ không có dòng kind≠fact — WHERE kind=? an toàn
+        db.conn.execute("DELETE FROM knowledge_chunks WHERE shop=? AND kind=?", (shop, kind))
         _insert(db, cleaned, shop)
         db.conn.commit()
     return len(cleaned)
 
 
-def add_chunks(chunks: list, shop: str = DEFAULT_SHOP) -> int:
+def add_chunks(chunks: list, shop: str = DEFAULT_SHOP, kind: str = KIND_FACT) -> int:
     """CỘNG THÊM mẩu vào kho (KHÔNG xoá mẩu cũ như ingest) — dùng khi bot học
-    từ hội thoại được chủ duyệt. Tôn trọng trần MAX_CHUNKS/shop. Trả số đã thêm."""
-    room = MAX_CHUNKS - count(shop)
+    từ hội thoại được chủ duyệt. Tôn trọng trần theo kind/shop. Trả số đã thêm."""
+    cap = MAX_STYLE_CHUNKS if kind == KIND_STYLE else MAX_CHUNKS
+    room = cap - count(shop, kind=kind)
     if room <= 0:
         return 0
-    cleaned = _sanitize(chunks, limit=room)
+    cleaned = _sanitize(chunks, limit=room, kind=kind)
     if not cleaned:
         return 0
     db = get_db()
@@ -165,19 +181,44 @@ def add_chunks(chunks: list, shop: str = DEFAULT_SHOP) -> int:
     return len(cleaned)
 
 
-def list_chunks(shop: str = DEFAULT_SHOP) -> list:
-    rows = get_db().query(
-        "SELECT * FROM knowledge_chunks WHERE shop=? ORDER BY id", (shop,))
+def list_chunks(shop: str = DEFAULT_SHOP, kind: str = None) -> list:
+    """kind=None → TOÀN BỘ kho (mặc định cũ — caller cũ không đổi hành vi vì
+    DB cũ toàn fact); kind='fact'/'style' → lọc đúng loại."""
+    if kind:
+        rows = get_db().query(
+            "SELECT * FROM knowledge_chunks WHERE shop=? AND kind=? ORDER BY id",
+            (shop, kind))
+    else:
+        rows = get_db().query(
+            "SELECT * FROM knowledge_chunks WHERE shop=? ORDER BY id", (shop,))
     return [_row_to_chunk(r) for r in rows]
 
 
-def clear(shop: str = DEFAULT_SHOP):
-    get_db().execute("DELETE FROM knowledge_chunks WHERE shop=?", (shop,))
+def delete_chunk(chunk_id: int, shop: str = DEFAULT_SHOP) -> bool:
+    """Xoá 1 mẩu theo id (kèm shop để không xoá nhầm mẩu shop khác)."""
+    db = get_db()
+    with db.lock:
+        cur = db.conn.execute(
+            "DELETE FROM knowledge_chunks WHERE id=? AND shop=?", (chunk_id, shop))
+        db.conn.commit()
+        return cur.rowcount > 0
 
 
-def count(shop: str = DEFAULT_SHOP) -> int:
-    rows = get_db().query(
-        "SELECT COUNT(*) AS n FROM knowledge_chunks WHERE shop=?", (shop,))
+def clear(shop: str = DEFAULT_SHOP, kind: str = None):
+    if kind:
+        get_db().execute("DELETE FROM knowledge_chunks WHERE shop=? AND kind=?", (shop, kind))
+    else:
+        get_db().execute("DELETE FROM knowledge_chunks WHERE shop=?", (shop,))
+
+
+def count(shop: str = DEFAULT_SHOP, kind: str = None) -> int:
+    if kind:
+        rows = get_db().query(
+            "SELECT COUNT(*) AS n FROM knowledge_chunks WHERE shop=? AND kind=?",
+            (shop, kind))
+    else:
+        rows = get_db().query(
+            "SELECT COUNT(*) AS n FROM knowledge_chunks WHERE shop=?", (shop,))
     return rows[0]["n"] if rows else 0
 
 
@@ -223,11 +264,11 @@ FULL_KB_CHAR_BUDGET = 24_000
 
 def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 6,
              chunks: list = None) -> list:
-    """Top-k mẩu liên quan tới câu hỏi + LUÔN kèm mẩu pinned (thông tin nền,
+    """Top-k mẩu FACT liên quan tới câu hỏi + LUÔN kèm mẩu pinned (thông tin nền,
     tối đa 4 — chống prompt phình khi shop ghim nhiều) — kho lớn cũng không mất
     mẩu ghim. chunks: truyền kho đã đọc sẵn để khỏi query DB lần 2. Kho trống → []."""
     if chunks is None:
-        chunks = list_chunks(shop)
+        chunks = list_chunks(shop, kind=KIND_FACT)
     if not chunks:
         return []
     q_norm = " ".join(_tokens(query))
@@ -250,8 +291,9 @@ def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> tuple:
     - Kho NHỎ (tổng content ≤ FULL_KB_CHAR_BUDGET) → TRẢ HẾT (mode='full'):
       không retrieval, không bao giờ tra trượt — bot thấy toàn bộ dữ liệu shop.
     - Kho LỚN → retrieve top-k liên quan (mode='retrieval').
-    - Kho trống → ([], 'empty')."""
-    chunks = list_chunks(shop)
+    - Kho trống → ([], 'empty').
+    CHỈ mẩu FACT — mẫu hội thoại (style) đi block riêng qua style_block()."""
+    chunks = list_chunks(shop, kind=KIND_FACT)
     if not chunks:
         return [], "empty"
     total = sum(len(c.get("content") or "") for c in chunks)
@@ -261,6 +303,55 @@ def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> tuple:
         return chunks, "full"
     # tái dùng kho đã đọc — khỏi query DB + parse JSON lần 2 mỗi tin nhắn
     return retrieve(query, shop, k, chunks=chunks), "retrieval"
+
+
+def retrieve_style(query: str, shop: str = DEFAULT_SHOP, k: int = 2,
+                   intent: str = "") -> list:
+    """Top-k MẪU HỘI THOẠI (style) khớp tình huống hiện tại.
+    Chấm điểm = keyword+IDF như fact, CỘNG bonus khi tag intent của mẩu trùng
+    intent lượt trước (brain lưu conv.last_intent — tình huống thường kéo dài
+    nhiều lượt nên tín hiệu này rẻ mà trúng). CHỈ trả mẩu có điểm > 0 —
+    không nhét mẫu lạc đề cho đủ số."""
+    chunks = list_chunks(shop, kind=KIND_STYLE)
+    if not chunks:
+        return []
+    q_norm = " ".join(_tokens(query))
+    q_tokens = set(_tokens(query)) - _STOPWORDS
+    idf = _idf_map(chunks)
+    intent = (intent or "").strip()
+    scored = []
+    for c in chunks:
+        s = _score(c, q_tokens, q_norm, idf)
+        if intent and c.get("intent") and c["intent"] == intent:
+            s += 4.0
+        scored.append((s, c))
+    scored.sort(key=lambda x: (-x[0], x[1]["id"]))
+    return [c for s, c in scored[:k] if s > 0]
+
+
+def style_block(query: str, shop: str = DEFAULT_SHOP, k: int = 2,
+                intent: str = "") -> str:
+    """Block VÍ DỤ CÁCH TƯ VẤN cho system prompt — rỗng khi không có mẫu khớp."""
+    return format_style_block(retrieve_style(query, shop, k, intent))
+
+
+def format_style_block(chunks: list) -> str:
+    """Đóng gói mẫu hội thoại vào prompt. RÀO CHẮN quan trọng nhất: ví dụ chỉ
+    dạy GIỌNG + CÁCH XỬ LÝ — cấm chép số liệu từ ví dụ (số trong ví dụ đã bị
+    thay placeholder lúc ingest, nhưng vẫn nói rõ cho model rẻ khỏi bịa)."""
+    if not chunks:
+        return ""
+    parts = [
+        "VÍ DỤ CÁCH TƯ VẤN (mẫu hội thoại thật của shop — chỉ để học GIỌNG ĐIỆU "
+        "và CÁCH XỬ LÝ tình huống):\n"
+        "- Bắt chước cách xưng hô, độ dài câu, cách dẫn dắt trong ví dụ.\n"
+        "- TUYỆT ĐỐI KHÔNG lấy giá/số/tên phòng/chính sách từ ví dụ — chỗ [trong "
+        "ngoặc vuông] là placeholder; mọi số liệu PHẢI tra ở DỮ LIỆU SHOP."
+    ]
+    for i, c in enumerate(chunks, 1):
+        title = f" — {c['title']}" if c.get("title") else ""
+        parts.append(f"(Ví dụ {i}{title})\n{c['content']}")
+    return "\n\n".join(parts)
 
 
 def format_block(chunks: list) -> str:

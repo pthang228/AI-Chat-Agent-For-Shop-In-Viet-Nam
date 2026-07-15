@@ -8,6 +8,9 @@ import { IcHome, IcBack } from "../components/icons.jsx";
 import LogoMark from "../components/LogoMark.jsx";
 import BackLink from "../components/BackLink.jsx";
 import { NotifyCard, BankCard, CannedCard } from "../components/ShopConfigCards.jsx";
+import StyleLibrary from "../components/StyleLibrary.jsx";
+import { InterviewCard, ReportCard, HealthCard } from "../components/TeachCards.jsx";
+import { useI18n } from "../i18n.jsx";
 
 function initials(name) {
   return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -15,45 +18,39 @@ function initials(name) {
 
 /* ── Form gợi ý có cấu trúc — shop không cần biết "viết prompt" ──
  * Chia 5 nhóm, ~20 ô — chi tiết ngang prompt mẫu gốc. Bỏ trống ô không có;
- * hệ thống ghép các ô thành hướng dẫn có nhãn cho AI. */
+ * hệ thống ghép các ô thành hướng dẫn có nhãn cho AI.
+ * Tiêu đề nhóm / nhãn / placeholder HIỂN THỊ qua i18n: pb.sec.* / pb.f.<key> / pb.ph.<key> */
 const GUIDE_SECTIONS = [
-  { title: "🏪 Thông tin cơ bản", fields: [
-    { key: "about",    label: "Tên shop & loại hình",   ph: "VD: Mây Spa — spa thư giãn ở Quận 1, TP.HCM" },
-    { key: "branches", label: "Địa chỉ các cơ sở",      ph: "Mỗi dòng 1 cơ sở:\nCơ sở 1: 12 Lê Lợi, Q1\nCơ sở 2: 3D Trần Phú, Q5 — cách bến xe 2km", rows: 2 },
-    { key: "hours",    label: "Giờ hoạt động",          ph: "VD: 9h–21h hằng ngày / check-in tự động 24/7, nghỉ Thứ 2" },
-    { key: "contact",  label: "SĐT · kênh liên hệ",     ph: "VD: 0901 234 567 (Zalo) · fanpage fb.com/mayspa" },
-  ]},
-  { title: "💰 Dịch vụ & giá", fields: [
-    { key: "services", label: "Dịch vụ / sản phẩm & GIÁ TỪNG MỤC (quan trọng nhất)",
-      ph: "Càng chi tiết càng tốt — từng phòng/món/gói, từng khung giờ nếu có:\nPhòng 201 — ca trưa 12h-16h: 260k · ca chiều 16h30-20h30: 260k · qua đêm 21h-10h30: 380k · nguyên ngày: 750k\nCombo trưa+chiều: 490k\n…", rows: 8 },
-    { key: "surcharge", label: "Phụ thu (cuối tuần · lễ · thêm người…)", ph: "VD: Cuối tuần & lễ +35k/ca · Người thứ 3 +100k · Thú cưng làm bẩn +500k", rows: 2 },
-    { key: "promos",   label: "Khuyến mãi đang chạy",   ph: "VD: Khách lần đầu giảm 10% · Đặt 2 đêm cuối tuần giảm 10%" },
-  ]},
-  { title: "📋 Chính sách đặt chỗ & tiền bạc", fields: [
-    { key: "booking",  label: "Cách đặt chỗ / giữ chỗ", ph: "VD: Đặt trước ít nhất 2 tiếng · Booking chỉ giữ 30 phút, chưa cọc sẽ tự huỷ", rows: 2 },
-    { key: "deposit",  label: "Đặt cọc & thanh toán (quy trình TỪNG BƯỚC)",
-      ph: "VD:\n1. Ngày đặt: cọc 50% + gửi CCCD 2 người (bắt buộc)\n2. Sau cọc: chốt ca & ngày → nhận thông tin check-in\n3. 21h đêm trước check-in: thanh toán đủ (trước ít nhất 12 tiếng để nhận mã)", rows: 4 },
-    { key: "reschedule", label: "Đổi / dời lịch",        ph: "VD: Miễn phí dời 1 lần (báo trước 7 ngày) · Dời trước 48h phí 30% · Dời lần 2 phí 30%", rows: 2 },
-    { key: "cancel",   label: "Huỷ & hoàn tiền",         ph: "VD: Huỷ trước 5 ngày hoàn 50% cọc · Trước 3 ngày không hoàn cọc · Trước 12 tiếng không hoàn bất kỳ khoản nào", rows: 2 },
-  ]},
-  { title: "🏠 Tiện ích & nội quy", fields: [
-    { key: "amenities", label: "Tiện ích nổi bật",       ph: "VD: Check-in tự động không cần lễ tân · Giờ ra vào tự do · Bãi xe riêng (ô tô + xe máy) · Được mang đồ ăn vào · 100% không camera ẩn", rows: 3 },
-    { key: "equipment", label: "Trang thiết bị / đồ dùng có sẵn",
-      ph: "VD: Máy chiếu + Netflix, máy lạnh, board game · Qua đêm có sẵn kem đánh răng/khăn; ca ngày yêu cầu thì chuẩn bị · Máy sấy liên hệ mang lên · Cơ sở 1 KHÔNG có bếp, cơ sở 2 bếp đầy đủ", rows: 3 },
-    { key: "capacity", label: "Sức chứa · thêm người · thú cưng", ph: "VD: Chuẩn 2 người/phòng, phụ thu từ người thứ 3 · Cho thú cưng (phụ thu 500k nếu bẩn/hư)", rows: 2 },
-    { key: "forbidden", label: "Khách KHÔNG được làm",    ph: "VD: Hút thuốc trong phòng · Chất cấm · Vật dễ cháy nổ · Vi phạm sẽ báo chính quyền", rows: 2 },
-  ]},
-  { title: "💬 Cách bot nói chuyện", fields: [
-    { key: "tone",     label: "Xưng hô & giọng điệu",    ph: 'VD: xưng "em"/"mình", thân thiện như bạn bè, câu ngắn, emoji vừa phải 😊' },
-    { key: "greeting", label: "Tin nhắn chào ĐẦU TIÊN (bot gửi đúng đoạn này)",
-      ph: "VD: Admin có thể đang bận nên chưa rep được, để AI tư vấn trước cho mình nhen 😊\nMình có thể giúp bạn: 📅 xem lịch trống · 💰 bảng giá · 📸 xin ảnh · 🏠 đặt chỗ", rows: 3 },
-    { key: "rules",    label: "Điều bot KHÔNG được làm",  ph: "VD: Không tự xác nhận booking cuối (chủ chốt) · Không nhận tiền cọc trực tiếp · Không tự giảm giá ngoài chính sách · Không bịa thông tin", rows: 2 },
-    { key: "faq",      label: "Câu hỏi thường gặp & cách trả lời",
-      ph: "Mỗi dòng 1 cặp:\nCó chỗ để xe không? → Có bãi riêng cả ô tô lẫn xe máy\nGần trường ĐH không? → Cách KTX Làng Đại học 2km", rows: 4 },
-  ]},
+  { tKey: "pb.sec.basic",  fields: [{ key: "about" }, { key: "branches", rows: 2 }, { key: "hours" }, { key: "contact" }] },
+  { tKey: "pb.sec.price",  fields: [{ key: "services", rows: 8 }, { key: "surcharge", rows: 2 }, { key: "promos" }] },
+  { tKey: "pb.sec.policy", fields: [{ key: "booking", rows: 2 }, { key: "deposit", rows: 4 }, { key: "reschedule", rows: 2 }, { key: "cancel", rows: 2 }] },
+  { tKey: "pb.sec.amen",   fields: [{ key: "amenities", rows: 3 }, { key: "equipment", rows: 3 }, { key: "capacity", rows: 2 }, { key: "forbidden", rows: 2 }] },
+  { tKey: "pb.sec.talk",   fields: [{ key: "tone" }, { key: "greeting", rows: 3 }, { key: "rules", rows: 2 }, { key: "faq", rows: 4 }] },
 ];
 const GUIDE_FIELDS = GUIDE_SECTIONS.flatMap((s) => s.fields);
-const GUIDE_LABEL = Object.fromEntries(GUIDE_FIELDS.map((g) => [g.key, g.label]));
+/* NHÃN GỬI CHO AI/BACKEND — buildInstructions() ghép các nhãn này vào hướng dẫn
+ * cho AI đọc → GIỮ TIẾNG VIỆT, KHÔNG dịch (UI hiển thị bản dịch pb.f.* riêng). */
+const GUIDE_LABEL = {
+  about: "Tên shop & loại hình",
+  branches: "Địa chỉ các cơ sở",
+  hours: "Giờ hoạt động",
+  contact: "SĐT · kênh liên hệ",
+  services: "Dịch vụ / sản phẩm & GIÁ TỪNG MỤC (quan trọng nhất)",
+  surcharge: "Phụ thu (cuối tuần · lễ · thêm người…)",
+  promos: "Khuyến mãi đang chạy",
+  booking: "Cách đặt chỗ / giữ chỗ",
+  deposit: "Đặt cọc & thanh toán (quy trình TỪNG BƯỚC)",
+  reschedule: "Đổi / dời lịch",
+  cancel: "Huỷ & hoàn tiền",
+  amenities: "Tiện ích nổi bật",
+  equipment: "Trang thiết bị / đồ dùng có sẵn",
+  capacity: "Sức chứa · thêm người · thú cưng",
+  forbidden: "Khách KHÔNG được làm",
+  tone: "Xưng hô & giọng điệu",
+  greeting: "Tin nhắn chào ĐẦU TIÊN (bot gửi đúng đoạn này)",
+  rules: "Điều bot KHÔNG được làm",
+  faq: "Câu hỏi thường gặp & cách trả lời",
+};
 
 /* Mẫu điền sẵn theo ngành — bấm 1 nút có ví dụ hoàn chỉnh để sửa.
  * Mẫu Homestay chi tiết nhất (dữ liệu HƯ CẤU) — làm chuẩn "điền đủ là thế nào". */
@@ -147,11 +144,20 @@ const SAMPLES = {
     faq: "Có được kiểm hàng không? → Dạ được, nàng kiểm thoải mái rồi mới thanh toán\nHàng lỗi thì sao? → Quay video mở hộp, shop đổi mới 100% + chịu phí ship",
   },
 };
+// Nhãn nút mẫu hiển thị qua i18n — khoá & NỘI DUNG của SAMPLES là dữ liệu điền
+// vào form (sẽ GỬI CHO AI khi tạo bộ não) nên giữ nguyên tiếng Việt, không dịch.
+const SAMPLE_TKEY = {
+  "💆 Spa / Salon": "pb.sample.spa",
+  "🍜 Quán ăn / Cà phê": "pb.sample.food",
+  "🏡 Homestay / Lưu trú": "pb.sample.home",
+  "🛍️ Shop online": "pb.sample.shop",
+};
 
 // Trang "Dạy AI": điền form gợi ý (hoặc dán link) → AI viết persona + mẩu tri
 // thức → shop duyệt + test thử → dùng. Càng điền đủ ô, bộ não càng chuẩn.
 export default function PromptBuilder() {
   const nav = useNavigate();
+  const { t } = useI18n();
   const user = currentUser();
   const hostName = user?.homestay || user?.username || "";
 
@@ -196,10 +202,10 @@ export default function PromptBuilder() {
     if (tpl) { setShowTpl((v) => !v); return; }
     const r = await promptApi.template();
     if (r.ok && r.body?.template) { setTpl(r.body.template); setShowTpl(true); }
-    else setMsg("❌ Không tải được prompt mẫu");
+    else setMsg(t("pb.tpl.load_fail"));
   }
   function editFromTemplate() {
-    if (draft !== null && !confirm("Thay nháp hiện tại bằng prompt mẫu chuẩn để chỉnh tay?")) return;
+    if (draft !== null && !confirm(t("pb.tpl.confirm"))) return;
     setDraft(tpl); setChunks([]); setGaps([]); setSources([]); setMsg("");
     setTimeout(() => document.querySelector(".draft-box")?.scrollIntoView({ behavior: "smooth" }), 50);
   }
@@ -214,7 +220,7 @@ export default function PromptBuilder() {
   function setG(key, v) { setGuide((g) => ({ ...g, [key]: v })); }
   function fillSample(name) {
     const hasContent = Object.values(guide).some((v) => (v || "").trim());
-    if (hasContent && !confirm(`Điền mẫu "${name}" đè lên nội dung đang nhập?`)) return;
+    if (hasContent && !confirm(t("pb.s1.fill_confirm", { name: t(SAMPLE_TKEY[name]) }))) return;
     setGuide({ ...SAMPLES[name] });
     setMsg("");
   }
@@ -237,7 +243,7 @@ export default function PromptBuilder() {
     const linkList = links.filter((l) => l.url.trim())
       .map((l) => ({ url: l.url.trim(), note: (l.note || "").trim() }));
     if (!instructions && linkList.length === 0) {
-      setMsg("❌ Điền ít nhất một ô (hoặc dán 1 link) rồi hãy tạo nhé.");
+      setMsg(t("pb.s3.need_input"));
       return;
     }
     setMsg(""); setDraft(null); setChunks([]); setGaps([]); setSources([]);
@@ -251,27 +257,27 @@ export default function PromptBuilder() {
       setSources(r.body.sources || []);
       setTimeout(() => document.querySelector(".draft-box")?.scrollIntoView({ behavior: "smooth" }), 80);
     } else {
-      setMsg("❌ " + (r.body?.error || (r.status === 0 ? "Không kết nối được máy chủ (5005)" : "Tạo thất bại")));
+      setMsg("❌ " + (r.body?.error || (r.status === 0 ? t("pb.s3.no_server") : t("pb.s3.gen_fail"))));
     }
   }
 
   async function doApply() {
-    if (!confirm("Dùng bộ não này cho bot? Bot sẽ trả lời khách theo nội dung mới NGAY LẬP TỨC trên mọi kênh.")) return;
+    if (!confirm(t("pb.apply.confirm"))) return;
     setMsg("");
     const r = await promptApi.apply(draft, chunks.length ? chunks : null);
     if (r.ok) {
-      setMsg("✅ Đã lưu — bot đang dùng bộ não mới! Chat thử bằng nút 🧪 Test bot ở mục Chatbot.");
+      setMsg(t("pb.apply.ok"));
       setDraft(null); setChunks([]); setSources([]);
       load();
     } else {
-      setMsg("❌ " + (r.body?.error || "Lưu thất bại"));
+      setMsg("❌ " + (r.body?.error || t("pb.apply.fail")));
     }
   }
 
   async function doRestore() {
-    if (!confirm("Quay về prompt MẶC ĐỊNH của hệ thống? (bộ não tuỳ chỉnh hiện tại được sao lưu lại)")) return;
+    if (!confirm(t("pb.restore.confirm"))) return;
     const r = await promptApi.restoreDefault();
-    if (r.ok) { setMsg("✅ Đã khôi phục prompt mặc định."); load(); }
+    if (r.ok) { setMsg(t("pb.restore.ok")); load(); }
   }
 
   return (
@@ -281,7 +287,7 @@ export default function PromptBuilder() {
           <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <LogoMark size={28} /> NovaChat</Link>
         </div>
         <div className="user">
-          <Link to="/settings" className="user-pill" title="Cài đặt tài khoản">
+          <Link to="/settings" className="user-pill" title={t("pb.acct_settings")}>
             <span className="avatar">{initials(hostName)}</span>{hostName}
           </Link>
         </div>
@@ -291,12 +297,9 @@ export default function PromptBuilder() {
         <BackLink />
         <div className="dash-head" style={{ marginBottom: 18 }}>
           <div>
-            <div className="hello">Trợ lý AI</div>
-            <h1 className="page-title">Dạy AI về shop của bạn</h1>
-            <p className="page-sub">
-              Điền form như dặn nhân viên mới (hoặc dán link dữ liệu). AI tự soạn "bộ não"
-              chi tiết — bạn duyệt & chat thử rồi mới dùng.
-            </p>
+            <div className="hello">{t("pb.hello")}</div>
+            <h1 className="page-title">{t("pb.title")}</h1>
+            <p className="page-sub">{t("pb.sub")}</p>
           </div>
         </div>
 
@@ -305,22 +308,22 @@ export default function PromptBuilder() {
           <div className="panel set-card" style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <div>
-                <b>Bộ não đang dùng:</b>{" "}
+                <b>{t("pb.cur.label")}</b>{" "}
                 {cur.source === "custom"
                   ? <span className="badge bot">
                       {cur.mode === "hybrid"
-                        ? `⚡ Lai — persona + ${cur.chunk_count} mẩu tri thức`
-                        : "✨ Tuỳ chỉnh"}
-                      {cur.updated_at ? ` (lưu ${new Date(cur.updated_at).toLocaleString("vi-VN")})` : ""}
+                        ? t("pb.cur.hybrid", { n: cur.chunk_count })
+                        : t("pb.cur.custom")}
+                      {cur.updated_at ? " " + t("pb.cur.saved", { d: new Date(cur.updated_at).toLocaleString("vi-VN") }) : ""}
                     </span>
-                  : <span className="badge stage">Mặc định hệ thống</span>}
+                  : <span className="badge stage">{t("pb.cur.default")}</span>}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn-mini" onClick={() => setShowCur((v) => !v)}>
-                  {showCur ? "Ẩn nội dung" : "Xem nội dung"}
+                  {showCur ? t("pb.cur.hide") : t("pb.cur.show")}
                 </button>
                 {cur.source === "custom" && (
-                  <button className="btn-mini danger" onClick={doRestore}>Khôi phục mặc định</button>
+                  <button className="btn-mini danger" onClick={doRestore}>{t("pb.cur.restore")}</button>
                 )}
               </div>
             </div>
@@ -328,47 +331,29 @@ export default function PromptBuilder() {
           </div>
         )}
         {cur === "offline" && (
-          <div className="empty"><p>⚠️ Chưa kết nối được máy chủ (cổng 5005).</p></div>
+          <div className="empty"><p>{t("pb.offline")}</p></div>
         )}
 
         {msg && <div className="savemsg" style={{ marginBottom: 14 }}>{msg}</div>}
 
-        {/* Prompt mẫu chuẩn — shop chỉnh tay cho phù hợp */}
-        {cur && cur !== "offline" && (
-          <div className="panel set-card" style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-              <div>
-                <b>📄 Prompt mẫu chuẩn</b>{" "}
-                <span className="hint" style={{ fontWeight: 400 }}>— khung sẵn cho shop dịch vụ, điền thông tin của bạn vào</span>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn-mini" onClick={loadTemplate}>
-                  {showTpl ? "Ẩn mẫu" : "Xem mẫu"}
-                </button>
-                {tpl && (
-                  <button className="btn-mini" onClick={editFromTemplate} title="Đổ mẫu vào ô nháp để bạn chỉnh tay rồi dùng luôn">
-                    ✏️ Chỉnh tay từ mẫu
-                  </button>
-                )}
-              </div>
-            </div>
-            {showTpl && tpl && <pre className="prompt-pre">{tpl}</pre>}
-          </div>
-        )}
+        {/* ❓ Báo cáo câu bot bí tuần — chỉ hiện khi có (actionable, đặt đầu) */}
+        {cur && cur !== "offline" && <ReportCard />}
 
-        {/* Bot học từ hội thoại — đề xuất tri thức chờ chủ duyệt */}
-        {cur && cur !== "offline" && <SuggestionsCard onChanged={load} />}
+        {/* 🎙️ AI phỏng vấn — cách dạy không cần điền form; tổng hợp đổ vào ô hướng dẫn */}
+        {cur && cur !== "offline" && (
+          <InterviewCard onDone={(s) => setExtra((prev) => (prev ? prev + "\n\n" : "") + s)} />
+        )}
 
         {/* Bước 1: kể về shop — form gợi ý theo 5 nhóm */}
         <div className="panel set-card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, marginBottom: 4 }}>1️⃣ Kể về shop của bạn</h3>
-          <p className="hint">Trả lời như dặn một nhân viên mới. Bỏ trống ô nào không có — nhưng càng đủ, bot càng chuẩn. Bấm tiêu đề nhóm để mở/gấp.</p>
+          <h3 style={{ fontSize: 16, marginBottom: 4 }}>{t("pb.s1.title")}</h3>
+          <p className="hint">{t("pb.s1.hint")}</p>
 
           <div className="gw-samples">
-            <span className="hint">Điền nhanh theo mẫu ngành:</span>
+            <span className="hint">{t("pb.s1.samples")}</span>
             {Object.keys(SAMPLES).map((name) => (
               <button key={name} type="button" className="gw-sample" onClick={() => fillSample(name)}>
-                {name}
+                {t(SAMPLE_TKEY[name])}
               </button>
             ))}
           </div>
@@ -376,19 +361,19 @@ export default function PromptBuilder() {
           {GUIDE_SECTIONS.map((sec, si) => {
             const filled = sec.fields.filter((f) => (guide[f.key] || "").trim()).length;
             return (
-              <details key={sec.title} className="gw-sec" open={si === 0 || filled > 0}>
+              <details key={sec.tKey} className="gw-sec" open={si === 0 || filled > 0}>
                 <summary>
-                  {sec.title}
+                  {t(sec.tKey)}
                   <span className="gw-sec-n">{filled}/{sec.fields.length}</span>
                 </summary>
-                {sec.fields.map(({ key, label, ph, rows }) => (
+                {sec.fields.map(({ key, rows }) => (
                   <div key={key} className="gw-field">
-                    <label>{label}</label>
+                    <label>{t(`pb.f.${key}`)}</label>
                     {rows ? (
-                      <textarea rows={rows} placeholder={ph} value={guide[key] || ""}
+                      <textarea rows={rows} placeholder={t(`pb.ph.${key}`)} value={guide[key] || ""}
                                 onChange={(e) => setG(key, e.target.value)} />
                     ) : (
-                      <input placeholder={ph} value={guide[key] || ""}
+                      <input placeholder={t(`pb.ph.${key}`)} value={guide[key] || ""}
                              onChange={(e) => setG(key, e.target.value)} />
                     )}
                   </div>
@@ -398,68 +383,65 @@ export default function PromptBuilder() {
           })}
 
           <div className="gw-field" style={{ marginTop: 14 }}>
-            <label>Hướng dẫn thêm <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn)</span></label>
-            <textarea rows={2} placeholder="Điều gì khác bot cần biết mà các ô trên chưa nói tới…"
+            <label>{t("pb.s1.extra")} <span className="hint" style={{ fontWeight: 400 }}>{t("pb.opt")}</span></label>
+            <textarea rows={2} placeholder={t("pb.s1.extra_ph")}
                       value={extra} onChange={(e) => setExtra(e.target.value)} />
           </div>
         </div>
 
         {/* Bước 2: link dữ liệu (tuỳ chọn) */}
         <div className="panel set-card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, marginBottom: 4 }}>2️⃣ Link dữ liệu <span className="hint" style={{ fontWeight: 400 }}>(tuỳ chọn — có link thì AI đọc thêm)</span></h3>
-          <p className="hint">Dán link (bảng giá, website, Google Docs/Sheets…) — <b>link phải để công khai</b>. Ô bên cạnh ghi <b>link đó là gì</b> (vd "bảng giá phòng") cho AI hiểu. Link <b>Google Sheet lịch đặt chỗ</b> sẽ tự nối để bot tra lịch.</p>
+          <h3 style={{ fontSize: 16, marginBottom: 4 }}>{t("pb.s2.title")} <span className="hint" style={{ fontWeight: 400 }}>{t("pb.s2.opt")}</span></h3>
+          <p className="hint">{t("pb.s2.h1")}<b>{t("pb.s2.h2")}</b>{t("pb.s2.h3")}<b>{t("pb.s2.h4")}</b>{t("pb.s2.h5")}<b>{t("pb.s2.h6")}</b>{t("pb.s2.h7")}</p>
           {links.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <input style={{ flex: "1 1 240px" }} placeholder="https://…" value={l.url}
                      onChange={(e) => setLink(i, "url", e.target.value)} />
               <input style={{ flex: "2 1 320px" }}
-                     placeholder={isSheetUrl(l.url)
-                       ? 'Mô tả sheet này là gì — vd "lịch đặt phòng cơ sở 1", "bảng giá dịch vụ"…'
-                       : "Mục đích / nội dung link — vd: bảng giá phòng, menu món, chính sách…"}
+                     placeholder={isSheetUrl(l.url) ? t("pb.s2.note_ph_sheet") : t("pb.s2.note_ph")}
                      value={l.note} onChange={(e) => setLink(i, "note", e.target.value)} />
-              <button className="btn-mini danger" onClick={() => rmLink(i)} title="Xoá link này">✕</button>
+              <button className="btn-mini danger" onClick={() => rmLink(i)} title={t("pb.s2.rm")}>✕</button>
             </div>
           ))}
           {links.some((l) => isSheetUrl(l.url)) && (
             <div className="prompt-help" style={{ marginTop: 10, borderColor: "var(--brand, #7C3AED)" }}>
               <b style={{ color: "var(--brand, #7C3AED)" }}>
-                🔎 Link Google Sheet — hệ thống TỰ NHẬN DIỆN theo mô tả bạn ghi + nội dung sheet:
-                lịch đặt chỗ → nối cho bot tra trực tiếp · dữ liệu (bảng giá…) → AI đọc vào não.
+                {t("pb.s2.sheet_note")}
               </b>
               {svcEmail
                 ? <p className="hint" style={{ margin: "6px 0 0" }}>
-                    Để bot đọc được, mở Google Sheet → <b>Share</b> → thêm email này (quyền <b>Người xem</b>):{" "}
+                    {t("pb.s2.share1")}<b>Share</b>{t("pb.s2.share2")}<b>{t("pb.s2.viewer")}</b>{t("pb.s2.share3")}{" "}
                     <code style={{ wordBreak: "break-all" }}>{svcEmail}</code>{" "}
                     <button type="button" className="btn-mini"
-                            onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg("✅ Đã copy email service account."); }}>
-                      📋 Copy
+                            onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg(t("pb.copied")); }}>
+                      {t("pb.s2.copy")}
                     </button>
                   </p>
                 : <p className="hint" style={{ margin: "6px 0 0" }}>
-                    ⚠️ Máy chủ chưa cấu hình Google service account — tính năng tra lịch chưa dùng được, liên hệ quản trị NovaChat.
+                    {t("pb.s2.no_svc")}
                   </p>}
             </div>
           )}
-          <button className="btn-mini" style={{ marginTop: 10 }} onClick={addLink}>＋ Thêm link</button>
+          <button className="btn-mini" style={{ marginTop: 10 }} onClick={addLink}>{t("pb.s2.add")}</button>
 
           {/* Hướng dẫn công khai link — bấm mở khi cần */}
           <details className="prompt-help" style={{ marginTop: 12 }}>
             <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13.5 }}>
-              ❓ Link không đọc được?
+              {t("pb.s2.help_q")}
             </summary>
             <div className="hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
               {svcEmail && (
-                <>• <b>Mọi file trên Google</b> (Docs, Sheets, PDF/Word trong Drive): chỉ cần bấm{" "}
-                  <b>Share</b> → thêm email này (quyền <b>Người xem</b>) — không cần để công khai:{" "}
+                <>• <b>{t("pb.s2.g1")}</b>{t("pb.s2.g2")}
+                  <b>Share</b>{t("pb.s2.share2")}<b>{t("pb.s2.viewer")}</b>{t("pb.s2.g4")}{" "}
                   <code style={{ wordBreak: "break-all" }}>{svcEmail}</code>{" "}
                   <button type="button" className="btn-mini"
-                          onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg("✅ Đã copy email service account."); }}>
-                    📋 Copy
+                          onClick={() => { navigator.clipboard?.writeText(svcEmail); setMsg(t("pb.copied")); }}>
+                    {t("pb.s2.copy")}
                   </button>
                   <br /></>
               )}
-              • <b>Link ngoài Google</b> (website, fanpage…): phải để <b>công khai</b> — ai mở cũng xem được, không cần đăng nhập.
-              <br />• Link không share/công khai được: dán thẳng nội dung vào ô <b>hướng dẫn thêm</b> bên dưới.
+              • <b>{t("pb.s2.o1")}</b>{t("pb.s2.o2")}<b>{t("pb.s2.o3")}</b>{t("pb.s2.o4")}
+              <br />• {t("pb.s2.p1")}<b>{t("pb.s2.p2")}</b>{t("pb.s2.p3")}
             </div>
           </details>
         </div>
@@ -467,37 +449,33 @@ export default function PromptBuilder() {
         {/* ⚙️ Cấu hình bot — AI ĐỌC các mục này khi tạo bộ não nên đặt TRƯỚC nút tạo.
             (QR nhận tiền KHÔNG đưa cho AI → để riêng dưới cùng) */}
         <div style={{ marginTop: 8, marginBottom: 20 }}>
-          <h3 style={{ fontSize: 18, marginBottom: 4 }}>⚙️ Cấu hình bot của shop</h3>
-          <p className="hint">
-            Liên hệ khẩn cấp và câu trả lời mẫu — bot dùng khi trả lời khách, và AI
-            cũng ĐỌC các mục này khi tạo bộ não, nên điền xong rồi hãy bấm tạo. Lịch
-            đặt chỗ (Google Sheets) nối ngay ở Bước 2 — chọn mục đích "📅 Lịch đặt chỗ".
-          </p>
+          <h3 style={{ fontSize: 18, marginBottom: 4 }}>{t("pb.cfg.title")}</h3>
+          <p className="hint">{t("pb.cfg.hint")}</p>
           <NotifyCard />
           <CannedCard />
         </div>
 
         {/* Bước 3: tạo — kèm chọn model AI dùng để dạy */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-          <label className="hint" style={{ margin: 0 }}>Model dùng để dạy:</label>
+          <label className="hint" style={{ margin: 0 }}>{t("pb.s3.model")}</label>
           <select value={genModel} onChange={(e) => setGenModel(e.target.value)} style={{ flex: "1 1 260px", maxWidth: 420 }}>
-            <option value="">— Mặc định hệ thống —</option>
+            <option value="">{t("pb.s3.model_default")}</option>
             {models.map((m) => (
               <option key={m.key} value={m.key} disabled={!m.available}>
-                {m.label} (in {(m.in_vnd ?? 0).toLocaleString("vi-VN")}₫ / out {(m.out_vnd ?? 0).toLocaleString("vi-VN")}₫ mỗi 1M token){m.available ? "" : " — chưa có key"}
+                {m.label} (in {(m.in_vnd ?? 0).toLocaleString("vi-VN")}₫ / out {(m.out_vnd ?? 0).toLocaleString("vi-VN")}₫ {t("pb.s3.per_1m")}){m.available ? "" : t("pb.s3.no_key")}
               </option>
             ))}
           </select>
         </div>
         <button className="btn-primary" onClick={doGenerate} disabled={busy}
                 style={{ width: "100%", marginBottom: 16 }}>
-          {busy ? "🪄 AI đang đọc & soạn bộ não… (20–60 giây)" : "🪄 Tạo bộ não bằng AI"}
+          {busy ? t("pb.s3.busy") : t("pb.s3.go")}
         </button>
 
         {/* Kết quả link đã đọc */}
         {sources.length > 0 && (
           <div className="panel set-card" style={{ marginBottom: 16 }}>
-            <h3 style={{ fontSize: 14, marginBottom: 6 }}>Kết quả đọc link</h3>
+            <h3 style={{ fontSize: 14, marginBottom: 6 }}>{t("pb.src.title")}</h3>
             {sources.map((s, i) => (
               <div key={i} className="hint" style={{ padding: "2px 0" }}>
                 {s.ok ? "✅" : "❌"} {s.url} {!s.ok && <i>— {s.error}</i>}
@@ -510,11 +488,11 @@ export default function PromptBuilder() {
         {/* AI đề nghị bổ sung (gaps) */}
         {gaps.length > 0 && (
           <div className="panel set-card gaps-box" style={{ marginBottom: 16 }}>
-            <h3 style={{ fontSize: 14, marginBottom: 6 }}>💡 AI đề nghị bổ sung để bot trả lời tốt hơn</h3>
+            <h3 style={{ fontSize: 14, marginBottom: 6 }}>{t("pb.gaps.title")}</h3>
             <ul className="gaps-list">
               {gaps.map((g, i) => <li key={i}>{g}</li>)}
             </ul>
-            <p className="hint">Điền thêm vào các ô ở Bước 1 rồi bấm <b>↺ Tạo lại</b> — hoặc cứ dùng, bổ sung sau cũng được.</p>
+            <p className="hint">{t("pb.gaps.h1")}<b>{t("pb.d.regen")}</b>{t("pb.gaps.h3")}</p>
           </div>
         )}
 
@@ -522,31 +500,31 @@ export default function PromptBuilder() {
         {draft !== null && (
           <div className="panel set-card draft-box">
             <h3 style={{ fontSize: 16, marginBottom: 6 }}>
-              3️⃣ {chunks.length ? "Bộ não AI đề xuất — kiểm tra rồi duyệt" : "Prompt AI đề xuất — kiểm tra rồi duyệt"}
+              3️⃣ {chunks.length ? t("pb.d.title_hybrid") : t("pb.d.title_prompt")}
             </h3>
             <p className="hint">
               {chunks.length
-                ? <>Phần <b>tính cách & quy trình</b> sửa trực tiếp bên dưới. Chỉ khi bấm <b>"✅ Dùng bộ não này"</b> bot mới thay đổi.</>
-                : <>Bạn sửa trực tiếp bên dưới được. Chỉ khi bấm <b>"✅ Dùng bộ não này"</b> bot mới thay đổi.</>}
+                ? <>{t("pb.d.hint_h1")}<b>{t("pb.d.hint_h2")}</b>{t("pb.d.hint_h3")}{t("pb.d.hint_c1")}<b>{t("pb.d.hint_c2")}</b>{t("pb.d.hint_c3")}</>
+                : <>{t("pb.d.hint_p")}{t("pb.d.hint_c1")}<b>{t("pb.d.hint_c2")}</b>{t("pb.d.hint_c3")}</>}
             </p>
             <textarea className="chat-input prompt-draft" value={draft}
                       onChange={(e) => setDraft(e.target.value)} />
-            <div className="hint" style={{ textAlign: "right" }}>{draft.length.toLocaleString("vi-VN")} ký tự</div>
+            <div className="hint" style={{ textAlign: "right" }}>{t("pb.d.chars", { n: draft.length.toLocaleString("vi-VN") })}</div>
 
             {/* Mẩu tri thức (chế độ lai) — bot chỉ tra mẩu liên quan mỗi tin nhắn */}
             {chunks.length > 0 && (
               <div className="kn-box">
                 <div className="kn-head">
-                  📚 Kiến thức bot sẽ tra cứu — <b>{chunks.length} mẩu</b>
+                  {t("pb.kn.head")}<b>{t("pb.kn.count", { n: chunks.length })}</b>
                   <span className="hint" style={{ fontWeight: 400 }}>
-                    {" "}(mỗi tin nhắn bot chỉ đọc vài mẩu liên quan → rẻ + chính xác hơn)
+                    {" "}{t("pb.kn.note")}
                   </span>
                 </div>
                 <div className="kn-list">
                   {chunks.map((c, i) => (
                     <details key={i} className="kn-item">
                       <summary>
-                        {c.pinned ? "📌 " : ""}{c.title || `Mẩu ${i + 1}`}
+                        {c.pinned ? "📌 " : ""}{c.title || t("pb.kn.chunk", { n: i + 1 })}
                         <span className="kn-kw">{(c.keywords || []).slice(0, 4).join(" · ")}</span>
                       </summary>
                       <pre className="kn-content">{c.content}</pre>
@@ -557,10 +535,42 @@ export default function PromptBuilder() {
             )}
 
             <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-              <button className="btn-primary sm" onClick={doApply}>✅ Dùng bộ não này</button>
-              <button className="btn-outline sm" style={{ width: "auto" }} onClick={doGenerate} disabled={busy}>↺ Tạo lại</button>
-              <button className="btn-mini danger" onClick={() => { setDraft(null); setChunks([]); setGaps([]); setSources([]); }}>Huỷ</button>
+              <button className="btn-primary sm" onClick={doApply}>{t("pb.d.use")}</button>
+              <button className="btn-outline sm" style={{ width: "auto" }} onClick={doGenerate} disabled={busy}>{t("pb.d.regen")}</button>
+              <button className="btn-mini danger" onClick={() => { setDraft(null); setChunks([]); setGaps([]); setSources([]); }}>{t("pb.d.cancel")}</button>
             </div>
+          </div>
+        )}
+
+        {/* 🩺 Chấm điểm não — chạy bộ câu hỏi ngành qua não thật (sau khi đã dạy) */}
+        {cur && cur !== "offline" && <HealthCard />}
+
+        {/* Bot học từ hội thoại — đề xuất tri thức chờ chủ duyệt (sau luồng dạy chính) */}
+        {cur && cur !== "offline" && <SuggestionsCard onChanged={load} />}
+
+        {/* Kho MẪU HỘI THOẠI (style RAG) — dạy giọng + cách xử lý tình huống */}
+        {cur && cur !== "offline" && <StyleLibrary />}
+
+        {/* Prompt mẫu chuẩn — nâng cao, ít dùng → gần cuối */}
+        {cur && cur !== "offline" && (
+          <div className="panel set-card" style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <b>{t("pb.tpl.title")}</b>{" "}
+                <span className="hint" style={{ fontWeight: 400 }}>{t("pb.tpl.hint")}</span>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn-mini" onClick={loadTemplate}>
+                  {showTpl ? t("pb.tpl.hide") : t("pb.tpl.show")}
+                </button>
+                {tpl && (
+                  <button className="btn-mini" onClick={editFromTemplate} title={t("pb.tpl.edit_tip")}>
+                    {t("pb.tpl.edit")}
+                  </button>
+                )}
+              </div>
+            </div>
+            {showTpl && tpl && <pre className="prompt-pre">{tpl}</pre>}
           </div>
         )}
 
@@ -580,6 +590,7 @@ export default function PromptBuilder() {
  * mẩu mới vào kho — bot lần sau tự trả lời được. Sửa được nội dung trước khi duyệt.
  */
 function SuggestionsCard({ onChanged }) {
+  const { t } = useI18n();
   const [sugs, setSugs] = useState(null);   // null=đang tải | mảng
   const [edits, setEdits] = useState({});   // id → {title, content} chủ sửa trước khi duyệt
   const [busyId, setBusyId] = useState(null);
@@ -603,8 +614,8 @@ function SuggestionsCard({ onChanged }) {
     setBusyId(s.id);
     const r = await promptApi.approveSuggestion(s.id, edited(s));
     setBusyId(null);
-    if (r.ok) { setNote("✅ Đã thêm vào kho tri thức — bot dùng ngay."); loadSugs(); onChanged?.(); }
-    else setNote("❌ " + (r.body?.error || "Duyệt thất bại"));
+    if (r.ok) { setNote(t("pb.sug.ok")); loadSugs(); onChanged?.(); }
+    else setNote("❌ " + (r.body?.error || t("pb.sug.fail")));
   }
   async function doReject(s) {
     setBusyId(s.id);
@@ -618,24 +629,21 @@ function SuggestionsCard({ onChanged }) {
   return (
     <div className="panel set-card" style={{ marginBottom: 16 }}>
       <h3 style={{ fontSize: 16, marginBottom: 4 }}>
-        💡 Bot học từ hội thoại <span className="badge bot">{sugs.length} đề xuất chờ duyệt</span>
+        {t("pb.sug.title")} <span className="badge bot">{t("pb.sug.badge", { n: sugs.length })}</span>
       </h3>
-      <p className="hint">
-        Bạn vừa trả lời tay mấy câu bot chưa biết — AI đã soạn sẵn thành tri thức.
-        Duyệt để lần sau bot tự trả lời (sửa nội dung trước khi duyệt nếu cần).
-      </p>
+      <p className="hint">{t("pb.sug.desc")}</p>
       {note && <div className="savemsg" style={{ marginBottom: 8 }}>{note}</div>}
       <div className="kn-list">
         {sugs.map((s) => (
           <div key={s.id} className="sug-item">
             <div className="sug-qa">
-              <div><b>Khách hỏi:</b> {s.question}</div>
-              <div><b>Bạn trả lời:</b> {s.answer}</div>
+              <div><b>{t("pb.sug.q")}</b> {s.question}</div>
+              <div><b>{t("pb.sug.a")}</b> {s.answer}</div>
             </div>
             <input
               className="sug-title"
               value={edited(s).title}
-              placeholder="Tiêu đề mẩu tri thức"
+              placeholder={t("pb.sug.title_ph")}
               onChange={(e) => setEdits((m) => ({ ...m, [s.id]: { ...edited(s), title: e.target.value } }))}
             />
             <textarea
@@ -648,10 +656,10 @@ function SuggestionsCard({ onChanged }) {
             )}
             <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
               <button className="btn-mini danger" disabled={busyId === s.id} onClick={() => doReject(s)}>
-                ✖ Bỏ qua
+                {t("pb.sug.skip")}
               </button>
               <button className="btn-primary sm" disabled={busyId === s.id} onClick={() => doApprove(s)}>
-                {busyId === s.id ? "Đang lưu…" : "✅ Duyệt vào kho"}
+                {busyId === s.id ? t("pb.sug.saving") : t("pb.sug.approve")}
               </button>
             </div>
           </div>

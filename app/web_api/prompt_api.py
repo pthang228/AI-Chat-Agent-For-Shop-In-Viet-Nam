@@ -337,7 +337,211 @@ def register_prompt_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, "chunks": knowledge.list_chunks(shop=_shop(u))}
+        # CHỈ mẩu fact — kho MẪU HỘI THOẠI (style) có endpoint /prompt/style riêng
+        return {"ok": True, "chunks": knowledge.list_chunks(shop=_shop(u), kind=knowledge.KIND_FACT)}
+
+    # ── STYLE RAG: kho mẫu hội thoại (dạy GIỌNG + cách xử lý tình huống) ──
+
+    @app.route("/prompt/style")
+    def prompt_style_list():
+        u, err = _auth_or_401()
+        if err:
+            return err
+        return {"ok": True,
+                "chunks": knowledge.list_chunks(shop=_shop(u), kind=knowledge.KIND_STYLE),
+                "max": knowledge.MAX_STYLE_CHUNKS}
+
+    @app.route("/prompt/style/<int:cid>", methods=["DELETE"])
+    def prompt_style_delete(cid):
+        u, err = _auth_or_401()
+        if err:
+            return err
+        if not knowledge.delete_chunk(cid, shop=_shop(u)):
+            return {"ok": False, "error": "Không tìm thấy mẫu"}, 404
+        return {"ok": True}
+
+    @app.route("/prompt/style/generate", methods=["POST"])
+    def prompt_style_generate():
+        """Dán transcript / mô tả giọng → AI sinh bộ mẫu (NDJSON, chống cắt cụt).
+        KHÔNG lưu — trả preview để chủ chọn rồi gọi /prompt/style/add."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        try:
+            chunks = knowledge_learn.generate_style_set(
+                data.get("text") or "", shop=_shop(u),
+                model_key=data.get("model") or None, owner=u["username"])
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        except Exception as e:
+            log.error(f"[prompt] style-generate lỗi: {e}", exc_info=True)
+            return {"ok": False, "error": f"AI lỗi: {e}"}, 502
+        log.info(f"[prompt] {u['username']} sinh {len(chunks)} mẫu hội thoại (preview)")
+        return {"ok": True, "chunks": chunks}
+
+    @app.route("/prompt/style/add", methods=["POST"])
+    def prompt_style_add():
+        """Lưu các mẫu chủ đã chọn từ preview (hoặc tự soạn tay)."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        chunks = data.get("chunks")
+        if not isinstance(chunks, list) or not chunks:
+            return {"ok": False, "error": "chunks phải là danh sách có ít nhất 1 mẫu"}, 400
+        added = knowledge.add_chunks(chunks, shop=_shop(u), kind=knowledge.KIND_STYLE)
+        if added == 0:
+            return {"ok": False,
+                    "error": f"Kho mẫu đã đầy ({knowledge.MAX_STYLE_CHUNKS}) — xoá bớt trước"}, 400
+        log.info(f"[prompt] {u['username']} lưu {added} mẫu hội thoại vào kho style")
+        return {"ok": True, "added": added,
+                "chunks": knowledge.list_chunks(shop=_shop(u), kind=knowledge.KIND_STYLE)}
+
+    # ── DẠY AI v2: phỏng vấn / báo cáo câu bí / chấm điểm não ────────
+
+    _INTERVIEW_PROMPT = (
+        "Bạn là nhân viên onboarding của NovaChat, PHỎNG VẤN chủ shop Việt Nam để thu thập "
+        "thông tin dạy chatbot bán hàng. Cách hỏi: MỖI LẦN ĐÚNG 1 CÂU, ngắn gọn thân thiện, "
+        "ưu tiên: (1) shop bán gì/ngành gì, (2) giá các món/dịch vụ chính, (3) chính sách "
+        "khách hay hỏi (ship/cọc/đổi trả/đặt lịch), (4) giờ giấc + địa chỉ, (5) giọng điệu "
+        "muốn bot xưng hô, (6) tình huống khó xử lý sao (chê đắt, hủy...). Đoán được ngành "
+        "rồi thì hỏi sâu đặc thù ngành đó. Sau 6-10 câu trả lời có nội dung, hoặc khi chủ "
+        "shop nói kiểu 'xong/đủ rồi', hãy KẾT THÚC.\n"
+        "Trả về DUY NHẤT một JSON:\n"
+        '- Còn hỏi tiếp: {"done": false, "question": "câu hỏi kế tiếp"}\n'
+        '- Kết thúc:     {"done": true, "summary": "bản tổng hợp MỌI thông tin đã khai thác, '
+        "viết thành đoạn hướng dẫn dạy bot: dữ liệu shop, giá, chính sách, giọng điệu... "
+        'giữ đúng con số chủ shop nói, không bịa"}'
+    )
+
+    @app.route("/prompt/interview", methods=["POST"])
+    def prompt_interview():
+        """Chat phỏng vấn: nhận history [{role,content}] → câu hỏi kế / bản tổng hợp."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        history = data.get("history") or []
+        if not isinstance(history, list):
+            return {"ok": False, "error": "history phải là danh sách"}, 400
+        from app.core.claude_ai import _call_ai
+        msgs = [{"role": "system", "content": _INTERVIEW_PROMPT}]
+        for m in history[-30:]:
+            role = "assistant" if m.get("role") == "assistant" else "user"
+            msgs.append({"role": role, "content": str(m.get("content") or "")[:1500]})
+        if not history:
+            msgs.append({"role": "user", "content": "(bắt đầu phỏng vấn — hãy chào và hỏi câu đầu tiên)"})
+        try:
+            raw = _call_ai(msgs, owner=u["username"])
+        except Exception as e:
+            return {"ok": False, "error": f"AI lỗi: {e}"}, 502
+        out = knowledge_learn._parse_json_loose(raw)
+        if not isinstance(out, dict) or (not out.get("question") and not out.get("summary")):
+            # AI trả text trần → coi là câu hỏi tiếp theo (đừng chết phiên phỏng vấn)
+            out = {"done": False, "question": (raw or "").strip()[:600]}
+        return {"ok": True, "done": bool(out.get("done")),
+                "question": str(out.get("question") or "")[:800],
+                "summary": str(out.get("summary") or "")[:8000]}
+
+    @app.route("/prompt/report")
+    def prompt_report():
+        """BÁO CÁO NÃO BOT: câu bot bí (unknown_question) 14 ngày, gộp câu gần giống."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        from datetime import datetime, timedelta
+        from app.core.db import get_db
+        since = (datetime.now() - timedelta(days=14)).isoformat()
+        rows = get_db().query(
+            "SELECT id, question, created_at FROM bot_misses "
+            "WHERE shop=? AND resolved=0 AND created_at>=? ORDER BY id DESC LIMIT 300",
+            (_shop(u), since))
+        groups = {}   # câu chuẩn hoá → {question, count, ids, last}
+        for r in rows:
+            key = " ".join(knowledge._tokens(r["question"]))[:120]
+            g = groups.setdefault(key, {"question": r["question"], "count": 0,
+                                        "ids": [], "last": r["created_at"]})
+            g["count"] += 1
+            g["ids"].append(r["id"])
+        top = sorted(groups.values(), key=lambda g: -g["count"])[:15]
+        return {"ok": True, "misses": top,
+                "total": sum(g["count"] for g in groups.values())}
+
+    @app.route("/prompt/report/answer", methods=["POST"])
+    def prompt_report_answer():
+        """1 CHẠM: chủ trả lời câu bot bí → AI bóc thành mẩu tri thức, lưu thẳng kho."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        try:
+            chunk = knowledge_learn.learn_direct(
+                data.get("question") or "", data.get("answer") or "", shop=_shop(u))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        ids = [int(i) for i in (data.get("ids") or []) if str(i).isdigit()]
+        if ids:
+            from app.core.db import get_db
+            get_db().execute(
+                f"UPDATE bot_misses SET resolved=1 WHERE id IN ({','.join('?' * len(ids))}) AND shop=?",
+                (*ids, _shop(u)))
+        log.info(f"[prompt] {u['username']} bổ sung tri thức từ báo cáo ({chunk['title']!r})")
+        return {"ok": True, "chunk": chunk}
+
+    _JUDGE_PROMPT = (
+        "Bạn chấm điểm chatbot của shop. Cho danh sách CÂU KHÁCH HỎI và CÂU BOT TRẢ LỜI. "
+        "Câu trả lời ĐẠT khi: có thông tin cụ thể đúng trọng tâm câu hỏi. KHÔNG ĐẠT khi: "
+        "nói 'chưa có thông tin', né tránh, trả lời chung chung không số liệu, hoặc lạc đề.\n"
+        'Trả về DUY NHẤT JSON array: [{"i": số thứ tự, "ok": true/false, "note": "thiếu gì (ngắn)"}]'
+    )
+
+    @app.route("/prompt/health", methods=["POST"])
+    def prompt_health():
+        """CHẤM ĐIỂM NÃO: chạy bộ câu hỏi ngành qua não thật → AI giám khảo chấm.
+        Chậm (10 câu × AI + 1 lượt chấm ≈ 30-90s) — UI hiện tiến trình."""
+        u, err = _auth_or_401()
+        if err:
+            return err
+        from concurrent.futures import ThreadPoolExecutor
+        from app.core import industry as _ind
+        from app.core.db import get_db
+        from app.core.claude_ai import analyze_with_debug, _call_ai
+        rows = get_db().query("SELECT industry FROM users WHERE username=?", (u["username"],))
+        ind_key = (rows[0]["industry"] if rows else "") or _ind.DEFAULT_KEY
+        questions = _ind.test_questions(ind_key)[:10]
+        shop = _shop(u)
+
+        def _ask(q):
+            try:
+                return analyze_with_debug(q, [], shop=shop).get("reply", "")
+            except Exception as e:
+                return f"(lỗi AI: {e})"
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            replies = list(ex.map(_ask, questions))
+
+        qa = "\n\n".join(f"[{i + 1}] KHÁCH: {q}\nBOT: {r[:600]}"
+                         for i, (q, r) in enumerate(zip(questions, replies)))
+        verdicts = []
+        try:
+            raw = _call_ai([{"role": "system", "content": _JUDGE_PROMPT},
+                            {"role": "user", "content": qa}], owner=u["username"])
+            import json as _json, re as _re
+            m = _re.search(r"\[.*\]", raw or "", _re.DOTALL)
+            if m:
+                verdicts = _json.loads(m.group(0))
+        except Exception as e:
+            log.warning(f"[health] giám khảo lỗi: {e}")
+        vmap = {int(v.get("i", 0)): v for v in verdicts if isinstance(v, dict)}
+        items = []
+        for i, (q, r) in enumerate(zip(questions, replies), 1):
+            v = vmap.get(i, {})
+            items.append({"question": q, "reply": r[:400],
+                          "ok": bool(v.get("ok", False)), "note": str(v.get("note") or "")[:200]})
+        passed = sum(1 for it in items if it["ok"])
+        log.info(f"[health] {u['username']} ({ind_key}): {passed}/{len(items)} đạt")
+        return {"ok": True, "industry": ind_key, "industry_label": _ind.label(ind_key),
+                "passed": passed, "total": len(items), "items": items}
 
     # ── Bot học từ hội thoại — hàng chờ duyệt ────────────────────────
 

@@ -12,6 +12,7 @@ import OrdersSection from "../components/OrdersSection.jsx";
 import PostsSection from "../components/PostsSection.jsx";
 import CustomersSection from "../components/CustomersSection.jsx";
 import BroadcastSection from "../components/BroadcastSection.jsx";
+import StatsPanel from "../components/StatsPanel.jsx";
 import { useI18n } from "../i18n.jsx";
 
 const PERIODS = ["today", "7d", "30d", "month", "year"];
@@ -164,6 +165,8 @@ export default function Overview() {
             <BroadcastSection />
           ) : section === "posts" ? (
             <PostsSection />
+          ) : section === "stats" ? (
+            <StatsPanel channel="all" />
           ) : (
             <div className="ov-placeholder">
               <div className="ov-ph-ic">🚧</div>

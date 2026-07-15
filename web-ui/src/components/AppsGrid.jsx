@@ -5,6 +5,7 @@ import { getApps, addApp, removeApp } from "../store.js";
 import { brain } from "../brainApi.js";
 import { IcPlus, IcSpark, IcChev } from "./icons.jsx";
 import { ChannelIcon, ChannelTile } from "./ChannelIcon.jsx";
+import { useI18n } from "../i18n.jsx";
 
 // icon = key kênh cho <ChannelIcon/> (logo thương hiệu thật, không dùng emoji)
 export const CHANNELS = {
@@ -36,6 +37,7 @@ function saveAppShop(m) { localStorage.setItem(APP_SHOP_KEY, JSON.stringify(m));
  * gán vào shop mặc định (shop đầu tiên). onStats báo tổng/đang-bật ra ngoài.
  */
 export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false }) {
+  const { t } = useI18n();
   const nav = useNavigate();
   const [apps, setApps] = useState(null);      // null=đang tải | mảng | "offline"  (TẤT CẢ app của user)
   const [showAdd, setShowAdd] = useState(false);
@@ -87,7 +89,7 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
     setShowAdd(false); refresh();
   }
   async function handleRemove(id) {
-    if (!confirm("Xoá app này?")) return;
+    if (!confirm(t("app.del_confirm"))) return;
     try { await removeApp(id); } catch (e) { alert("❌ " + e.message); }
     const m = loadAppShop(); if (m[id]) { delete m[id]; saveAppShop(m); }
     refresh();
@@ -101,19 +103,19 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
     setBotMap((m) => ({ ...m, [channel]: (r.ok && r.body) ? !!r.body.enabled : "offline" }));
   }
 
-  if (apps === null) return <div className="empty"><p>Đang tải danh sách app…</p></div>;
+  if (apps === null) return <div className="empty"><p>{t("app.loading_list")}</p></div>;
   if (apps === "offline") return (
     <div className="empty">
-      <p>⚠️ Chưa kết nối được máy chủ (cổng 5005).</p>
-      <p className="hint">Chạy <code>start-all.bat</code> rồi bấm Thử lại.</p>
-      <button className="btn-primary sm" onClick={refresh} style={{ margin: "0 auto" }}>Thử lại</button>
+      <p>{t("app.offline")}</p>
+      <p className="hint">{t("app.run_cmd")} <code>start-all.bat</code> {t("app.then_retry")}</p>
+      <button className="btn-primary sm" onClick={refresh} style={{ margin: "0 auto" }}>{t("app.retry")}</button>
     </div>
   );
   if (appList.length === 0) return (
     <div className="empty">
-      <p>Chưa có app nào. Thêm kênh đầu tiên để bắt đầu.</p>
+      <p>{t("app.empty")}</p>
       <button className="btn-primary sm" onClick={() => setShowAdd(true)} style={{ margin: "0 auto" }}>
-        <IcPlus width={16} height={16} /> Thêm app
+        <IcPlus width={16} height={16} /> {t("app.add")}
       </button>
       {showAdd && <AddAppModal onClose={() => setShowAdd(false)} onAdd={handleAdd} />}
     </div>
@@ -139,36 +141,36 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
                   <div className="app-ch">{ch.label}</div>
                 </div>
                 <div className={"app-status" + (reachable ? " on" : "")}>
-                  <span className="dot" />{reachable ? "Đã kết nối" : "Chưa kết nối"}
+                  <span className="dot" />{reachable ? t("app.connected") : t("app.not_connected")}
                 </div>
               </div>
               <div className="ai-row" onClick={(e) => e.stopPropagation()}>
                 <div className="ai-left">
-                  <span className="spark"><IcSpark width={17} height={17} /></span> Trợ lý AI
+                  <span className="spark"><IcSpark width={17} height={17} /></span> {t("app.ai_assistant")}
                   <span className={"badge " + (on ? "bot" : "stage")}>
-                    {st === "offline" ? "Offline" : st === undefined ? "…" : on ? "Đang bật" : "Đang tắt"}
+                    {st === "offline" ? "Offline" : st === undefined ? "…" : on ? t("app.bot_on") : t("app.bot_off")}
                   </span>
                 </div>
                 <button className={"tggl" + (on ? " on" : "")}
                         disabled={st === "offline" || st === undefined}
                         onClick={() => toggleBot(key)}
-                        title="Bật/tắt trợ lý AI cho kênh này" />
+                        title={t("app.toggle_title")} />
               </div>
               <div className="app-foot">
-                <span>Quản lý & khách hàng</span>
+                <span>{t("app.manage_customers")}</span>
                 <span className="chev"><IcChev width={16} height={16} /></span>
               </div>
               <button className="btn-mini danger del"
                       onClick={(e) => { e.stopPropagation(); handleRemove(app.id); }}>
-                Xoá
+                {t("app.delete")}
               </button>
             </div>
           );
         })}
         <div className="add-card" onClick={() => setShowAdd(true)}>
           <span className="add-plus"><IcPlus width={24} height={24} /></span>
-          <h3>Thêm app</h3>
-          <span className="hint">Kết nối kênh chat mới</span>
+          <h3>{t("app.add")}</h3>
+          <span className="hint">{t("app.add_hint")}</span>
         </div>
       </div>
       {showAdd && <AddAppModal onClose={() => setShowAdd(false)} onAdd={handleAdd} />}
@@ -177,16 +179,17 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
 }
 
 function AddAppModal({ onClose, onAdd }) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [channel, setChannel] = useState("zalo");
   function submit(e) { e.preventDefault(); onAdd({ name, channel }); }
   return (
     <div className="modal-bg" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h3>Thêm app mới</h3>
-        <label>Tên app</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Zalo Shop Mình" autoFocus />
-        <label>Kênh</label>
+        <h3>{t("app.add_new")}</h3>
+        <label>{t("app.name_label")}</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("app.name_ph")} autoFocus />
+        <label>{t("app.channel_label")}</label>
         <div className="ch-pick">
           {ADD_CHANNELS.map((key) => {
             const c = CHANNELS[key];
@@ -200,8 +203,8 @@ function AddAppModal({ onClose, onAdd }) {
           })}
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn-ghost" onClick={onClose}>Huỷ</button>
-          <button type="submit" className="btn-primary sm">Thêm</button>
+          <button type="button" className="btn-ghost" onClick={onClose}>{t("app.cancel")}</button>
+          <button type="submit" className="btn-primary sm">{t("app.add_btn")}</button>
         </div>
       </form>
     </div>

@@ -129,19 +129,61 @@ def _resolve_shop(user_id: str = None, account: str = None, shop: str = None) ->
         return "default"
 
 
+def _state_block(conv_state: dict) -> str:
+    """TRẠNG THÁI TƯ VẤN từ conv (code thuần, 0 lượt AI) — chống bot 'quên'
+    khách đang ở bước nào khi lịch sử raw bị cắt cửa sổ."""
+    if not conv_state:
+        return ""
+    lines = []
+    stage = conv_state.get("stage")
+    if stage:
+        stage_vn = {"greeting": "mới chào hỏi", "checking": "đang hỏi lịch",
+                    "offering": "đang được tư vấn phòng/dịch vụ",
+                    "confirmed": "ĐÃ CHỐT đặt", "owner_notified": "đã báo chủ, chờ chủ xử lý"}
+        lines.append(f"- Giai đoạn: {stage_vn.get(stage, stage)}")
+    if conv_state.get("checkin"):
+        lines.append(f"- Ngày nhận (checkin) khách đã nêu: {conv_state['checkin']}")
+    if conv_state.get("checkout"):
+        lines.append(f"- Ngày trả (checkout): {conv_state['checkout']}")
+    if conv_state.get("selected_room"):
+        lines.append(f"- Phòng/dịch vụ đang quan tâm: {conv_state['selected_room']}")
+    if not lines:
+        return ""
+    return "TRẠNG THÁI TƯ VẤN HIỆN TẠI (hệ thống theo dõi — dùng để trả lời nhất quán):\n" \
+           + "\n".join(lines)
+
+
+def _summary_block(conv_state: dict) -> str:
+    s = (conv_state or {}).get("summary") or ""
+    if not s.strip():
+        return ""
+    return ("TÓM TẮT HỘI THOẠI TRƯỚC (các tin cũ hơn đã được tóm lại — nội dung "
+            "này là NGỮ CẢNH THẬT của khách này, dùng để trả lời liền mạch):\n" + s.strip())
+
+
 def _compose_system(user_message: str, history: list,
                     user_id: str = None, account: str = None,
-                    shop: str = None) -> tuple:
+                    shop: str = None, conv_state: dict = None) -> tuple:
     """Ghép system prompt + thông tin chẩn đoán (cho trang Test bot).
-    Chế độ LAI: persona (ngắn) + DỮ LIỆU SHOP tra theo câu hỏi (RAG) + TRÍ NHỚ
-    KHÁCH (CRM) + quy ước kỹ thuật. Prompt cũ (không marker): giữ nguyên + memory.
-    MULTI-TENANT: persona + tri thức lấy theo SHOP của hội thoại.
+    Chế độ LAI: persona (ngắn) + DỮ LIỆU SHOP (facts RAG) + VÍ DỤ CÁCH TƯ VẤN
+    (style RAG) + quy ước kỹ thuật + TRÍ NHỚ KHÁCH + trạng thái + tóm tắt cuộn.
+    THỨ TỰ CÓ CHỦ ĐÍCH cho context cache (DeepSeek cache theo prefix chung):
+    phần ỔN ĐỊNH THEO SHOP đứng đầu (persona/kb/tech — giống nhau cho MỌI khách
+    của shop), phần theo-khách đứng sau, _today_context (đổi từng phút) CUỐI CÙNG.
+    Prompt cũ (không marker): giữ nguyên + memory.
     Trả (system_str, debug) — debug = {mode, chunks[], system_chars}."""
     shop = _resolve_shop(user_id, account, shop)
     memory = _memory_block(user_id, account)
+    state = _state_block(conv_state)
+    summary = _summary_block(conv_state)
     base = _load_system_prompt(shop)
     if not base.startswith(HYBRID_MARKER):
-        system = _today_context() + base + (("\n\n" + memory) if memory else "")
+        parts = [base]
+        for b in (memory, state, summary):
+            if b:
+                parts.append(b)
+        parts.append(_today_context())
+        system = "\n\n".join(parts)
         return system, {"mode": "legacy", "chunks": [], "system_chars": len(system)}
 
     from app.core import knowledge  # import trễ — tránh vòng lặp import khi test mock
@@ -153,30 +195,42 @@ def _compose_system(user_message: str, history: list,
         if m.get("role") == "user":
             prev_user = str(m.get("content") or "")
             break
+    query = f"{prev_user}\n{user_message}".strip()
     # Kho nhỏ → nhồi TOÀN BỘ (0 tra trượt); kho lớn → retrieve top-k liên quan.
-    hits, kb_mode = knowledge.context_chunks(f"{prev_user}\n{user_message}".strip(), shop=shop)
+    hits, kb_mode = knowledge.context_chunks(query, shop=shop)
     kb_block = knowledge.format_block(hits)
-    parts = [_today_context() + persona]
+    # STYLE RAG: 2 mẫu hội thoại khớp tình huống (bonus intent lượt trước)
+    style_hits = knowledge.retrieve_style(
+        query, shop=shop, k=2, intent=(conv_state or {}).get("intent") or "")
+    style = knowledge.format_style_block(style_hits)
+    parts = [persona]                    # ổn định theo shop
     if kb_block:
-        parts.append(kb_block)
-    if memory:
-        parts.append(memory)
+        parts.append(kb_block)           # ổn định khi kb_mode='full'
+    if style:
+        parts.append(style)
     tech = _load_tech_rules()
     if tech:
-        parts.append(tech)
+        parts.append(tech)               # ổn định theo code
+    for b in (memory, state, summary):   # theo khách
+        if b:
+            parts.append(b)
+    parts.append(_today_context())       # đổi từng phút → CUỐI để không phá cache
     system = "\n\n".join(parts)
     return system, {
         "mode": "hybrid",
         "kb_mode": kb_mode,   # 'full' (nhồi hết) | 'retrieval' (tra top-k) | 'empty'
         "shop": shop,         # não bot của shop nào (multi-tenant)
         "chunks": [{"title": h.get("title") or "(không tiêu đề)"} for h in hits],
+        "style_chunks": [{"title": h.get("title") or "(không tiêu đề)"} for h in style_hits],
         "system_chars": len(system),
     }
 
 
 def _build_system_prompt(user_message: str, history: list,
-                         user_id: str = None, account: str = None) -> str:
-    return _compose_system(user_message, history, user_id, account)[0]
+                         user_id: str = None, account: str = None,
+                         conv_state: dict = None) -> str:
+    return _compose_system(user_message, history, user_id, account,
+                           conv_state=conv_state)[0]
 
 
 def _call_ai(messages: list, owner: str | None = None, account: str | None = None,
@@ -274,13 +328,55 @@ def _parse_ai_output(full_text: str) -> dict:
 
 
 def analyze_message(user_message: str, history: list[dict],
-                    user_id: str = None, account: str = None) -> dict:
+                    user_id: str = None, account: str = None,
+                    conv_state: dict = None) -> dict:
     messages = [{"role": "system",
-                 "content": _build_system_prompt(user_message, history, user_id, account)}]
+                 "content": _build_system_prompt(user_message, history, user_id, account,
+                                                 conv_state=conv_state)}]
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
     owner = _owner_of_shop(_resolve_shop(user_id, account))
     return _parse_ai_output(_call_ai(messages, owner=owner, account=account))
+
+
+# ── Tóm tắt cuộn hội thoại ───────────────────────────────────────────
+
+_SUMMARIZE_PROMPT = (
+    "Bạn tóm tắt hội thoại giữa KHÁCH và trợ lý shop để trợ lý đọc lại nhanh.\n"
+    "Gộp TÓM TẮT CŨ (nếu có) với các TIN MỚI thành MỘT bản tóm tắt duy nhất, "
+    "tối đa 6 dòng gạch đầu dòng, tiếng Việt, chỉ giữ điều CÒN GIÁ TRỊ cho các "
+    "lượt tư vấn sau:\n"
+    "- khách là ai/xưng hô gì, cần gì (ngày, số người, phòng/dịch vụ quan tâm)\n"
+    "- đã báo giá gì / khách phản ứng sao (chê đắt, phân vân, đồng ý...)\n"
+    "- lời hứa/hẹn còn treo (khách bảo chiều chốt, chờ chủ trả lời...)\n"
+    "KHÔNG bịa, KHÔNG thêm lời khuyên, KHÔNG markdown ngoài dấu '-'. "
+    "Chỉ trả về nội dung tóm tắt."
+)
+
+
+def summarize_history(old_summary: str, msgs: list[dict],
+                      owner: str = None, account: str = None) -> str:
+    """Gộp tóm tắt cũ + các tin vừa rời cửa sổ raw thành tóm tắt mới (3-6 dòng).
+    Gọi NỀN sau khi đã trả lời khách — lỗi thì trả tóm tắt cũ, không được ném."""
+    try:
+        convo = "\n".join(
+            f"{'Khách' if m.get('role') == 'user' else 'Trợ lý'}: {str(m.get('content') or '')[:400]}"
+            for m in msgs if m.get("content"))
+        if not convo.strip():
+            return old_summary or ""
+        user_block = ""
+        if old_summary:
+            user_block += f"TÓM TẮT CŨ:\n{old_summary}\n\n"
+        user_block += f"TIN MỚI:\n{convo}"
+        out = _call_ai(
+            [{"role": "system", "content": _SUMMARIZE_PROMPT},
+             {"role": "user", "content": user_block}],
+            owner=owner, account=account)
+        out = (out or "").strip()[:1500]
+        return out or (old_summary or "")
+    except Exception as e:
+        print(f"[Summary] Lỗi tóm tắt (giữ tóm tắt cũ): {e}")
+        return old_summary or ""
 
 
 def analyze_with_debug(user_message: str, history: list[dict], shop: str = None,

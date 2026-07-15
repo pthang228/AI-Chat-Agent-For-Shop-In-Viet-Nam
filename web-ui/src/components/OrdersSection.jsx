@@ -2,29 +2,36 @@ import { useEffect, useState } from "react";
 import { ordersApi, ORDER_STATUS, NEXT_STATUS, vnd } from "../ordersApi.js";
 import { loyaltyApi } from "../loyaltyApi.js";
 import { ChannelTile } from "./ChannelIcon.jsx";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * Sổ đơn hàng (mục "Đơn hàng" sidebar): bot tự tạo đơn nháp khi khách chốt
  * trong chat; chủ duyệt/đổi trạng thái 1 chạm; tới hạn hệ thống tự nhắc.
+ * Label kênh/loại đơn/trạng thái: key i18n "ord.*" (i18n/campaigns.js).
  */
 
 // icon logo thương hiệu thật render qua <ChannelTile ch={key}/> (bỏ emoji)
-const CH = {
-  zalo:     { label: "Zalo",      color: "#0068ff" },
-  meta:     { label: "Mess + IG", color: "#7b3fb3" },
-  telegram: { label: "Telegram",  color: "#229ED9" },
-  tiktok:   { label: "TikTok",    color: "#161823" },
-  shopee:   { label: "Shopee",    color: "#EE4D2D" },
-  zalooa:   { label: "Zalo OA",   color: "#005AE0" },
-  webchat:  { label: "Website",   color: "#4F46E5" },
+const CH_COLOR = {
+  zalo:     "#0068ff",
+  meta:     "#7b3fb3",
+  telegram: "#229ED9",
+  tiktok:   "#161823",
+  shopee:   "#EE4D2D",
+  zalooa:   "#005AE0",
+  webchat:  "#4F46E5",
 };
-const TYPE_LABEL = { booking: "🏠 Đặt phòng/lịch", goods: "📦 Bán hàng" };
+const TYPE_KEYS = ["booking", "goods"];
 
-function dueBadge(o) {
+// label trạng thái đơn — key backend (draft/paid…) giữ nguyên, chỉ dịch label
+function stLabel(t, k) {
+  return ORDER_STATUS[k] ? t("ord.st." + k) : k;
+}
+
+function dueBadge(o, t) {
   if (!o.due_at || ["done", "cancelled"].includes(o.status)) return null;
   const diff = (new Date(o.due_at) - Date.now()) / 3600000;
-  if (diff < 0) return <span className="od-due late">⚠️ Quá hạn</span>;
-  if (diff < 24) return <span className="od-due soon">⏰ Còn {Math.max(1, Math.round(diff))}h</span>;
+  if (diff < 0) return <span className="od-due late">{t("ord.due_late")}</span>;
+  if (diff < 24) return <span className="od-due soon">{t("ord.due_soon", { h: Math.max(1, Math.round(diff)) })}</span>;
   return null;
 }
 function fmtDue(iso) {
@@ -34,6 +41,7 @@ function fmtDue(iso) {
 }
 
 export default function OrdersSection() {
+  const { t } = useI18n();
   const [data, setData] = useState(null);       // null | {total, items} | "offline"
   const [sum, setSum] = useState(null);
   const [status, setStatus] = useState("");
@@ -59,11 +67,11 @@ export default function OrdersSection() {
     setBusy(false); load();
   }
   async function cancelOrder(o) {
-    if (!confirm(`Huỷ đơn ${o.code}?`)) return;
+    if (!confirm(t("ord.cancel_confirm", { code: o.code }))) return;
     await ordersApi.update(o.id, { status: "cancelled" }); load();
   }
   async function removeOrder(o) {
-    if (!confirm(`XOÁ HẲN đơn ${o.code} khỏi sổ? (thường chỉ nên Huỷ để còn lưu vết)`)) return;
+    if (!confirm(t("ord.delete_confirm", { code: o.code }))) return;
     await ordersApi.remove(o.id); load();
   }
 
@@ -74,9 +82,9 @@ export default function OrdersSection() {
       {/* Tóm tắt */}
       {sum && (
         <div className="od-sum">
-          <div className="od-sum-card"><b>{sum.total}</b><span>Tổng đơn</span></div>
-          <div className="od-sum-card"><b>{(sum.by_status.draft || 0) + (sum.by_status.awaiting_payment || 0)}</b><span>Chờ xử lý</span></div>
-          <div className="od-sum-card ok"><b>{vnd(sum.revenue)}</b><span>Doanh thu (đã thanh toán)</span></div>
+          <div className="od-sum-card"><b>{sum.total}</b><span>{t("ord.sum_total")}</span></div>
+          <div className="od-sum-card"><b>{(sum.by_status.draft || 0) + (sum.by_status.awaiting_payment || 0)}</b><span>{t("ord.sum_pending")}</span></div>
+          <div className="od-sum-card ok"><b>{vnd(sum.revenue)}</b><span>{t("ord.sum_revenue")}</span></div>
         </div>
       )}
 
@@ -86,60 +94,60 @@ export default function OrdersSection() {
       {/* Filter + tạo */}
       <div className="od-bar">
         <div className="od-tabs">
-          <button className={"od-tab" + (status === "" ? " active" : "")} onClick={() => setStatus("")}>Tất cả</button>
+          <button className={"od-tab" + (status === "" ? " active" : "")} onClick={() => setStatus("")}>{t("ord.all")}</button>
           {Object.entries(ORDER_STATUS).map(([k, v]) => (
             <button key={k} className={"od-tab" + (status === k ? " active" : "")}
                     style={{ "--c": v.color }} onClick={() => setStatus(k)}>
-              {v.label}{sum ? ` ${sum.by_status[k] || 0}` : ""}
+              {stLabel(t, k)}{sum ? ` ${sum.by_status[k] || 0}` : ""}
             </button>
           ))}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <input className="od-search" placeholder="🔍 Mã đơn / tên / SĐT…" value={q}
+          <input className="od-search" placeholder={t("ord.search_ph")} value={q}
                  onChange={(e) => setQ(e.target.value)}
                  onKeyDown={(e) => e.key === "Enter" && load()} />
-          <button className="btn-primary sm" onClick={() => setEditing("new")}>＋ Tạo đơn</button>
+          <button className="btn-primary sm" onClick={() => setEditing("new")}>{t("ord.new_btn")}</button>
         </div>
       </div>
 
       <p className="cb-hint">
-        Khách <b>chốt đơn trong chat</b> là bot tự tạo <b>đơn nháp</b> ở đây (kèm báo cho bạn).
-        Bấm nút trạng thái để chuyển bước tiếp theo — tới ngày hẹn/gửi hàng hệ thống tự nhắc.
+        {t("ord.hint_1")}<b>{t("ord.hint_2")}</b>{t("ord.hint_3")}<b>{t("ord.hint_4")}</b>{t("ord.hint_5")}
       </p>
 
       {/* Bảng đơn */}
-      {data === null && <p className="hint">Đang tải sổ đơn…</p>}
+      {data === null && <p className="hint">{t("ord.loading")}</p>}
       {data === "offline" && (
-        <div className="empty"><p>⚠️ Chưa kết nối được máy chủ (5005) — hoặc server chưa restart bản mới.</p></div>
+        <div className="empty"><p>{t("ord.offline")}</p></div>
       )}
       {Array.isArray(data?.items) && items.length === 0 && (
         <div className="empty" style={{ padding: 30 }}>
-          <p>Chưa có đơn nào{status ? " ở trạng thái này" : ""}. Khách chốt trong chat là đơn tự xuất hiện.</p>
+          <p>{t("ord.empty", { filter: status ? t("ord.empty_filter") : "" })}</p>
         </div>
       )}
 
       {items.map((o) => {
         const st = ORDER_STATUS[o.status] || ORDER_STATUS.draft;
-        const ch = CH[o.channel];
+        const stKey = ORDER_STATUS[o.status] ? o.status : "draft";
+        const chColor = CH_COLOR[o.channel];
         const next = NEXT_STATUS[o.status];
         return (
           <div key={o.id} className="od-row">
             <div className="od-main">
               <div className="od-l1">
                 <b className="od-code">{o.code}</b>
-                <span className="od-status" style={{ "--c": st.color }}>{st.label}</span>
-                {ch && <span className="ch-chip" style={{ "--c": ch.color }}>
-                  <ChannelTile ch={o.channel} size={13} /> {ch.label}
+                <span className="od-status" style={{ "--c": st.color }}>{t("ord.st." + stKey)}</span>
+                {chColor && <span className="ch-chip" style={{ "--c": chColor }}>
+                  <ChannelTile ch={o.channel} size={13} /> {t("ord.ch." + o.channel)}
                 </span>}
-                <span className="od-type">{TYPE_LABEL[o.order_type] || o.order_type}</span>
-                {dueBadge(o)}
+                <span className="od-type">{TYPE_KEYS.includes(o.order_type) ? t("ord.type." + o.order_type) : o.order_type}</span>
+                {dueBadge(o, t)}
               </div>
               <div className="od-l2">
                 <span>👤 {o.customer_name || o.user_id || "—"}</span>
                 {o.phone && <span>📞 {o.phone}</span>}
                 <span>🗓 {fmtDue(o.due_at)}</span>
                 {o.voucher_code && (
-                  <span className="od-voucher" title={`Đã giảm ${vnd(o.discount)}`}>
+                  <span className="od-voucher" title={t("ord.discounted", { v: vnd(o.discount) })}>
                     🎟️ {o.voucher_code} −{vnd(o.discount)}</span>
                 )}
                 <b className="od-total">{vnd(o.total)}</b>
@@ -154,16 +162,16 @@ export default function OrdersSection() {
             <div className="od-actions">
               {next && (
                 <button className="btn-primary sm" disabled={busy} onClick={() => quickNext(o)}
-                        title="Chuyển sang bước tiếp theo">
-                  → {ORDER_STATUS[next].label}
+                        title={t("ord.next_title")}>
+                  → {stLabel(t, next)}
                 </button>
               )}
-              <button className="btn-mini" onClick={() => setEditing(o)}>Sửa</button>
+              <button className="btn-mini" onClick={() => setEditing(o)}>{t("ord.edit")}</button>
               {!["done", "cancelled"].includes(o.status) && (
-                <button className="btn-mini danger" onClick={() => cancelOrder(o)}>Huỷ</button>
+                <button className="btn-mini danger" onClick={() => cancelOrder(o)}>{t("ord.cancel")}</button>
               )}
               {["done", "cancelled"].includes(o.status) && (
-                <button className="btn-mini danger" onClick={() => removeOrder(o)}>Xoá</button>
+                <button className="btn-mini danger" onClick={() => removeOrder(o)}>{t("team.del")}</button>
               )}
             </div>
           </div>
@@ -183,6 +191,7 @@ export default function OrdersSection() {
 
 /* ── Card quản lý mã giảm giá (loyalty) ── */
 function VoucherCard() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [list, setList] = useState(null);
   const [f, setF] = useState({ code: "", kind: "amount", value: "", min_total: "", max_uses: "", expires_at: "" });
@@ -208,54 +217,54 @@ function VoucherCard() {
       expires_at: f.expires_at || null,
     });
     setBusy(false);
-    if (r.ok) { setMsg("✅ Đã tạo mã " + r.body.voucher.code); setF({ code: "", kind: "amount", value: "", min_total: "", max_uses: "", expires_at: "" }); load(); }
-    else setMsg("❌ " + (r.body?.error || "Tạo mã thất bại"));
+    if (r.ok) { setMsg(t("ord.vc_created", { code: r.body.voucher.code })); setF({ code: "", kind: "amount", value: "", min_total: "", max_uses: "", expires_at: "" }); load(); }
+    else setMsg("❌ " + (r.body?.error || t("ord.vc_create_fail")));
   }
   async function toggle(v) { await loyaltyApi.updateVoucher(v.id, { active: v.active ? 0 : 1 }); load(); }
   async function del(v) {
-    if (!confirm(`Xoá mã ${v.code}?`)) return;
+    if (!confirm(t("ord.vc_del_confirm", { code: v.code }))) return;
     await loyaltyApi.deleteVoucher(v.id); load();
   }
 
   return (
     <div className="panel vc-card">
       <div className="vc-head" onClick={() => setOpen((o) => !o)}>
-        <b>🎟️ Mã giảm giá</b>
-        <span className="hint">Tạo mã khuyến mãi, áp vào đơn khi chốt · đơn hoàn tất tự cộng ⭐ điểm cho khách (10.000đ = 1 điểm)</span>
-        <span className="btn-mini">{open ? "Thu gọn ▲" : "Mở ▼"}</span>
+        <b>{t("ord.vc_title")}</b>
+        <span className="hint">{t("ord.vc_desc")}</span>
+        <span className="btn-mini">{open ? t("ord.vc_collapse") : t("ord.vc_open")}</span>
       </div>
       {open && (
         <div className="vc-body">
           <form className="vc-form" onSubmit={create}>
-            <input style={{ width: 130 }} placeholder="MÃ (GIAM50K)" value={f.code}
+            <input style={{ width: 130 }} placeholder={t("ord.vc_code_ph")} value={f.code}
                    onChange={(e) => setF((s) => ({ ...s, code: e.target.value.toUpperCase() }))} required />
             <select value={f.kind} onChange={set("kind")} style={{ width: "auto" }}>
-              <option value="amount">Giảm thẳng (đ)</option>
-              <option value="percent">Giảm %</option>
+              <option value="amount">{t("ord.vc_amount")}</option>
+              <option value="percent">{t("ord.vc_percent")}</option>
             </select>
-            <input style={{ width: 110 }} placeholder={f.kind === "percent" ? "% (VD 10)" : "đ (VD 50000)"}
+            <input style={{ width: 110 }} placeholder={f.kind === "percent" ? t("ord.vc_val_pct_ph") : t("ord.vc_val_amt_ph")}
                    value={f.value} onChange={set("value")} required />
-            <input style={{ width: 130 }} placeholder="Đơn tối thiểu (đ)" value={f.min_total} onChange={set("min_total")} />
-            <input style={{ width: 100 }} placeholder="Số lượt (0=∞)" value={f.max_uses} onChange={set("max_uses")} />
-            <input type="date" style={{ width: 140 }} title="Hạn dùng (bỏ trống = không hạn)"
+            <input style={{ width: 130 }} placeholder={t("ord.vc_min_ph")} value={f.min_total} onChange={set("min_total")} />
+            <input style={{ width: 100 }} placeholder={t("ord.vc_uses_ph")} value={f.max_uses} onChange={set("max_uses")} />
+            <input type="date" style={{ width: 140 }} title={t("ord.vc_exp_title")}
                    value={f.expires_at} onChange={set("expires_at")} />
-            <button className="btn-primary sm" type="submit" disabled={busy}>{busy ? "…" : "＋ Tạo mã"}</button>
+            <button className="btn-primary sm" type="submit" disabled={busy}>{busy ? "…" : t("ord.vc_create")}</button>
           </form>
           {msg && <div className="savemsg">{msg}</div>}
-          {list === null ? <p className="hint">Đang tải…</p>
-            : list.length === 0 ? <p className="hint">Chưa có mã nào — tạo mã đầu tiên ở trên.</p>
+          {list === null ? <p className="hint">{t("team.loading")}</p>
+            : list.length === 0 ? <p className="hint">{t("ord.vc_none")}</p>
             : (
               <div className="vc-list">
                 {list.map((v) => (
                   <div key={v.id} className={"vc-row" + (v.active ? "" : " off")}>
                     <b className="vc-code">{v.code}</b>
                     <span>{v.kind === "percent" ? `−${v.value}%` : `−${vnd(v.value)}`}</span>
-                    <span className="hint">{v.min_total ? `đơn ≥ ${vnd(v.min_total)}` : "mọi đơn"}</span>
-                    <span className="hint">dùng {v.used}{v.max_uses ? `/${v.max_uses}` : ""}</span>
-                    <span className="hint">{v.expires_at ? `hạn ${String(v.expires_at).slice(0, 10)}` : "không hạn"}</span>
-                    <button className={"tggl sm" + (v.active ? " on" : "")} title={v.active ? "Đang bật — bấm để tắt" : "Đang tắt — bấm để bật"}
+                    <span className="hint">{v.min_total ? t("ord.vc_min", { v: vnd(v.min_total) }) : t("ord.vc_any")}</span>
+                    <span className="hint">{t("ord.vc_used", { n: `${v.used}${v.max_uses ? `/${v.max_uses}` : ""}` })}</span>
+                    <span className="hint">{v.expires_at ? t("ord.vc_exp", { d: String(v.expires_at).slice(0, 10) }) : t("ord.vc_noexp")}</span>
+                    <button className={"tggl sm" + (v.active ? " on" : "")} title={v.active ? t("ord.vc_on_title") : t("ord.vc_off_title")}
                             onClick={() => toggle(v)} />
-                    <button className="btn-mini danger" onClick={() => del(v)}>Xoá</button>
+                    <button className="btn-mini danger" onClick={() => del(v)}>{t("team.del")}</button>
                   </div>
                 ))}
               </div>
@@ -268,6 +277,7 @@ function VoucherCard() {
 
 /* ── Modal tạo/sửa đơn tay ── */
 function OrderModal({ order, onClose, onSaved }) {
+  const { t } = useI18n();
   const [f, setF] = useState(() => order ? {
     customer_name: order.customer_name, phone: order.phone,
     order_type: order.order_type, total: order.total,
@@ -306,46 +316,46 @@ function OrderModal({ order, onClose, onSaved }) {
     const r = order ? await ordersApi.update(order.id, payload) : await ordersApi.create(payload);
     setBusy(false);
     if (r.ok) onSaved();
-    else alert("❌ " + (r.body?.error || "Lưu thất bại"));
+    else alert("❌ " + (r.body?.error || t("ord.m_save_fail")));
   }
 
   return (
     <div className="modal-bg" onClick={onClose}>
       <form className="modal od-modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
-        <h3>{order ? `Sửa đơn ${order.code}` : "Tạo đơn mới"}</h3>
+        <h3>{order ? t("ord.m_edit", { code: order.code }) : t("ord.m_new")}</h3>
         <div className="od-form-2col">
-          <div><label>Tên khách</label><input value={f.customer_name} onChange={set("customer_name")} /></div>
-          <div><label>SĐT</label><input value={f.phone} onChange={set("phone")} /></div>
+          <div><label>{t("ord.m_name")}</label><input value={f.customer_name} onChange={set("customer_name")} /></div>
+          <div><label>{t("ord.m_phone")}</label><input value={f.phone} onChange={set("phone")} /></div>
         </div>
         <div className="od-form-2col">
           <div>
-            <label>Loại đơn</label>
+            <label>{t("ord.m_type")}</label>
             <select value={f.order_type} onChange={set("order_type")}>
-              <option value="booking">🏠 Đặt phòng / lịch hẹn</option>
-              <option value="goods">📦 Bán hàng (gửi đi)</option>
+              <option value="booking">{t("ord.m_type_booking")}</option>
+              <option value="goods">{t("ord.m_type_goods")}</option>
             </select>
           </div>
           <div>
-            <label>Trạng thái</label>
+            <label>{t("ord.m_status")}</label>
             <select value={f.status} onChange={set("status")}>
-              {Object.entries(ORDER_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              {Object.keys(ORDER_STATUS).map((k) => <option key={k} value={k}>{stLabel(t, k)}</option>)}
             </select>
           </div>
         </div>
-        <label>Mặt hàng / dịch vụ <span className="hint" style={{ fontWeight: 400 }}>(mỗi dòng: Tên x2 = 500000)</span></label>
+        <label>{t("ord.m_items")} <span className="hint" style={{ fontWeight: 400 }}>{t("ord.m_items_hint")}</span></label>
         <textarea rows={3} value={f.itemsText} onChange={set("itemsText")}
-                  placeholder={"Phòng 301 ca qua đêm x1 = 380000\nVáy hoa nhí size M x2 = 500000"} />
+                  placeholder={t("ord.m_items_ph")} />
         <div className="od-form-2col">
-          <div><label>Tổng tiền (VND)</label><input value={f.total} onChange={set("total")} /></div>
-          <div><label>Hạn (checkin / gửi hàng)</label>
+          <div><label>{t("ord.m_total")}</label><input value={f.total} onChange={set("total")} /></div>
+          <div><label>{t("ord.m_due")}</label>
             <input type="datetime-local" value={f.due_at} onChange={set("due_at")} /></div>
         </div>
-        <label>Ghi chú</label>
-        <input value={f.note} onChange={set("note")} placeholder="Ca chiều · khách xin checkin sớm…" />
+        <label>{t("ord.m_note")}</label>
+        <input value={f.note} onChange={set("note")} placeholder={t("ord.m_note_ph")} />
         {order && <VoucherApply order={order} onApplied={onSaved} />}
         <div className="modal-actions">
-          <button type="button" className="btn-ghost" onClick={onClose}>Huỷ</button>
-          <button type="submit" className="btn-primary sm" disabled={busy}>{busy ? "Đang lưu…" : "💾 Lưu đơn"}</button>
+          <button type="button" className="btn-ghost" onClick={onClose}>{t("ord.cancel")}</button>
+          <button type="submit" className="btn-primary sm" disabled={busy}>{busy ? t("ord.m_saving") : t("ord.m_save")}</button>
         </div>
       </form>
     </div>
@@ -354,13 +364,14 @@ function OrderModal({ order, onClose, onSaved }) {
 
 /* ── Áp mã giảm giá vào đơn (trong modal sửa đơn) ── */
 function VoucherApply({ order, onApplied }) {
+  const { t } = useI18n();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   if (order.voucher_code) {
     return <p className="hint" style={{ marginTop: 8 }}>
-      🎟️ Đơn đã áp mã <b>{order.voucher_code}</b> (giảm {vnd(order.discount)}).</p>;
+      {t("ord.va_applied_1")}<b>{order.voucher_code}</b>{t("ord.va_applied_2", { v: vnd(order.discount) })}</p>;
   }
   if (!["draft", "awaiting_payment"].includes(order.status)) return null;
 
@@ -369,18 +380,18 @@ function VoucherApply({ order, onApplied }) {
     setBusy(true); setMsg("");
     const r = await loyaltyApi.applyToOrder(order.id, code.trim());
     setBusy(false);
-    if (r.ok && r.body?.ok) { setMsg("✅ Đã áp mã — tổng tiền mới " + vnd(r.body.order.total)); onApplied(); }
-    else setMsg("❌ " + (r.body?.error || "Áp mã thất bại"));
+    if (r.ok && r.body?.ok) { setMsg(t("ord.va_ok", { v: vnd(r.body.order.total) })); onApplied(); }
+    else setMsg("❌ " + (r.body?.error || t("ord.va_fail")));
   }
 
   return (
     <div style={{ marginTop: 8 }}>
-      <label>🎟️ Mã giảm giá</label>
+      <label>{t("ord.vc_title")}</label>
       <div style={{ display: "flex", gap: 6 }}>
-        <input style={{ flex: 1 }} placeholder="VD: GIAM50K" value={code}
+        <input style={{ flex: 1 }} placeholder={t("ord.va_ph")} value={code}
                onChange={(e) => setCode(e.target.value.toUpperCase())} />
         <button type="button" className="btn-mini" onClick={apply} disabled={busy || !code.trim()}>
-          {busy ? "…" : "Áp mã"}
+          {busy ? "…" : t("ord.va_btn")}
         </button>
       </div>
       {msg && <div className="savemsg" style={{ marginTop: 4 }}>{msg}</div>}

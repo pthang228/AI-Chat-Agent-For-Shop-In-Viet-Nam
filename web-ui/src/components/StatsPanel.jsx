@@ -1,21 +1,22 @@
 import { useEffect, useState } from "react";
 import { fetchStats, periodDates } from "../statsApi.js";
+import { useI18n } from "../i18n.jsx";
 
 const PERIODS = [
-  { key: "today", label: "Hôm nay" },
-  { key: "7d",    label: "7 ngày"  },
-  { key: "30d",   label: "30 ngày" },
-  { key: "month", label: "Tháng"   },
-  { key: "year",  label: "Năm"     },
-  { key: "all",   label: "Tất cả"  },
+  { key: "today", labelKey: "period.today" },
+  { key: "7d",    labelKey: "period.7d"    },
+  { key: "30d",   labelKey: "period.30d"   },
+  { key: "month", labelKey: "period.month" },
+  { key: "year",  labelKey: "period.year"  },
+  { key: "all",   labelKey: "period.all"   },
 ];
 
-const STAGE_LABEL = {
-  greeting:       "Chào hỏi",
-  checking:       "Kiểm tra lịch",
-  offering:       "Đề xuất phòng",
-  confirmed:      "Đã đặt",
-  owner_notified: "Chờ chủ",
+const STAGE_KEY = {
+  greeting:       "stage.greeting",
+  checking:       "stage.checking",
+  offering:       "stage.offering",
+  confirmed:      "stage.confirmed",
+  owner_notified: "stage.owner_notified",
 };
 const STAGE_COLOR = {
   greeting:       "#9aa39b",
@@ -50,6 +51,7 @@ function localFmt(d) {
 }
 
 function BarChart({ timeline, period }) {
+  const { t } = useI18n();
   const { from, to } = periodDates(period);
   const todayLocal = localFmt(new Date());
 
@@ -107,7 +109,7 @@ function BarChart({ timeline, period }) {
             ? Math.max(Math.round((d.conv / maxConv) * CHART_H), 4)
             : 0;
           return (
-            <div key={d.date} className="bc-col" title={`${d.date}: ${d.conv} hội thoại`}>
+            <div key={d.date} className="bc-col" title={t("stats.conv_tooltip", { date: d.date, n: d.conv })}>
               {barH > 0 && (
                 <div className="bc-bar" style={{
                   height: barH + "px",
@@ -131,6 +133,7 @@ function BarChart({ timeline, period }) {
 }
 
 function StageBar({ byStage }) {
+  const { t } = useI18n();
   const total = Object.values(byStage).reduce((a, b) => a + b, 0);
   if (total === 0) return null;
   const entries = Object.entries(byStage).sort((a, b) => b[1] - a[1]);
@@ -139,7 +142,7 @@ function StageBar({ byStage }) {
       <div className="stage-bar-track">
         {entries.map(([st, cnt]) => (
           <div key={st} className="stage-bar-seg"
-               title={`${STAGE_LABEL[st] || st}: ${cnt}`}
+               title={`${STAGE_KEY[st] ? t(STAGE_KEY[st]) : st}: ${cnt}`}
                style={{ width: `${(cnt / total) * 100}%`, background: STAGE_COLOR[st] || "#ccc" }} />
         ))}
       </div>
@@ -147,7 +150,7 @@ function StageBar({ byStage }) {
         {entries.map(([st, cnt]) => (
           <span key={st} className="stage-leg-item">
             <span className="stage-dot" style={{ background: STAGE_COLOR[st] || "#ccc" }} />
-            {STAGE_LABEL[st] || st} <b>{cnt}</b>
+            {STAGE_KEY[st] ? t(STAGE_KEY[st]) : st} <b>{cnt}</b>
           </span>
         ))}
       </div>
@@ -176,6 +179,7 @@ function ChannelBar({ byChannel }) {
 }
 
 export default function StatsPanel({ channel = "all", onClose }) {
+  const { t } = useI18n();
   const [period, setPeriod] = useState("30d");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -198,10 +202,10 @@ export default function StatsPanel({ channel = "all", onClose }) {
       <div className="sp-header">
         <div className="sp-header-left">
           <span className="sp-header-icon">📊</span>
-          <span className="sp-header-title">Thống kê hoạt động</span>
+          <span className="sp-header-title">{t("stats.title")}</span>
         </div>
         {onClose && (
-          <button className="sp-close" onClick={onClose} title="Đóng">✕</button>
+          <button className="sp-close" onClick={onClose} title={t("stats.close")}>✕</button>
         )}
       </div>
 
@@ -211,7 +215,7 @@ export default function StatsPanel({ channel = "all", onClose }) {
           <button key={p.key}
                   className={"period-btn" + (period === p.key ? " active" : "")}
                   onClick={() => setPeriod(p.key)}>
-            {p.label}
+            {t(p.labelKey)}
           </button>
         ))}
       </div>
@@ -219,22 +223,22 @@ export default function StatsPanel({ channel = "all", onClose }) {
       {loading ? (
         <div className="stats-loading">
           <div className="stats-spinner" />
-          Đang tải…
+          {t("stats.loading")}
         </div>
       ) : !data ? (
         <p className="hint" style={{ textAlign: "center", padding: "24px 12px" }}>
-          ⚠️ Không tải được thống kê — kiểm tra server đang chạy không.
+          {t("stats.load_fail")}
         </p>
       ) : (
         <div className="sp-body">
           {/* Stat cards */}
           <div className="sc-row">
-            <StatCard icon="💬" label="Hội thoại"     value={data.total_conv} accent="var(--green)" />
-            <StatCard icon="📨" label="Tin nhắn"       value={data.user_msg}
+            <StatCard icon="💬" label={t("nav.chat")}     value={data.total_conv} accent="var(--green)" />
+            <StatCard icon="📨" label={t("chart.messages")}       value={data.user_msg}
               sub={`Bot: ${data.bot_msg}`} accent="#229ed9" />
-            <StatCard icon="✅" label="Đặt phòng"     value={data.confirmed}
-              sub={data.total_conv > 0 ? `${rate}% tỷ lệ` : "—"} accent="var(--ok)" />
-            <StatCard icon="⏳" label="Chờ xử lý"    value={data.by_stage?.owner_notified ?? 0}
+            <StatCard icon="✅" label={t("stats.booked")}     value={data.confirmed}
+              sub={data.total_conv > 0 ? t("stats.rate_sub", { n: rate }) : "—"} accent="var(--ok)" />
+            <StatCard icon="⏳" label={t("stats.pending")}    value={data.by_stage?.owner_notified ?? 0}
               accent="var(--gold)" />
           </div>
 
@@ -242,7 +246,7 @@ export default function StatsPanel({ channel = "all", onClose }) {
           {data.total_conv > 0 && (
             <div className="sc-section">
               <div className="sc-section-title">
-                {period === "year" ? "Hội thoại theo tháng" : "Hội thoại theo ngày"}
+                {period === "year" ? t("stats.conv_by_month") : t("stats.conv_by_day")}
               </div>
               <BarChart timeline={data.timeline || []} period={period} />
             </div>
@@ -251,7 +255,7 @@ export default function StatsPanel({ channel = "all", onClose }) {
           {/* Stage breakdown */}
           {data.by_stage && Object.keys(data.by_stage).length > 0 && (
             <div className="sc-section">
-              <div className="sc-section-title">Giai đoạn tư vấn</div>
+              <div className="sc-section-title">{t("stats.stages")}</div>
               <StageBar byStage={data.by_stage} />
             </div>
           )}
@@ -259,14 +263,14 @@ export default function StatsPanel({ channel = "all", onClose }) {
           {/* Channel breakdown — chỉ hiện khi có dữ liệu */}
           {data.by_channel && Object.values(data.by_channel).some((v) => v > 0) && (
             <div className="sc-section">
-              <div className="sc-section-title">Theo kênh</div>
+              <div className="sc-section-title">{t("stats.by_channel")}</div>
               <ChannelBar byChannel={data.by_channel} />
             </div>
           )}
 
           {data.total_conv === 0 && (
             <p className="hint" style={{ textAlign: "center", padding: "16px 0" }}>
-              Chưa có dữ liệu trong khoảng thời gian này.
+              {t("stats.empty")}
             </p>
           )}
         </div>

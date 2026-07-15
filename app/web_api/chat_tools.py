@@ -159,6 +159,29 @@ def register_chat_tools(app, prefix: str, conv_manager, channel, account: str,
         conv_manager.save()
         return {"ok": True}
 
+    @app.route(f"{pf}/conversations/<user_id>/save-style", methods=["POST"],
+               endpoint=f"ct_save_style_{account}")
+    def save_style(user_id):
+        """⭐ LƯU LÀM MẪU: chủ thấy đoạn tư vấn đẹp → AI bóc thành mẫu hội thoại
+        (style RAG, số liệu đã thay placeholder) lưu THẲNG vào kho style của shop
+        (chủ bấm nút = đã duyệt). Đồng bộ chờ AI ~5-20s — UI hiện spinner."""
+        conv = conv_manager._sessions.get(user_id)
+        if not conv or not conv.messages:
+            return {"ok": False, "error": "Hội thoại trống — chưa có gì để lưu"}, 400
+        from app.core import knowledge_learn
+        from app.core import tenant as _tenant
+        shop = _tenant.shop_key(getattr(conv, "tenant", "") or None)
+        try:
+            chunk = knowledge_learn.extract_style_from_messages(
+                list(conv.messages), shop=shop, save=True)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        if not chunk:
+            return {"ok": False, "error":
+                    "AI không bóc được tình huống đáng học từ đoạn chat này"}, 422
+        log.info(f"[save-style] {account} {user_id} → mẫu {chunk['title']!r} (shop={shop})")
+        return {"ok": True, "chunk": chunk}
+
     @app.route(f"{pf}/conversations/<user_id>/make-order", methods=["POST"],
                endpoint=f"ct_make_order_{account}")
     def make_order(user_id):

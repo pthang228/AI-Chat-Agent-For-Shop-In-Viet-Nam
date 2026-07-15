@@ -1,14 +1,16 @@
 import { useState } from "react";
+import { useI18n } from "../i18n.jsx";
 
 // Hộp hướng dẫn gấp/mở dùng chung cho mỗi kênh (Connect tab).
 // <GuideBox title="..." steps={[{t:'Tiêu đề', d:<>mô tả</>}]} note={<>...</>} />
-export default function GuideBox({ title = "📘 Hướng dẫn nhanh", steps = [], note = null, defaultOpen = true }) {
+export default function GuideBox({ title = null, steps = [], note = null, defaultOpen = true }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="guidebox">
       <button className="guidebox-head" onClick={() => setOpen((o) => !o)}>
-        <span>{title}</span>
-        <span className="guidebox-toggle">{open ? "Thu gọn ▲" : "Xem ▼"}</span>
+        <span>{title ?? t("guide.title")}</span>
+        <span className="guidebox-toggle">{open ? t("guide.collapse") : t("guide.view")}</span>
       </button>
       {open && (
         <div className="guidebox-body">

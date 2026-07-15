@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { currentUser } from "../auth.js";
+import { useI18n } from "../i18n.jsx";
 import AppsGrid from "./AppsGrid.jsx";
 import BotTester from "./BotTester.jsx";
 import PhotoLibrary from "./PhotoLibrary.jsx";
@@ -26,6 +27,7 @@ function loadData() {
 function saveData(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
 
 function QuickAdd({ placeholder, onAdd, onCancel }) {
+  const { t } = useI18n();
   const [val, setVal] = useState("");
   function submit(e) {
     e.preventDefault();
@@ -37,13 +39,14 @@ function QuickAdd({ placeholder, onAdd, onCancel }) {
       <input autoFocus value={val} placeholder={placeholder}
              onChange={(e) => setVal(e.target.value)}
              onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
-      <button type="submit" className="btn-primary sm">Thêm</button>
-      <button type="button" className="btn-ghost sm" onClick={onCancel}>Huỷ</button>
+      <button type="submit" className="btn-primary sm">{t("cb.add")}</button>
+      <button type="button" className="btn-ghost sm" onClick={onCancel}>{t("cb.cancel")}</button>
     </form>
   );
 }
 
 export default function ChatbotSection() {
+  const { t } = useI18n();
   const nav = useNavigate();
   const user = currentUser();
   const [data, setData] = useState(loadData);
@@ -55,7 +58,7 @@ export default function ChatbotSection() {
   // Seed 1 shop mặc định lần đầu (tên từ tài khoản); nhớ shop đang chọn qua phiên
   useEffect(() => {
     if (data.shops.length === 0) {
-      const name = user?.homestay || user?.username || "Shop của tôi";
+      const name = user?.homestay || user?.username || t("cb.my_shop");
       const seed = { shops: [{ id: uid(), name }] };
       setData(seed); saveData(seed); setActiveShop(seed.shops[0].id);
     } else if (!activeShop) {
@@ -77,13 +80,13 @@ export default function ChatbotSection() {
   }
   function renameShop(id) {
     const cur = data.shops.find((s) => s.id === id);
-    const name = prompt("Tên shop:", cur?.name || "");
+    const name = prompt(t("cb.rename_prompt"), cur?.name || "");
     if (name && name.trim())
       commit({ shops: data.shops.map((s) => s.id === id ? { ...s, name: name.trim() } : s) });
   }
   function removeShop(id) {
-    if (data.shops.length <= 1) { alert("Cần giữ lại ít nhất 1 shop."); return; }
-    if (!confirm("Xoá shop này?")) return;
+    if (data.shops.length <= 1) { alert(t("cb.keep_one")); return; }
+    if (!confirm(t("cb.del_confirm"))) return;
     const shops = data.shops.filter((s) => s.id !== id);
     commit({ shops });
     if (activeShop === id) setActiveShop(shops[0]?.id || null);
@@ -104,12 +107,12 @@ export default function ChatbotSection() {
           </button>
         ))}
         {addingShop
-          ? <QuickAdd placeholder="Tên shop mới…" onAdd={addShop} onCancel={() => setAddingShop(false)} />
-          : <button className="cb-add-shop" onClick={() => setAddingShop(true)}>＋ Thêm shop</button>}
+          ? <QuickAdd placeholder={t("cb.new_shop_ph")} onAdd={addShop} onCancel={() => setAddingShop(false)} />
+          : <button className="cb-add-shop" onClick={() => setAddingShop(true)}>{t("cb.add_shop")}</button>}
       </div>
 
       {!shop ? (
-        <div className="empty"><p>Chưa có shop nào. Thêm shop để bắt đầu.</p></div>
+        <div className="empty"><p>{t("cb.no_shops")}</p></div>
       ) : (
         <>
           {/* ── Đầu shop: tên + Dạy AI cấp shop ── */}
@@ -118,29 +121,29 @@ export default function ChatbotSection() {
               <h3>{shop.name}</h3>
               <span className="page-sub">
                 {chStat.total != null
-                  ? `${chStat.total} con AI (kênh)${chStat.on != null ? ` · ${chStat.on} đang bật` : ""}`
-                  : "Các con AI (kênh) của shop này"}
+                  ? t("cb.ai_count", { n: chStat.total }) + (chStat.on != null ? t("cb.ai_on", { n: chStat.on }) : "")
+                  : t("cb.ai_sub")}
               </span>
             </div>
             <div className="cb-shop-actions">
               <button className="cb-teach" onClick={() => nav("/prompt")}
-                      title="Dạy AI — bộ não dùng chung cho cả shop">
-                🧠 Dạy AI cho shop
+                      title={t("cb.teach_title")}>
+                {t("cb.teach")}
               </button>
               <button className={"btn-outline sm" + (showTester ? " active" : "")}
                       style={{ width: "auto" }}
                       onClick={() => setShowTester((v) => !v)}
-                      title="Chat thử với bot — không gửi tới khách">
-                🧪 Test bot
+                      title={t("cb.test_title")}>
+                {t("cb.test")}
               </button>
-              <button className="btn-ghost sm" onClick={() => renameShop(shop.id)}>Đổi tên</button>
-              <button className="btn-mini danger" onClick={() => removeShop(shop.id)}>Xoá shop</button>
+              <button className="btn-ghost sm" onClick={() => renameShop(shop.id)}>{t("cb.rename")}</button>
+              <button className="btn-mini danger" onClick={() => removeShop(shop.id)}>{t("cb.del_shop")}</button>
             </div>
           </div>
 
           <p className="cb-hint">
-            Mỗi kênh bên dưới là một <b>“con AI”</b> của shop. Tất cả dùng chung một bộ não bạn
-            dạy ở nút <b>“Dạy AI cho shop”</b> — bấm <b>“🧪 Test bot”</b> để chat thử trước khi khách gặp.
+            {t("cb.hint1")}<b>{t("cb.hint_b1")}</b>{t("cb.hint2")}<b>{t("cb.hint_b2")}</b>
+            {t("cb.hint3")}<b>{t("cb.hint_b3")}</b>{t("cb.hint4")}
           </p>
 
           {showTester && <BotTester onClose={() => setShowTester(false)} />}

@@ -12,7 +12,8 @@ import { zalooa } from "../zaloOaApi.js";
 import { webchat } from "../webchatApi.js";
 import ChatSend from "./ChatSend.jsx";
 import { ChannelTile } from "./ChannelIcon.jsx";
-import { sendMedia, makeOrder, assignConv, canned as cannedApi } from "../chatToolsApi.js";
+import { sendMedia, makeOrder, assignConv, saveStyle, canned as cannedApi } from "../chatToolsApi.js";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * Hộp thư hợp nhất (như AloChat): gộp hội thoại từ CẢ 4 kênh về 1 chỗ, mỗi
@@ -53,10 +54,11 @@ function avatarSrc(c, ch) {
 
 // Ảnh đại diện THẬT của khách (kênh cung cấp); không có/lỗi tải → chữ cái đầu như cũ
 function Avatar({ c, ch, color }) {
+  const { t } = useI18n();
   const src = avatarSrc(c, ch);
   return (
     <div className="inbox-av" style={{ background: color }}>
-      {initials(displayName(c))}
+      {initials(displayName(c, t))}
       {src && <img src={src} alt="" loading="lazy"
                    onError={(e) => { e.currentTarget.style.display = "none"; }} />}
     </div>
@@ -65,21 +67,22 @@ function Avatar({ c, ch, color }) {
 
 function botKey(ch) { return (ch === "messenger" || ch === "instagram") ? "meta" : ch; }
 function initials(s) { return (s || "?").trim().slice(0, 1).toUpperCase(); }
-function displayName(c) {
-  return c.name ? c.name : `Khách …${String(c.user_id || "").slice(-6)}`;
+function displayName(c, t) {
+  return c.name ? c.name : t("inbox.guest", { id: String(c.user_id || "").slice(-6) });
 }
-function relTime(iso) {
+function relTime(iso, t) {
   if (!iso) return "";
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return "vừa xong";
-  if (diff < 3600) return `${Math.floor(diff / 60)} phút`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ`;
-  return `${Math.floor(diff / 86400)} ngày`;
+  if (diff < 60) return t("inbox.time.now");
+  if (diff < 3600) return t("inbox.time.min", { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t("inbox.time.hr", { n: Math.floor(diff / 3600) });
+  return t("inbox.time.day", { n: Math.floor(diff / 86400) });
 }
 
 export default function InboxSection() {
+  const { t } = useI18n();
   const user = currentUser();
-  const shopName = user?.homestay || user?.username || "Shop của tôi";
+  const shopName = user?.homestay || user?.username || t("inbox.my_shop");
 
   const [convs, setConvs] = useState(null);     // null = đang tải
   const [appMap, setAppMap] = useState({});     // kênh → tên app
@@ -91,6 +94,7 @@ export default function InboxSection() {
   const [detail, setDetail] = useState(null);
   const [canned, setCanned] = useState([]);
   const [orderMsg, setOrderMsg] = useState("");
+  const [styleBusy, setStyleBusy] = useState(false);
   const timer = useRef(null);
 
   // Câu trả lời mẫu (kho chung ở bridge 5005)
@@ -159,7 +163,7 @@ export default function InboxSection() {
     openChat(sel.ch, detail.user_id); loadAll();
   }
   async function onReset() {
-    if (!sel || !confirm("Xoá toàn bộ hội thoại của khách này?")) return;
+    if (!sel || !confirm(t("inbox.reset_confirm"))) return;
     await API[sel.ch].reset(sel.user_id);
     setSel(null); setDetail(null); loadAll();
   }
@@ -177,11 +181,12 @@ export default function InboxSection() {
     if (assignFilter === "none") list = list.filter((c) => !c.assigned_to);
     const s = q.trim().toLowerCase();
     if (s) list = list.filter((c) =>
-      (displayName(c).toLowerCase().includes(s)) || (c.last_msg || "").toLowerCase().includes(s));
+      (displayName(c, t).toLowerCase().includes(s)) || (c.last_msg || "").toLowerCase().includes(s));
     return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convs, filter, assignFilter, q, user?.username]);
 
-  const TABS = [["all", "Tất cả"], ...Object.entries(CH).map(([k, v]) => [k, v.label])];
+  const TABS = [["all", t("inbox.all")], ...Object.entries(CH).map(([k, v]) => [k, v.label])];
 
   return (
     <div className="inbox">
@@ -197,11 +202,11 @@ export default function InboxSection() {
             </button>
           ))}
         </div>
-        <input className="inbox-search" placeholder="🔍 Tìm khách hàng, tin nhắn…"
+        <input className="inbox-search" placeholder={t("inbox.search_ph")}
                value={q} onChange={(e) => setQ(e.target.value)} />
         {mates.length > 1 && (
           <div className="inbox-assign-bar">
-            {[["all", "Tất cả"], ["mine", "👤 Của tôi"], ["none", "Chưa phân công"]].map(([k, label]) => (
+            {[["all", t("inbox.all")], ["mine", t("inbox.mine")], ["none", t("inbox.unassigned")]].map(([k, label]) => (
               <button key={k}
                       className={"inbox-tab" + (assignFilter === k ? " active" : "")}
                       onClick={() => setAssignFilter(k)}>{label}</button>
@@ -210,11 +215,11 @@ export default function InboxSection() {
         )}
 
         <div className="inbox-rows">
-          {convs === null && <p className="hint inbox-empty">Đang tải hội thoại…</p>}
+          {convs === null && <p className="hint inbox-empty">{t("inbox.loading")}</p>}
           {convs && shown.length === 0 && (
             <div className="inbox-empty">
               <div style={{ fontSize: 34 }}>💬</div>
-              <p className="hint">Chưa có hội thoại{filter !== "all" ? ` ở ${CH[filter].label}` : ""}.</p>
+              <p className="hint">{filter !== "all" ? t("inbox.empty_ch", { ch: CH[filter].label }) : t("inbox.empty")}</p>
             </div>
           )}
           {shown.map((c) => {
@@ -227,8 +232,8 @@ export default function InboxSection() {
                 <Avatar c={c} ch={c._ch} color={ch.color} />
                 <div className="inbox-row-main">
                   <div className="inbox-row-l1">
-                    <strong>{displayName(c)}</strong>
-                    <span className="inbox-time">{relTime(c.last_updated)}</span>
+                    <strong>{displayName(c, t)}</strong>
+                    <span className="inbox-time">{relTime(c.last_updated, t)}</span>
                   </div>
                   <div className="inbox-row-tags">
                     <span className="ch-chip" style={{ "--c": ch.color }}>
@@ -240,8 +245,8 @@ export default function InboxSection() {
                   {c.last_msg && <div className="inbox-preview">{c.last_msg}</div>}
                   <div className="inbox-row-badges">
                     {c.owner_active
-                      ? <span className="badge owner">⛔ Chủ</span>
-                      : <span className="badge bot">🤖 Bot</span>}
+                      ? <span className="badge owner">{t("inbox.badge_owner")}</span>
+                      : <span className="badge bot">{t("inbox.badge_bot")}</span>}
                     {c.stage && <span className="badge stage">{c.stage}</span>}
                     {c.assigned_to && <span className="badge assignee">👤 {mateName(c.assigned_to)}</span>}
                   </div>
@@ -257,15 +262,15 @@ export default function InboxSection() {
         {!sel || !detail ? (
           <div className="inbox-detail-empty">
             <div style={{ fontSize: 46, opacity: .4 }}>💬</div>
-            <h3>Chọn một hội thoại</h3>
-            <p className="hint">Hội thoại từ mọi kênh (Zalo · Zalo OA · Mess+IG · Telegram · TikTok · Shopee) gộp về đây.</p>
+            <h3>{t("inbox.pick_title")}</h3>
+            <p className="hint">{t("inbox.pick_desc")}</p>
           </div>
         ) : (
           <>
             <div className="inbox-chat-top">
               <Avatar c={detail} ch={detail._ch} color={CH[detail._ch].color} />
               <div className="inbox-chat-who">
-                <strong>{displayName(detail)}</strong>
+                <strong>{displayName(detail, t)}</strong>
                 <div className="inbox-chat-sub">
                   <span className="ch-chip" style={{ "--c": CH[detail._ch].color }}>
                     <ChannelTile ch={detail._ch} size={13} /> {CH[detail._ch].label}
@@ -276,33 +281,49 @@ export default function InboxSection() {
               </div>
               <div className="inbox-chat-actions">
                 {detail.owner_active
-                  ? <span className="badge owner">⛔ Chủ đang xử lý</span>
-                  : <span className="badge bot">🤖 Bot đang trả lời</span>}
+                  ? <span className="badge owner">{t("inbox.owner_handling")}</span>
+                  : <span className="badge bot">{t("inbox.bot_replying")}</span>}
                 {mates.length > 1 && (
-                  <select className="inbox-assign-sel" title="Phân công hội thoại cho nhân viên"
+                  <select className="inbox-assign-sel" title={t("inbox.assign_title")}
                           value={detail.assigned_to || ""}
                           onChange={async (e) => {
                             const r = await assignConv(sel.ch, detail.user_id, e.target.value);
                             if (r.ok) { openChat(sel.ch, detail.user_id); loadAll(); }
                           }}>
-                    <option value="">— Chưa phân công —</option>
+                    <option value="">{t("inbox.unassigned_opt")}</option>
                     {mates.map((m) => (
                       <option key={m.username} value={m.username}>
-                        👤 {m.name || m.username}{m.role === "owner" ? " (chủ)" : ""}
+                        👤 {m.name || m.username}{m.role === "owner" ? t("inbox.owner_suffix") : ""}
                       </option>
                     ))}
                   </select>
                 )}
                 <button className="btn-mini" onClick={onToggle}>
-                  {detail.owner_active ? "▶ Bật bot" : "⏸ Tắt bot"}
+                  {detail.owner_active ? t("inbox.bot_on") : t("inbox.bot_off")}
                 </button>
                 {user?.role !== "staff" && (
-                  <button className="btn-mini danger" onClick={onReset}>Xoá</button>
+                  <button className="btn-mini" disabled={styleBusy}
+                          title={t("inbox.style_hint")}
+                          onClick={async () => {
+                            setOrderMsg(""); setStyleBusy(true);
+                            const r = await saveStyle(sel.ch, detail.user_id);
+                            setStyleBusy(false);
+                            if (r.ok && r.body?.ok) {
+                              setOrderMsg(t("inbox.style_ok", { title: r.body.chunk?.title || "" }));
+                            } else {
+                              setOrderMsg("❌ " + (r.body?.error || t("inbox.style_fail")));
+                            }
+                          }}>
+                    {styleBusy ? t("inbox.style_busy") : t("inbox.style_btn")}
+                  </button>
+                )}
+                {user?.role !== "staff" && (
+                  <button className="btn-mini danger" onClick={onReset}>{t("team.del")}</button>
                 )}
               </div>
             </div>
             <div className="bubbles inbox-bubbles">
-              {(detail.messages || []).length === 0 && <p className="hint">Chưa có tin nhắn.</p>}
+              {(detail.messages || []).length === 0 && <p className="hint">{t("inbox.no_msgs")}</p>}
               {(detail.messages || []).map((m, i) => (
                 <div key={i} className={"bubble " + (m.role === "assistant" ? "b-bot" : "b-user")}>{m.content}</div>
               ))}
@@ -324,10 +345,10 @@ export default function InboxSection() {
                 setOrderMsg("");
                 const r = await makeOrder(sel.ch, detail.user_id);
                 if (r.ok && r.body?.ok) {
-                  setOrderMsg(`✅ Đã tạo đơn nháp ${r.body.order.code} — mở mục Đơn hàng để duyệt.`);
+                  setOrderMsg(t("inbox.order_ok", { code: r.body.order.code }));
                   return true;
                 }
-                setOrderMsg("❌ " + (r.body?.error || "Không tạo được đơn"));
+                setOrderMsg("❌ " + (r.body?.error || t("inbox.order_fail")));
                 return false;
               }}
               canned={canned}

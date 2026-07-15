@@ -552,6 +552,16 @@ const DICT = {
   },
 };
 
+// Fragment dict theo khu vực (src/i18n/*.js, mỗi file export default {vi,en,ko,zh,ja})
+// — gộp vào DICT lúc load để các nhóm màn hình dịch độc lập, không phình file này.
+const FRAGS = import.meta.glob("./i18n/*.js", { eager: true });
+for (const mod of Object.values(FRAGS)) {
+  const frag = (mod && mod.default) || {};
+  for (const [lang, kv] of Object.entries(frag)) {
+    DICT[lang] = Object.assign(DICT[lang] || {}, kv);
+  }
+}
+
 // Danh sách ngôn ngữ cho UI chọn (Cài đặt) — thêm ngôn ngữ mới: thêm dict ở trên + 1 dòng ở đây
 export const LANGS = [
   { code: "vi", label: "🇻🇳 Tiếng Việt" },

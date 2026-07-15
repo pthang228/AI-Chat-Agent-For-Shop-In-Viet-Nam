@@ -24,6 +24,7 @@ import WebChatConversations from "../components/WebChatConversations.jsx";
 import { IcHome, IcBack, IcLogout, IcSpark } from "../components/icons.jsx";
 import StatsPanel from "../components/StatsPanel.jsx";
 import BackLink from "../components/BackLink.jsx";
+import { useI18n } from "../i18n.jsx";
 
 const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", tiktok: "TikTok", shopee: "Shopee", zalooa: "Zalo OA", webchat: "Website" };
 const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", tiktok: "tiktok", shopee: "shopee", zalooa: "zalooa", webchat: "webchat" };
@@ -35,6 +36,7 @@ function initials(name) {
 }
 
 export default function AppDetail() {
+  const { t } = useI18n();
   const { id } = useParams();
   const nav = useNavigate();
   const [tab, setTab] = useState("connect");
@@ -53,7 +55,7 @@ export default function AppDetail() {
     return (
       <div className="dash">
         <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> NovaChat</div></header>
-        <main className="content"><p>Đang tải…</p></main>
+        <main className="content"><p>{t("app.loading")}</p></main>
       </div>
     );
   }
@@ -61,7 +63,7 @@ export default function AppDetail() {
     return (
       <div className="dash">
         <header className="topbar"><div className="brand"><span className="brand-mini"><IcHome width={20} height={20} /></span> NovaChat</div></header>
-        <main className="content"><p>Không tìm thấy app (hoặc máy chủ 5005 chưa chạy). <Link to="/">← Về danh sách</Link></p></main>
+        <main className="content"><p>{t("app.not_found")} <Link to="/">{t("app.back_list")}</Link></p></main>
       </div>
     );
   }
@@ -95,13 +97,13 @@ export default function AppDetail() {
           <Link to="/"><span className="brand-mini"><IcBack width={18} height={18} /></span> <span className="brand-mini" style={{ marginLeft: -4 }}><IcHome width={18} height={18} /></span> NovaChat</Link>
         </div>
         <div className="user">
-          <Link to="/settings" className="user-pill" title="Cài đặt tài khoản"><span className="avatar">{initials(hostName)}</span>{hostName}</Link>
-          <button className="btn-ghost" onClick={async () => { if (confirm("Đăng xuất sẽ TẮT bot trên mọi kênh. Tiếp tục?")) { await logoutAndStopBots(); nav("/login"); } }}><IcLogout width={15} height={15} /> Đăng xuất</button>
+          <Link to="/settings" className="user-pill" title={t("app.account_settings")}><span className="avatar">{initials(hostName)}</span>{hostName}</Link>
+          <button className="btn-ghost" onClick={async () => { if (confirm(t("app.logout_confirm"))) { await logoutAndStopBots(); nav("/login"); } }}><IcLogout width={15} height={15} /> {t("logout")}</button>
         </div>
       </header>
 
       <main className="content narrow">
-        <BackLink to="/?s=chatbot" label="Về danh sách app" />
+        <BackLink to="/?s=chatbot" label={t("app.back_apps")} />
         <div className="detail-bar">
           <div className="detail-titles">
             <h2 className="detail-title">{app.name}</h2>
@@ -113,9 +115,9 @@ export default function AppDetail() {
         <AppModelCard appId={app.id} initial={app.ai_model || ""} />
 
         <div className="tabs">
-          <button className={"tab" + (tab === "connect" ? " active" : "")} onClick={() => setTab("connect")}>Kết nối</button>
-          <button className={"tab" + (tab === "chats" ? " active" : "")} onClick={() => setTab("chats")}>Khách hàng</button>
-          <button className={"tab" + (tab === "stats" ? " active" : "")} onClick={() => setTab("stats")}>Thống kê</button>
+          <button className={"tab" + (tab === "connect" ? " active" : "")} onClick={() => setTab("connect")}>{t("app.tab_connect")}</button>
+          <button className={"tab" + (tab === "chats" ? " active" : "")} onClick={() => setTab("chats")}>{t("nav.customers")}</button>
+          <button className={"tab" + (tab === "stats" ? " active" : "")} onClick={() => setTab("stats")}>{t("nav.stats")}</button>
         </div>
 
         <div className="card-box">
@@ -131,6 +133,7 @@ export default function AppDetail() {
 /* 🧠 Mô hình AI riêng cho bot này (per-app) — rỗng = dùng model chung của shop
    (chọn ở Gói dịch vụ). Catalog + giá lấy từ /billing/me. */
 function AppModelCard({ appId, initial }) {
+  const { t } = useI18n();
   const [models, setModels] = useState(null);   // null=tải | mảng | "offline"
   const [val, setVal] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -146,29 +149,29 @@ function AppModelCard({ appId, initial }) {
 
   // Giá ngắn gọn: "(in 6.500₫ / out 9.500₫ mỗi 1M token)"
   const price = (m) =>
-    `(in ${(m.in_vnd ?? 0).toLocaleString("vi-VN")}₫ / out ${(m.out_vnd ?? 0).toLocaleString("vi-VN")}₫ mỗi 1M token)`;
+    t("app.model_price", { in: (m.in_vnd ?? 0).toLocaleString("vi-VN"), out: (m.out_vnd ?? 0).toLocaleString("vi-VN") });
 
   async function save(next) {
     setVal(next); setMsg(""); setBusy(true);
     const r = await authApi.setAppAiModel(getToken(), appId, next);
     setBusy(false);
-    if (r.ok) setMsg(next ? "✅ Đã lưu — bot này dùng model riêng." : "✅ Đã lưu — bot dùng model chung của shop.");
-    else { setVal(initial); setMsg("❌ " + (r.body?.error || "Lưu thất bại — server 5005 cần restart bản mới?")); }
+    if (r.ok) setMsg(next ? t("app.model_saved_own") : t("app.model_saved_shared"));
+    else { setVal(initial); setMsg("❌ " + (r.body?.error || t("app.model_save_fail"))); }
   }
 
   if (models === "offline") return null;   // chưa kết nối server → không chiếm chỗ
   return (
     <div className="panel set-card" style={{ marginBottom: 14 }}>
-      <h3 style={{ fontSize: 15, marginBottom: 4 }}>🧠 Mô hình AI cho bot này</h3>
+      <h3 style={{ fontSize: 15, marginBottom: 4 }}>{t("app.model_title")}</h3>
       <p className="hint" style={{ marginBottom: 8 }}>
-        Chọn model riêng cho chatbot này — để trống thì dùng model chung của shop (chọn ở Gói dịch vụ).
+        {t("app.model_hint")}
       </p>
       <select value={val} disabled={busy || models === null}
               onChange={(e) => save(e.target.value)} style={{ maxWidth: 460 }}>
-        <option value="">— Dùng model chung của shop —</option>
+        <option value="">{t("app.model_shared_opt")}</option>
         {(Array.isArray(models) ? models : []).map((m) => (
           <option key={m.key} value={m.key} disabled={!m.available}>
-            {m.label} {price(m)}{m.available ? "" : " — chưa có key"}
+            {m.label} {price(m)}{m.available ? "" : " " + t("app.model_no_key")}
           </option>
         ))}
       </select>
@@ -178,6 +181,7 @@ function AppModelCard({ appId, initial }) {
 }
 
 function AiCard({ channel }) {
+  const { t } = useI18n();
   const key = botKey(channel);
   const [enabled, setEnabled] = useState(null);   // null | bool | "offline"
 
@@ -193,10 +197,10 @@ function AiCard({ channel }) {
     setEnabled(r.ok && r.body ? !!r.body.enabled : "offline");
   }
 
-  const label = enabled === "offline" ? "Offline" : enabled === null ? "…" : enabled ? "BẬT" : "TẮT";
+  const label = enabled === "offline" ? "Offline" : enabled === null ? "…" : enabled ? t("app.on") : t("app.off");
   return (
     <div className="ai-card">
-      <IcSpark width={17} height={17} style={{ color: "var(--gold)" }} /> Trợ lý AI
+      <IcSpark width={17} height={17} style={{ color: "var(--gold)" }} /> {t("app.ai_assistant")}
       <button className={"tggl" + (enabled === true ? " on" : "")} disabled={enabled === "offline" || enabled === null} onClick={toggle} />
       <span className={"state" + (enabled === true ? "" : " off")}>{label}</span>
     </div>

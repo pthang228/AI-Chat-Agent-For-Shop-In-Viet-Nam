@@ -496,6 +496,19 @@ def generate(links: list, instructions: str, model: str = None, owner: str = Non
     if (extra_context or "").strip():
         shop_data += f"\n===== CẤU HÌNH SHOP (tự động) =====\n{extra_context.strip()}\n"
 
+    # NHẬN DIỆN NGÀNH → checklist ngành đi kèm meta-prompt: AI phủ đủ mục sống còn
+    # của ngành đó, mục thiếu phải khai ở GAPS (spa ≠ quán ăn ≠ homestay).
+    from app.core import industry as _ind
+    ind_key = _ind.detect(shop_data + "\n" + instructions, model_key=model, owner=owner)
+    ind_block = _ind.checklist_block(ind_key)
+    if owner:
+        try:   # lưu ngành theo chủ shop — health check/báo cáo dùng lại
+            from app.core.db import get_db
+            get_db().execute("UPDATE users SET industry=? WHERE username=?", (ind_key, owner))
+        except Exception:
+            pass
+    log.info(f"[PromptBuilder] ngành nhận diện: {ind_key} ({_ind.label(ind_key)})")
+
     # Tham chiếu MẪU CHUẨN generic (không phải não mẫu homestay) → sinh prompt cho spa/salon/
     # quán ăn… không bị "lây" số liệu homestay. Thiếu file mẫu → dùng tạm mặc định.
     ref_prompt = template() or (DEFAULT_FILE.read_text(encoding="utf-8") if DEFAULT_FILE.exists() else "")
@@ -504,6 +517,8 @@ def generate(links: list, instructions: str, model: str = None, owner: str = Non
         "-----------------------------------------------\n"
         f"{ref_prompt[:20000]}\n"
         "-----------------------------------------------\n\n"
+        + ind_block
+        + "\n(Mục nào trong checklist mà dữ liệu shop KHÔNG có → đưa vào ===GAPS===.)\n\n"
         "DỮ LIỆU CỦA SHOP (từ các link):\n"
         + shop_data
         + "\n\nHƯỚNG DẪN CỦA CHỦ SHOP:\n"
@@ -520,13 +535,58 @@ def generate(links: list, instructions: str, model: str = None, owner: str = Non
     if not raw:
         raise RuntimeError("AI trả về rỗng — thử lại")
     draft, chunks, gaps = _parse_hybrid(raw)
+    # KIỂM PHỦ: output dài có thể bị cắt cụt → _loads_json_loose chỉ vớt mẩu
+    # nguyên vẹn, phần đuôi MẤT TRONG IM LẶNG. Chạy 1 lượt AI rẻ so dữ liệu gốc
+    # với danh sách mẩu đã băm → chủ đề thiếu nhét vào gaps (UI đã hiện sẵn).
+    if chunks:
+        gaps = _coverage_gaps(shop_data + "\n\n" + ind_block, instructions, chunks, gaps,
+                              model=model, owner=owner)
     return {
         "draft": draft,
         "chunks": chunks,
         "gaps": gaps,
+        "industry": ind_key,
+        "industry_label": _ind.label(ind_key),
         "mode": "hybrid" if chunks else "legacy",
         "sources": [{"url": r["url"], "ok": r["ok"], "error": r.get("error", "")} for r in results],
     }
+
+
+_COVERAGE_PROMPT = (
+    "Bạn kiểm tra ĐỘ PHỦ của cơ sở tri thức chatbot. Cho (1) DỮ LIỆU GỐC của shop "
+    "và (2) DANH SÁCH TIÊU ĐỀ mẩu đã băm. Liệt kê những CHỦ ĐỀ QUAN TRỌNG với "
+    "khách (dịch vụ, mức giá, chính sách, giờ giấc, địa chỉ...) CÓ trong dữ liệu "
+    "gốc nhưng KHÔNG thấy mẩu nào bao phủ.\n"
+    "Trả về DUY NHẤT một JSON array các chuỗi ngắn gọn (tối đa 6), đủ phủ rồi thì "
+    "trả []. Không giải thích, không markdown."
+)
+
+
+def _coverage_gaps(shop_data: str, instructions: str, chunks: list,
+                   gaps: list, model: str = None, owner: str = None) -> list:
+    """So dữ liệu gốc với mẩu đã băm — chủ đề bị sót (thường do output cắt cụt)
+    thêm vào gaps để shop thấy ngay cạnh preview. Lỗi → giữ gaps cũ, không ném."""
+    try:
+        titles = "\n".join(f"- {c.get('title') or (c.get('content') or '')[:60]}"
+                           for c in chunks)
+        raw = _call_ai_long([
+            {"role": "system", "content": _COVERAGE_PROMPT},
+            {"role": "user", "content":
+                f"DỮ LIỆU GỐC (rút gọn):\n{shop_data[:40_000]}\n\n"
+                f"HƯỚNG DẪN CHỦ SHOP:\n{(instructions or '')[:4_000]}\n\n"
+                f"TIÊU ĐỀ CÁC MẨU ĐÃ BĂM ({len(chunks)} mẩu):\n{titles}"},
+        ], model_key=model, owner=owner)
+        missing = _loads_json_loose(raw)
+        if not isinstance(missing, list):
+            return gaps
+        missing = [f"(Có thể bị sót) {str(m).strip()}" for m in missing if str(m).strip()][:6]
+        if missing:
+            log.warning(f"[PromptBuilder] kiểm phủ phát hiện {len(missing)} chủ đề nghi sót")
+        # gaps gốc trước, cảnh báo sót sau — trần tổng 10 mục cho gọn UI
+        return (gaps + missing)[:10]
+    except Exception as e:
+        log.warning(f"[PromptBuilder] kiểm phủ lỗi (bỏ qua): {e}")
+        return gaps
 
 
 # ── Lưu / khôi phục (MULTI-TENANT: mỗi shop 1 file persona riêng) ────

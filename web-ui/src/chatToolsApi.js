@@ -36,6 +36,17 @@ export async function makeOrder(ch, uid) {
   } catch { return { ok: false, status: 0, body: null }; }
 }
 
+// ⭐ Lưu làm mẫu: AI bóc đoạn chat đẹp thành mẫu hội thoại (style RAG)
+export async function saveStyle(ch, uid) {
+  try {
+    const r = await fetch(url(ch, `/conversations/${encodeURIComponent(uid)}/save-style`), {
+      method: "POST", headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    let b = null; try { b = await r.json(); } catch { /* ignore */ }
+    return { ok: r.ok, status: r.status, body: b };
+  } catch { return { ok: false, status: 0, body: null }; }
+}
+
 // Phân công hội thoại cho nhân viên (team inbox) — username rỗng = bỏ gán
 export async function assignConv(ch, uid, username) {
   try {

@@ -38,20 +38,35 @@ _CTX_MESSAGES = 12        # số tin gần nhất đưa AI làm ngữ cảnh
 
 _EXTRACT_PROMPT = """Bạn là trợ lý xây CƠ SỞ TRI THỨC cho chatbot của một shop dịch vụ Việt Nam.
 Chủ shop vừa TỰ TAY trả lời một câu khách hỏi (thường vì bot chưa biết thông tin này).
-Nhiệm vụ: quyết định cặp hỏi-đáp này có chứa THÔNG TIN TÁI SỬ DỤNG cho khách sau
-không (giá, chính sách, dịch vụ, giờ mở cửa, địa chỉ, quy định, khuyến mãi...).
+Nhiệm vụ: PHÂN LOẠI cặp hỏi-đáp rồi bóc thành mẩu tái sử dụng cho khách sau.
+
+Có 2 loại mẩu:
+- "fact"  = THÔNG TIN tra cứu: giá, chính sách, dịch vụ, giờ mở cửa, địa chỉ, quy định...
+- "style" = CÁCH XỬ LÝ TÌNH HUỐNG đáng học theo: khách chê đắt, mặc cả, giận dỗi,
+  đòi hủy, phân vân, so sánh nơi khác... — giá trị nằm ở CÁCH chủ shop nói,
+  không phải con số.
 
 Trả về DUY NHẤT một JSON (không giải thích, không markdown):
 - Nếu KHÔNG đáng lưu (chào hỏi xã giao, thông tin cá nhân 1 khách, chốt đơn riêng lẻ,
   hẹn gặp, đùa vui, thông tin chỉ đúng 1 lần):  {"skip": true}
-- Nếu ĐÁNG lưu:
+- Nếu là FACT:
 {
+  "kind": "fact",
   "title": "tiêu đề ngắn gọn của mẩu tri thức",
   "content": "thông tin viết lại RÕ RÀNG, ĐẦY ĐỦ, khách sau nào hỏi cũng dùng được (không xưng hô cá nhân, không 'bạn ơi')",
   "keywords": ["các cách khách hay hỏi về thông tin này", "3-8 cụm", "cả cách viết không dấu"]
 }
-Quy tắc: content chỉ chứa thông tin CHỦ SHOP nói — tuyệt đối không bịa thêm;
-giữ nguyên con số/giá/tên riêng; viết tiếng Việt tự nhiên."""
+- Nếu là STYLE:
+{
+  "kind": "style",
+  "title": "tên tình huống ngắn (vd: Khách chê đắt)",
+  "content": "đoạn thoại mẫu dạng:\\nKhách: ...\\nShop: ...\\n(giữ đúng giọng thật của chủ shop; MỌI con số/giá/tên phòng/ngày thay bằng placeholder trong ngoặc vuông như [giá phòng], [tên phòng], [ngày])",
+  "keywords": ["các cách khách mở đầu tình huống này", "3-8 cụm", "cả viết không dấu"],
+  "intent": "1 nhãn nếu khớp: availability_check|price_list_request|room_photos_request|contact_request|booking|complaint|bargain — không khớp thì \\"\\""
+}
+Quy tắc chung: chỉ dựa vào điều CHỦ SHOP nói — tuyệt đối không bịa thêm;
+fact giữ nguyên con số/giá/tên riêng, style thì NGƯỢC LẠI phải thay hết số liệu
+bằng placeholder; viết tiếng Việt tự nhiên."""
 
 
 def _parse_json_loose(raw: str):
@@ -151,19 +166,24 @@ def suggest_from_reply(user_id: str, channel: str, messages: list, answer: str,
         kw = data.get("keywords") or []
         if not isinstance(kw, list):
             kw = [str(kw)]
+        kind = knowledge.KIND_STYLE if data.get("kind") == "style" else knowledge.KIND_FACT
         row = {
             "shop": shop, "channel": channel or "", "user_id": user_id or "",
             "question": question[:500], "answer": answer[:2000],
             "title": str(data.get("title") or "").strip()[:200],
             "content": content[:knowledge.MAX_CONTENT_CHARS],
             "keywords": [str(k).strip() for k in kw if str(k).strip()][:30],
+            "kind": kind,
         }
+        row["intent"] = str(data.get("intent") or "").strip()[:60] if kind == knowledge.KIND_STYLE else ""
         cur = db.execute(
             "INSERT INTO knowledge_suggestions (shop, channel, user_id, question, answer,"
-            " title, content, keywords, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " title, content, keywords, status, created_at, kind, intent)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (row["shop"], row["channel"], row["user_id"], row["question"], row["answer"],
-             row["title"], row["content"], json.dumps(row["keywords"], ensure_ascii=False),
-             "pending", datetime.now().isoformat()))
+             row["title"], row["content"],
+             json.dumps(row["keywords"], ensure_ascii=False),
+             "pending", datetime.now().isoformat(), kind, row["intent"]))
         row["id"] = cur.lastrowid
         row["status"] = "pending"
         log.info(f"[KLearn] đề xuất tri thức mới #{row['id']}: {row['title']!r} "
@@ -184,7 +204,9 @@ def _row_to_dict(r) -> dict:
     return {"id": r["id"], "shop": r["shop"], "channel": r["channel"],
             "user_id": r["user_id"], "question": r["question"], "answer": r["answer"],
             "title": r["title"], "content": r["content"], "keywords": kw,
-            "status": r["status"], "created_at": r["created_at"]}
+            "status": r["status"], "created_at": r["created_at"],
+            "kind": (r["kind"] if "kind" in r.keys() else knowledge.KIND_FACT) or knowledge.KIND_FACT,
+            "intent": (r["intent"] if "intent" in r.keys() else "") or ""}
 
 
 def list_suggestions(status: str = "pending", shop: str = knowledge.DEFAULT_SHOP) -> list:
@@ -215,12 +237,15 @@ def approve(sid: int, title: str = None, content: str = None, keywords: list = N
         "title": (title if title is not None else s["title"]) or "",
         "content": (content if content is not None else s["content"]) or "",
         "keywords": keywords if isinstance(keywords, list) else s["keywords"],
+        "intent": s.get("intent") or "",
     }
     if not str(chunk["content"]).strip():
         raise ValueError("Nội dung mẩu tri thức trống")
-    added = knowledge.add_chunks([chunk], shop=s["shop"])
+    kind = s.get("kind") or knowledge.KIND_FACT
+    added = knowledge.add_chunks([chunk], shop=s["shop"], kind=kind)
     if added == 0:
-        raise ValueError(f"Kho tri thức đã đầy ({knowledge.MAX_CHUNKS} mẩu) — xoá bớt rồi duyệt lại")
+        cap = knowledge.MAX_STYLE_CHUNKS if kind == knowledge.KIND_STYLE else knowledge.MAX_CHUNKS
+        raise ValueError(f"Kho đã đầy ({cap} mẩu) — xoá bớt rồi duyệt lại")
     db.execute("UPDATE knowledge_suggestions SET status='approved' WHERE id=?", (sid,))
     log.info(f"[KLearn] ĐÃ DUYỆT đề xuất #{sid} → kho tri thức ({chunk['title']!r})")
     return {**s, **chunk, "status": "approved"}
@@ -233,3 +258,159 @@ def reject(sid: int):
         raise ValueError("Đề xuất không tồn tại")
     db.execute("UPDATE knowledge_suggestions SET status='rejected' WHERE id=?", (sid,))
     log.info(f"[KLearn] đã bỏ đề xuất #{sid}")
+
+
+def learn_direct(question: str, answer: str, shop: str = knowledge.DEFAULT_SHOP) -> dict:
+    """Bổ sung tri thức 1 CHẠM (Báo cáo não bot): chủ gõ câu trả lời cho câu bot
+    bí → AI bóc thành mẩu chuẩn (title/keywords) → LƯU THẲNG vào kho fact (chủ
+    chủ động gõ = đã duyệt). Trả chunk đã lưu; AI lỗi → fallback mẩu thô vẫn dùng được."""
+    question = str(question or "").strip()
+    answer = str(answer or "").strip()
+    if len(answer) < 5:
+        raise ValueError("Câu trả lời quá ngắn")
+    chunk = None
+    try:
+        from app.core.claude_ai import _call_ai
+        raw = _call_ai([
+            {"role": "system", "content": _EXTRACT_PROMPT},
+            {"role": "user", "content":
+                f"CÂU KHÁCH HỎI: {question}\nCHỦ SHOP TRẢ LỜI TAY: {answer}\n\nTrả về JSON."},
+        ])
+        data = _parse_json_loose(raw)
+        if isinstance(data, dict) and not data.get("skip") and str(data.get("content") or "").strip():
+            kw = data.get("keywords") or []
+            chunk = {
+                "title": str(data.get("title") or "").strip()[:200],
+                "content": str(data["content"]).strip()[:knowledge.MAX_CONTENT_CHARS],
+                "keywords": [str(k).strip() for k in (kw if isinstance(kw, list) else [kw])
+                             if str(k).strip()][:30],
+                "kind": knowledge.KIND_STYLE if data.get("kind") == "style" else knowledge.KIND_FACT,
+                "intent": str(data.get("intent") or "").strip()[:60],
+            }
+    except Exception as e:
+        log.warning(f"[KLearn] learn_direct AI lỗi ({e}) → dùng mẩu thô")
+    if chunk is None:   # AI chết/skip → vẫn lưu dạng thô: câu hỏi làm keyword
+        chunk = {"title": question[:200] or "Bổ sung từ báo cáo",
+                 "content": answer[:knowledge.MAX_CONTENT_CHARS],
+                 "keywords": [question[:60]] if question else [],
+                 "kind": knowledge.KIND_FACT, "intent": ""}
+    added = knowledge.add_chunks([chunk], shop=shop, kind=chunk["kind"])
+    if added == 0:
+        raise ValueError("Kho tri thức đã đầy — xoá bớt rồi thử lại")
+    log.info(f"[KLearn] learn_direct: +1 mẩu {chunk['title']!r} (shop={shop})")
+    return chunk
+
+
+# ── STYLE RAG: nạp mẫu hội thoại ─────────────────────────────────────
+
+_STYLE_EXTRACT_PROMPT = """Bạn bóc MẪU HỘI THOẠI dạy chatbot cách tư vấn, từ đoạn chat thật giữa KHÁCH và SHOP (shop dịch vụ Việt Nam).
+Mục tiêu: giữ lại GIỌNG ĐIỆU + CÁCH XỬ LÝ của shop để bot bắt chước — KHÔNG giữ số liệu.
+
+Trả về DUY NHẤT một JSON:
+- Đoạn chat không có gì đáng học (xã giao, quá ngắn, toàn bot nói):  {"skip": true}
+- Có tình huống đáng học:
+{
+  "title": "tên tình huống ngắn (vd: Khách chê đắt / Khách phân vân 2 phòng)",
+  "content": "thoại mẫu rút gọn 2-8 lượt, dạng:\\nKhách: ...\\nShop: ...\\nQUAN TRỌNG: MỌI con số, giá, tên phòng/dịch vụ cụ thể, ngày giờ thay bằng placeholder [giá phòng], [tên phòng], [ngày]...",
+  "keywords": ["các cách khách mở đầu tình huống này", "3-8 cụm", "cả viết không dấu"],
+  "intent": "1 nhãn nếu khớp: availability_check|price_list_request|room_photos_request|contact_request|booking|complaint|bargain — không thì \\"\\""
+}
+Giữ đúng văn phong tin nhắn thật của SHOP (xưng hô, emoji, độ dài câu). Không bịa thêm lượt thoại."""
+
+
+def extract_style_from_messages(messages: list, shop: str = knowledge.DEFAULT_SHOP,
+                                save: bool = True) -> dict | None:
+    """Nút "⭐ Lưu làm mẫu": chủ chọn hội thoại đẹp → AI bóc 1 mẩu style (đã
+    sanitize số liệu) → LƯU THẲNG vào kho style (chủ bấm nút = đã duyệt).
+    Trả chunk đã lưu, hoặc None (không đáng học / lỗi)."""
+    try:
+        convo = "\n".join(
+            f"{'KHÁCH' if m.get('role') == 'user' else 'SHOP'}: {str(m.get('content') or '')[:400]}"
+            for m in (messages or [])[-_CTX_MESSAGES:] if m.get("content"))
+        if len(convo) < 40:
+            return None
+        from app.core.claude_ai import _call_ai   # import trễ — test mock được
+        raw = _call_ai([
+            {"role": "system", "content": _STYLE_EXTRACT_PROMPT},
+            {"role": "user", "content": f"ĐOẠN CHAT:\n{convo}\n\nTrả về JSON."},
+        ])
+        data = _parse_json_loose(raw)
+        if not isinstance(data, dict) or data.get("skip"):
+            return None
+        content = str(data.get("content") or "").strip()
+        if not content:
+            return None
+        kw = data.get("keywords") or []
+        if not isinstance(kw, list):
+            kw = [str(kw)]
+        chunk = {
+            "title": str(data.get("title") or "").strip()[:200],
+            "content": content[:knowledge.MAX_CONTENT_CHARS],
+            "keywords": [str(k).strip() for k in kw if str(k).strip()][:30],
+            "intent": str(data.get("intent") or "").strip()[:60],
+            "kind": knowledge.KIND_STYLE,
+        }
+        if save:
+            added = knowledge.add_chunks([chunk], shop=shop, kind=knowledge.KIND_STYLE)
+            if added == 0:
+                raise ValueError(f"Kho mẫu đã đầy ({knowledge.MAX_STYLE_CHUNKS}) — xoá bớt trước")
+        log.info(f"[StyleLearn] mẫu hội thoại mới: {chunk['title']!r} (shop={shop})")
+        return chunk
+    except ValueError:
+        raise
+    except Exception as e:
+        log.error(f"[StyleLearn] extract_style lỗi: {e}", exc_info=True)
+        return None
+
+
+_STYLE_GEN_PROMPT = """Bạn tạo BỘ MẪU HỘI THOẠI dạy chatbot cách tư vấn cho một shop dịch vụ Việt Nam.
+Đầu vào là (a) transcript hội thoại thật do chủ shop dán, HOẶC (b) mô tả giọng/cách tư vấn mong muốn.
+
+Sinh 4-10 mẫu, mỗi mẫu 1 TÌNH HUỐNG khác nhau mà khách hay gặp (hỏi giá, chê đắt,
+mặc cả, phân vân, đòi hủy, giục trả lời, khách giận, hỏi đường/chỗ gửi xe...).
+
+ĐỊNH DẠNG BẮT BUỘC — NDJSON: MỖI DÒNG là MỘT object JSON hoàn chỉnh, KHÔNG mảng
+bao ngoài, KHÔNG dấu phẩy cuối dòng, KHÔNG markdown/code fence, không lời dẫn:
+{"title": "tên tình huống", "content": "Khách: ...\\nShop: ...", "keywords": ["cách khách mở đầu", "..."], "intent": "nhãn hoặc rỗng"}
+
+Quy tắc content: 2-6 lượt thoại; đúng giọng từ transcript/mô tả (xưng hô, emoji,
+câu ngắn kiểu tin nhắn); MỌI số liệu/giá/tên riêng thay bằng placeholder [giá], [tên phòng], [ngày].
+intent chọn trong: availability_check|price_list_request|room_photos_request|contact_request|booking|complaint|bargain hoặc rỗng."""
+
+
+def generate_style_set(source_text: str, shop: str = knowledge.DEFAULT_SHOP,
+                       model_key: str = None, owner: str = None) -> list:
+    """Sinh bộ mẫu hội thoại từ transcript dán vào / mô tả giọng.
+    Output NDJSON từng dòng (+ tự viết-tiếp khi chạm trần token qua _call_ai_long)
+    → bị cắt cụt chỉ mất dòng cuối, không vỡ cả bộ. KHÔNG tự lưu — trả list
+    chunk để UI preview, chủ chọn rồi mới lưu."""
+    source_text = str(source_text or "").strip()
+    if len(source_text) < 20:
+        raise ValueError("Nội dung quá ngắn — dán transcript hoặc mô tả kỹ hơn")
+    from app.core.prompt_builder import _call_ai_long   # tái dùng viết-tiếp 10 vòng
+    raw = _call_ai_long([
+        {"role": "system", "content": _STYLE_GEN_PROMPT},
+        {"role": "user", "content": source_text[:30_000]},
+    ], model_key=model_key, owner=owner)
+    chunks = []
+    for line in (raw or "").splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line in ("[", "]") or line.startswith("```"):
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue   # dòng cuối bị cắt cụt / rác → bỏ đúng dòng đó
+        if not isinstance(d, dict) or not str(d.get("content") or "").strip():
+            continue
+        kw = d.get("keywords") or []
+        if not isinstance(kw, list):
+            kw = [str(kw)]
+        chunks.append({
+            "title": str(d.get("title") or "").strip()[:200],
+            "content": str(d.get("content")).strip()[:knowledge.MAX_CONTENT_CHARS],
+            "keywords": [str(k).strip() for k in kw if str(k).strip()][:30],
+            "intent": str(d.get("intent") or "").strip()[:60],
+            "kind": knowledge.KIND_STYLE,
+        })
+    return chunks

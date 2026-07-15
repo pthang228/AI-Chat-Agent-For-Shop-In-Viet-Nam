@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { photoApi } from "../photoApi.js";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * Thư viện ảnh (kiểu AloChat): shop tạo BỘ ẢNH đặt tên ("Bảng giá", "Phòng 301",
@@ -7,6 +8,7 @@ import { photoApi } from "../photoApi.js";
  * Khách nhắn trúng tên/keywords → bot tự gửi cả bộ (mọi kênh).
  */
 export default function PhotoLibrary() {
+  const { t } = useI18n();
   const [sets, setSets] = useState(null);   // null = đang tải
   const [name, setName] = useState("");
   const [kw, setKw] = useState("");
@@ -33,10 +35,10 @@ export default function PhotoLibrary() {
     if (r.ok) {
       setName(""); setKw("");
       setOpenSlug(r.body.set.slug);
-      setMsg("✅ Đã tạo bộ — giờ thêm ảnh vào nhé.");
+      setMsg(t("pl.created"));
       load();
     } else {
-      setMsg("❌ " + (r.body?.error || "Tạo bộ thất bại — server 5005 cần restart để có API ảnh?"));
+      setMsg("❌ " + (r.body?.error || t("pl.create_fail")));
     }
   }
 
@@ -53,26 +55,26 @@ export default function PhotoLibrary() {
     setBusy(false);
     if (r.ok) {
       const errs = r.body.errors || [];
-      setMsg(`✅ Đã thêm ${r.body.saved.length} ảnh` + (errs.length ? ` · ⚠️ ${errs.join("; ")}` : ""));
+      setMsg(t("pl.added", { n: r.body.saved.length }) + (errs.length ? ` · ⚠️ ${errs.join("; ")}` : ""));
       load();
     } else {
-      setMsg("❌ " + (r.body?.error || "Upload thất bại"));
+      setMsg("❌ " + (r.body?.error || t("pl.upload_fail")));
     }
   }
 
   async function delSet(s) {
-    if (!confirm(`Xoá bộ ảnh "${s.name}" cùng toàn bộ ${s.files.length} ảnh?`)) return;
+    if (!confirm(t("pl.del_set_confirm", { name: s.name, n: s.files.length }))) return;
     await photoApi.deleteSet(s.slug);
     load();
   }
   async function delFile(slug, f) {
-    if (!confirm(`Xoá ảnh ${f}?`)) return;
+    if (!confirm(t("pl.del_file_confirm", { f }))) return;
     await photoApi.removeFile(slug, f);
     load();
   }
   async function editKw(s) {
     const cur = (s.keywords || []).join(", ");
-    const next = prompt('Các cách khách hay hỏi (phân cách bằng dấu phẩy):\nVD: bảng giá, giá dịch vụ, menu', cur);
+    const next = prompt(t("pl.kw_prompt"), cur);
     if (next === null) return;
     await photoApi.updateKeywords(s.slug, next.split(",").map((x) => x.trim()).filter(Boolean));
     load();
@@ -84,32 +86,32 @@ export default function PhotoLibrary() {
 
       <div className="pl-head">
         <div>
-          <h3>🖼️ Thư viện ảnh</h3>
+          <h3>{t("pl.title")}</h3>
           <span className="page-sub">
-            Tạo bộ ảnh đặt tên — khách nhắn trúng tên/từ khoá là bot tự gửi cả bộ (mọi kênh).
+            {t("pl.sub")}
           </span>
         </div>
       </div>
 
       {/* Tạo bộ mới */}
       <form className="pl-new" onSubmit={createSet}>
-        <input placeholder='Tên bộ ảnh — VD: "Bảng giá", "Phòng 301", "Menu món chính"'
+        <input placeholder={t("pl.name_ph")}
                value={name} onChange={(e) => setName(e.target.value)} />
-        <input placeholder="Khách hay hỏi bằng từ nào? (phẩy) — VD: bảng giá, giá phòng, menu"
+        <input placeholder={t("pl.kw_ph")}
                value={kw} onChange={(e) => setKw(e.target.value)} />
-        <button type="submit" className="btn-primary sm" disabled={busy || !name.trim()}>＋ Tạo bộ</button>
+        <button type="submit" className="btn-primary sm" disabled={busy || !name.trim()}>{t("pl.create_btn")}</button>
       </form>
 
       {msg && <div className="savemsg" style={{ margin: "10px 0" }}>{msg}</div>}
 
-      {sets === null && <p className="hint">Đang tải thư viện ảnh…</p>}
+      {sets === null && <p className="hint">{t("pl.loading")}</p>}
       {sets === "offline" && (
-        <p className="hint">⚠️ Không tải được thư viện ảnh — server 5005 chưa chạy hoặc chưa restart bản mới.</p>
+        <p className="hint">{t("pl.offline")}</p>
       )}
 
       {Array.isArray(sets) && sets.length === 0 && (
         <div className="empty" style={{ padding: 24 }}>
-          <p>Chưa có bộ ảnh nào. Tạo bộ đầu tiên — VD "Bảng giá" — rồi thêm ảnh vào.</p>
+          <p>{t("pl.empty")}</p>
         </div>
       )}
 
@@ -118,29 +120,29 @@ export default function PhotoLibrary() {
           <div className="pl-set-head" onClick={() => setOpenSlug(openSlug === s.slug ? null : s.slug)}>
             <div className="pl-set-info">
               <b>{s.name}</b>
-              <span className="pl-count">{s.files.length} ảnh</span>
+              <span className="pl-count">{t("pl.count", { n: s.files.length })}</span>
               {s.keywords?.length > 0 && (
                 <span className="pl-kw">🔑 {s.keywords.join(" · ")}</span>
               )}
             </div>
             <div className="pl-set-actions" onClick={(e) => e.stopPropagation()}>
-              <button className="btn-mini" onClick={() => pickFiles(s.slug)} disabled={busy}>＋ Thêm ảnh</button>
-              <button className="btn-mini" onClick={() => editKw(s)}>🔑 Từ khoá</button>
-              <button className="btn-mini danger" onClick={() => delSet(s)}>Xoá bộ</button>
+              <button className="btn-mini" onClick={() => pickFiles(s.slug)} disabled={busy}>{t("pl.add_btn")}</button>
+              <button className="btn-mini" onClick={() => editKw(s)}>{t("pl.kw_btn")}</button>
+              <button className="btn-mini danger" onClick={() => delSet(s)}>{t("pl.del_set")}</button>
             </div>
           </div>
 
           {openSlug === s.slug && (
             s.files.length === 0 ? (
               <p className="hint" style={{ padding: "4px 12px 12px" }}>
-                Bộ này chưa có ảnh — bấm "＋ Thêm ảnh" (chọn được nhiều ảnh một lúc).
+                {t("pl.set_empty")}
               </p>
             ) : (
               <div className="pl-grid">
                 {s.files.map((f) => (
                   <div key={f} className="pl-thumb">
                     <img src={photoApi.fileUrl(s.slug, f)} alt={f} loading="lazy" />
-                    <button className="pl-thumb-del" title="Xoá ảnh này"
+                    <button className="pl-thumb-del" title={t("pl.del_file_title")}
                             onClick={() => delFile(s.slug, f)}>✕</button>
                   </div>
                 ))}

@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { register, loginWithGoogle } from "../auth.js";
 import { renderGoogleButton, GOOGLE_CLIENT_ID } from "../googleAuth.js";
-import { GoogleG } from "./Login.jsx";
 import { IcHome, IcMail, IcLock, IcUser, IcArrow, IcShield, IcBack } from "../components/icons.jsx";
+import { useI18n } from "../i18n.jsx";
 
 export default function Register() {
   const nav = useNavigate();
+  const { t } = useI18n();
   const [homestay, setH] = useState("");
   const [username, setU] = useState("");
   const [password, setP] = useState("");
@@ -34,68 +35,66 @@ export default function Register() {
 
   return (
     <div className="auth-wrap">
-      <Link to="/" className="auth-back"><IcBack width={16} height={16} /> Về trang chủ</Link>
+      <Link to="/" className="auth-back"><IcBack width={16} height={16} /> {t("auth.back_home")}</Link>
       <div className="auth-head">
         <div className="brand-logo"><IcHome width={26} height={26} /></div>
-        <h1 className="auth-title">Tạo tài khoản mới</h1>
-        <p className="auth-sub">Trợ lý chăm sóc khách tự động cho shop của bạn — kết nối Zalo, Messenger, Instagram và Telegram chỉ trong vài chạm.</p>
+        <h1 className="auth-title">{t("auth.reg_title")}</h1>
+        <p className="auth-sub">{t("auth.sub")}</p>
       </div>
 
       <form className="auth-card" onSubmit={submit}>
         <div className="auth-tabs">
-          <Link to="/login" className="auth-tab">Đăng nhập</Link>
-          <span className="auth-tab active">Đăng ký</span>
+          <Link to="/login" className="auth-tab">{t("auth.login")}</Link>
+          <span className="auth-tab active">{t("auth.register")}</span>
         </div>
 
-        {GOOGLE_CLIENT_ID ? (
-          <div className="gbtn-wrap"><div ref={gbtn} /></div>
-        ) : (
-          <button type="button" className="btn-outline gbtn-fallback" disabled title="Cấu hình VITE_GOOGLE_CLIENT_ID để bật">
-            <GoogleG /> Đăng ký với Google (chưa cấu hình)
-          </button>
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div className="gbtn-wrap"><div ref={gbtn} /></div>
+            <div className="or">{t("auth.or_email")}</div>
+          </>
         )}
-        <div className="or">hoặc dùng email</div>
 
         <div className="field">
-          <label className="field-label">Tên shop / thương hiệu</label>
+          <label className="field-label">{t("set.shop_label")}</label>
           <div className="input-wrap">
             <span className="input-ico"><IcUser /></span>
-            <input value={homestay} onChange={(e) => setH(e.target.value)} placeholder="VD: Mia Spa & Nail" autoFocus />
+            <input value={homestay} onChange={(e) => setH(e.target.value)} placeholder={t("set.shop_ph")} autoFocus />
           </div>
         </div>
 
         <div className="field">
-          <label className="field-label">Email</label>
+          <label className="field-label">{t("auth.email")}</label>
           <div className="input-wrap">
             <span className="input-ico"><IcMail /></span>
-            <input value={username} onChange={(e) => setU(e.target.value)} placeholder="ban@gmail.com" />
+            <input value={username} onChange={(e) => setU(e.target.value)} placeholder={t("auth.email_ph")} />
           </div>
         </div>
 
         <div className="field">
-          <label className="field-label">Mật khẩu</label>
+          <label className="field-label">{t("auth.password")}</label>
           <div className="input-wrap">
             <span className="input-ico"><IcLock /></span>
-            <input type="password" value={password} onChange={(e) => setP(e.target.value)} placeholder="Tối thiểu 4 ký tự" />
+            <input type="password" value={password} onChange={(e) => setP(e.target.value)} placeholder={t("set.pw_new_ph")} />
           </div>
         </div>
 
         <div className="field">
-          <label className="field-label">Mã giới thiệu <span style={{ fontWeight: 400, color: "var(--faint)" }}>(nếu có — tặng 7 ngày dùng thử)</span></label>
+          <label className="field-label">{t("auth.promo_label")} <span style={{ fontWeight: 400, color: "var(--faint)" }}>{t("auth.promo_note")}</span></label>
           <div className="input-wrap">
             <span className="input-ico">🎁</span>
-            <input value={promo} onChange={(e) => setPromo(e.target.value)} placeholder="Không bắt buộc" />
+            <input value={promo} onChange={(e) => setPromo(e.target.value)} placeholder={t("auth.promo_ph")} />
           </div>
         </div>
 
         {err && <div className="err">{err}</div>}
 
         <button className="btn-primary" type="submit" disabled={busy}>
-          {busy ? "Đang tạo…" : "Tạo tài khoản"} <IcArrow width={18} height={18} />
+          {busy ? t("team.adding") : t("auth.create_btn")} <IcArrow width={18} height={18} />
         </button>
       </form>
 
-      <div className="auth-foot"><IcShield width={15} height={15} /> Bảo mật chuẩn ngân hàng · Dữ liệu khách được mã hoá</div>
+      <div className="auth-foot"><IcShield width={15} height={15} /> {t("auth.foot")}</div>
     </div>
   );
 }

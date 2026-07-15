@@ -46,4 +46,21 @@ export const promptApi = {
     j(`/prompt/suggestions/${id}/approve`, { method: "POST", body: JSON.stringify(edits) }),
   rejectSuggestion: (id) =>
     j(`/prompt/suggestions/${id}/reject`, { method: "POST", body: JSON.stringify({}) }),
+
+  // DẠY AI v2 — phỏng vấn / báo cáo câu bí / chấm điểm não
+  interview: (history) =>
+    j("/prompt/interview", { method: "POST", body: JSON.stringify({ history }) }),
+  report: () => j("/prompt/report"),
+  reportAnswer: (question, answer, ids = []) =>
+    j("/prompt/report/answer", { method: "POST", body: JSON.stringify({ question, answer, ids }) }),
+  health: () => j("/prompt/health", { method: "POST", body: JSON.stringify({}) }),
+
+  // STYLE RAG — kho mẫu hội thoại (dạy giọng + cách xử lý tình huống)
+  styleList: () => j("/prompt/style"),
+  styleDelete: (id) => j(`/prompt/style/${id}`, { method: "DELETE" }),
+  // AI sinh bộ mẫu từ transcript/mô tả — chậm (20-60s), trả preview KHÔNG lưu
+  styleGenerate: (text, model = "") =>
+    j("/prompt/style/generate", { method: "POST", body: JSON.stringify({ text, model }) }),
+  styleAdd: (chunks) =>
+    j("/prompt/style/add", { method: "POST", body: JSON.stringify({ chunks }) }),
 };

@@ -199,9 +199,9 @@ python -m app.channels.zalo_cookie.main    # hoặc scripts/run.bat
 
 - **Đa runtime:** kênh QR cần cả Node (zca-js) lẫn Python; React là frontend riêng. Trình duyệt không tự bật backend → phải qua `start-all.bat`.
 - **Chống echo kênh Node:** `selfListen` bật nên tin bot tự gửi vọng về; Node đánh dấu `lastBotSendAt` theo thread (15s) + msgId để lọc, tránh nhầm thành chủ-gõ-tay (từng gây bug tắt bot 48h).
-- **Auth web tạm thời:** đăng nhập/đăng ký + danh sách app lưu **localStorage trình duyệt** (chưa backend, mật khẩu chưa hash). Cần thay bằng backend + DB khi bán thật.
-- **Đơn tenant:** Node service hiện 1 instance/1 tài khoản Zalo dùng chung; multi-tenant chưa làm.
-- `requirements.txt` còn thiếu vài gói runtime (`groq`, `telethon`, `flask`, `pillow`); Node cần `npm install` trong `zalo-node/` và `web-ui/`.
+- **Auth web:** ĐÃ là backend thật (Flask bridge 5005 + SQLite): mật khẩu hash PBKDF2-HMAC-SHA256 200k vòng, token phiên trong DB, quên mật khẩu OTP 6 số qua email SMTP, Google login xác thực id_token phía server (kiểm `aud`). Frontend chỉ giữ token ở localStorage/sessionStorage.
+- **Multi-tenant:** hội thoại/broadcast/app đã tách theo workspace (guard tập trung ở bridge); Zalo Node đã multi-account (session riêng từng shop). CÒN LẠI: `data/bot_state.json` (bật/tắt bot) vẫn là cờ toàn cục dùng chung mọi shop.
+- Node cần `npm install` trong `zalo-node/` và `web-ui/`.
 - Telegram `api_id/api_hash` lấy từ `.env` (`TELEGRAM_API_ID/HASH`); fallback creds TG Desktop CHỈ để chạy thử —
   đa khách phải đăng ký riêng ở my.telegram.org kẻo bị giới hạn/ban.
 - **Bảo mật:** `caller_session` (toàn quyền acc Telegram của khách) đang lưu THÔ trong `data/telegram_bots.json` —

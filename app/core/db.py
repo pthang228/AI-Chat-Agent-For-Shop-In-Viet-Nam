@@ -293,6 +293,19 @@ CREATE TABLE IF NOT EXISTS knowledge_suggestions (
 );
 CREATE INDEX IF NOT EXISTS idx_ksug_shop_status ON knowledge_suggestions(shop, status);
 
+-- CÂU BOT BÍ (unknown_question) — nguyên liệu "Báo cáo não bot" hàng tuần:
+-- gom câu khách hỏi mà bot không có dữ liệu → chủ bổ sung 1 chạm (resolved=1)
+CREATE TABLE IF NOT EXISTS bot_misses (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop       TEXT NOT NULL DEFAULT 'default',
+    channel    TEXT NOT NULL DEFAULT '',
+    user_id    TEXT NOT NULL DEFAULT '',
+    question   TEXT NOT NULL,
+    resolved   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_misses_shop ON bot_misses(shop, resolved, created_at);
+
 -- TIN NHẮN HÀNG LOẠT (broadcast/remarketing) — chủ soạn 1 tin gửi cho nhóm khách
 -- cũ theo kênh + mức độ hoạt động. Tin KHÔNG chèn vào luồng hội thoại (tránh đè
 -- cache RAM của tiến trình kênh) — lịch sử nằm ở broadcast_log.
@@ -407,6 +420,19 @@ class Db:
             ("orders", "voucher_code",   "TEXT NOT NULL DEFAULT ''"),
             ("orders", "discount",       "INTEGER NOT NULL DEFAULT 0"),
             ("orders", "points_awarded", "INTEGER NOT NULL DEFAULT 0"),
+            # STYLE RAG: kho tri thức tách 2 loại — 'fact' (giá/chính sách/FAQ) và
+            # 'style' (mẫu hội thoại dạy GIỌNG + cách xử lý tình huống, số liệu đã
+            # thay placeholder). intent = tag tình huống (tùy chọn) để retrieve trúng hơn.
+            ("knowledge_chunks", "kind",   "TEXT NOT NULL DEFAULT 'fact'"),
+            ("knowledge_chunks", "intent", "TEXT NOT NULL DEFAULT ''"),
+            ("knowledge_suggestions", "kind",   "TEXT NOT NULL DEFAULT 'fact'"),
+            ("knowledge_suggestions", "intent", "TEXT NOT NULL DEFAULT ''"),
+            # NGÀNH của shop (industry.py detect lúc dạy AI) — checklist GAPS + bộ câu chấm điểm não
+            ("users", "industry", "TEXT NOT NULL DEFAULT ''"),
+            # TÓM TẮT CUỘN hội thoại: summary = 3-5 dòng AI tóm phần cũ;
+            # summary_upto = index tin nhắn đã được tóm (messages[:upto] nằm trong summary)
+            ("sessions", "summary",      "TEXT NOT NULL DEFAULT ''"),
+            ("sessions", "summary_upto", "INTEGER NOT NULL DEFAULT 0"),
         ]
         for table, col, decl in adds:
             try:
