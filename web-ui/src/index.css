@@ -1554,7 +1554,7 @@ a.stats-icon-btn { text-decoration: none; }
 .od-tabs { display: flex; gap: 5px; flex-wrap: wrap; }
 .od-tab { padding: 6px 11px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .od-tab:hover { border-color: var(--c, var(--green)); color: var(--c, var(--green)); }
-.od-tab.active { border-color: var(--c, var(--green)); color: var(--c, var(--green)); background: color-mix(in srgb, var(--c, var(--green)) 9%, #fff); }
+.od-tab.active { border-color: var(--c, var(--green)); color: var(--c, var(--green)); background: color-mix(in srgb, var(--c, var(--green)) 9%, var(--card)); }
 .od-search { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; background: var(--field); outline: none; min-width: 190px; }
 .od-search:focus { border-color: var(--green); background: var(--card); }
 
@@ -1562,7 +1562,7 @@ a.stats-icon-btn { text-decoration: none; }
 .od-main { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 5px; }
 .od-l1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .od-code { font-family: var(--font-head); font-size: 15.5px; color: var(--ink); }
-.od-status { font-size: 11px; font-weight: 800; padding: 2px 9px; border-radius: 999px; color: var(--c); background: color-mix(in srgb, var(--c) 12%, #fff); border: 1px solid color-mix(in srgb, var(--c) 30%, #fff); }
+.od-status { font-size: 11px; font-weight: 800; padding: 2px 9px; border-radius: 999px; color: var(--c); background: color-mix(in srgb, var(--c) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--c) 30%, var(--card)); }
 .od-type { font-size: 11.5px; color: var(--muted); font-weight: 600; }
 .od-due { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
 .od-due.soon { background: var(--gold-soft); color: var(--owner-tx); }
@@ -1610,7 +1610,7 @@ a.stats-icon-btn { text-decoration: none; }
   border: 1.5px solid var(--line); border-radius: 999px; cursor: pointer;
   font-size: 13.5px; background: var(--card); transition: all .15s var(--ease, ease);
 }
-.bc-chan.on { border-color: var(--green); background: color-mix(in srgb, var(--green) 7%, #fff); }
+.bc-chan.on { border-color: var(--green); background: color-mix(in srgb, var(--green) 7%, var(--card)); }
 /* bẫy rule global input{width:100%} — checkbox/radio phải width:auto */
 .bc-chan input[type="checkbox"], .bc-seg-opt input[type="radio"] {
   width: auto; padding: 0; margin: 0; accent-color: var(--green);
@@ -1626,8 +1626,8 @@ a.stats-icon-btn { text-decoration: none; }
 .bc-item-sub { color: #8a8fa3; font-size: 12.5px; }
 .bc-status {
   font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
-  color: var(--c); background: color-mix(in srgb, var(--c) 12%, #fff);
-  border: 1px solid color-mix(in srgb, var(--c) 30%, #fff); white-space: nowrap;
+  color: var(--c); background: color-mix(in srgb, var(--c) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--c) 30%, var(--card)); white-space: nowrap;
 }
 .bc-item-msg {
   margin: 8px 0; font-size: 13.5px; color: #444; white-space: pre-wrap;
@@ -1646,7 +1646,7 @@ a.stats-icon-btn { text-decoration: none; }
 .nt-modes { display: flex; flex-direction: column; gap: 6px; }
 .nt-radio { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer;
   padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 12px; transition: all .15s var(--ease, ease); }
-.nt-radio.on { border-color: var(--green); background: color-mix(in srgb, var(--green) 6%, #fff); }
+.nt-radio.on { border-color: var(--green); background: color-mix(in srgb, var(--green) 6%, var(--card)); }
 .nt-radio input[type="radio"] { width: auto; padding: 0; margin: 0; accent-color: var(--green); }
 .nt-events { display: flex; flex-direction: column; gap: 8px; }
 .nt-event { display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1878,3 +1878,11 @@ html[data-theme="dark"] .cu-fudue.late { background: #3a2019; }
 .sl-preview { display: block; margin-bottom: 8px; }
 html[data-theme="dark"] .sl-content { background: #271e46; }
 html[data-theme="dark"] .sl-intent { background: #271e46; }
+
+/* Dark: badge/tab mau tren nen toi — chu sang len cho de doc (cung pattern .ch-chip) */
+html[data-theme="dark"] .od-status, html[data-theme="dark"] .bc-status {
+  color: color-mix(in srgb, var(--c) 65%, #fff);
+}
+html[data-theme="dark"] .od-tab.active {
+  color: color-mix(in srgb, var(--c, var(--green)) 65%, #fff);
+}
