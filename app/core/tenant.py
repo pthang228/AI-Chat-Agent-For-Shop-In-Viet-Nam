@@ -106,3 +106,15 @@ def current_workspace_or_none():
         return current_workspace()
     except Exception:
         return None
+
+
+def tenant_where(tenant_ws):
+    """Mảnh WHERE multi-tenant DÙNG CHUNG cho mọi bảng có cột `tenant`
+    (orders/loyalty/followups/photo_sets...). Trả (sql_fragment|None, params).
+    Chủ nền tảng thấy cả dòng CŨ chưa gắn tenant (tenant=''); workspace None
+    (test/guard tắt) → không lọc. Trước đây hàm này bị chép y hệt ở 4 module."""
+    if not tenant_ws:
+        return None, []
+    if tenant_ws == default_owner():
+        return "(tenant=? OR tenant='')", [tenant_ws]
+    return "tenant=?", [tenant_ws]

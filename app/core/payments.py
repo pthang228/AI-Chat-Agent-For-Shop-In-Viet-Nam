@@ -32,17 +32,20 @@ DEPOSIT_CODE_RE = re.compile(r"\bNAP[A-Z0-9]{4,}\b", re.IGNORECASE)
 # ── Tài khoản nhận tiền của shop ─────────────────────────────────────
 
 def get_bank(username: str = None) -> dict | None:
-    """Bank info của shop. Có username → của user đó; không → user ĐẦU TIÊN đã
-    khai (backend single-tenant: 1 chủ chính). Chưa ai khai → None."""
-    db = get_db()
-    if username:
-        rows = db.query(
-            "SELECT bank_code, bank_account, bank_holder FROM users WHERE username=?",
-            (username,))
-    else:
-        rows = db.query(
-            "SELECT bank_code, bank_account, bank_holder FROM users"
-            " WHERE bank_code != '' AND bank_account != '' ORDER BY created_at LIMIT 1")
+    """Bank info (tài khoản NHẬN TIỀN) của shop sở hữu hội thoại/đơn.
+
+    MULTI-TENANT: LUÔN truyền username = chủ shop. Không truyền → dùng CHỦ NỀN
+    TẢNG (shop gốc). TUYỆT ĐỐI KHÔNG còn fallback "user đầu tiên có bank" như bản
+    cũ — đó là lỗ hổng khiến tiền khách shop B chảy vào tài khoản shop A. Shop chưa
+    khai bank → None (không gửi QR, đơn dừng ở nháp)."""
+    if not username:
+        from app.core import tenant as _tenant
+        username = _tenant.default_owner()
+    if not username:
+        return None
+    rows = get_db().query(
+        "SELECT bank_code, bank_account, bank_holder FROM users WHERE username=?",
+        (username,))
     if not rows:
         return None
     b = dict(rows[0])
@@ -137,7 +140,9 @@ def process_transfer(content: str, amount: int, notify_fn=None) -> dict:
         from app.core import billing
         code = m.group(0).upper()
         try:
-            r = billing.confirm_deposit(code)
+            # ĐỐI SOÁT TỰ ĐỘNG: ghi có ĐÚNG số tiền THẬT nhận (amount), không tin
+            # số ở lệnh nạp → chống chuyển 10k mà ví +100tr.
+            r = billing.confirm_deposit(code, paid_amount=amount)
             _notify(f"💳 Tự xác nhận NẠP VÍ {r['amount']:,}đ cho {r['username']} (mã {code}).")
             log.info(f"[Pay] nạp ví {code} xác nhận tự động")
             return {"matched": "deposit", "code": code, **r}

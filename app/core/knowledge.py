@@ -149,14 +149,94 @@ def _insert(db, chunks: list, shop: str):
           c["pinned"], now, c.get("kind") or KIND_FACT, c.get("intent") or "") for c in chunks])
 
 
+MAX_VERSIONS = 10   # số bản kho giữ lại để rollback (mỗi shop mỗi kind)
+
+
+def _ensure_versions_table(db):
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS knowledge_versions ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, shop TEXT NOT NULL, kind TEXT NOT NULL,"
+        " snapshot TEXT NOT NULL, chunk_count INTEGER NOT NULL, created_at TEXT NOT NULL)")
+
+
+def _snapshot(db, shop: str, kind: str):
+    """Lưu BẢN CHỤP kho hiện tại (kind) TRƯỚC khi ghi đè — để 'Áp dụng' hỏng còn
+    rollback được (não bot là tài sản chính của shop). Gọi TRONG db.lock của ingest.
+    Kho đang rỗng → không snapshot (khỏi tạo bản trống vô nghĩa)."""
+    _ensure_versions_table(db)
+    rows = db.query(
+        "SELECT title, content, keywords, pinned, kind, intent FROM knowledge_chunks "
+        "WHERE shop=? AND kind=? ORDER BY id", (shop, kind))
+    if not rows:
+        return
+    snap = json.dumps([{
+        "title": r["title"], "content": r["content"],
+        "keywords": r["keywords"], "pinned": r["pinned"],
+        "kind": r["kind"], "intent": r["intent"],
+    } for r in rows], ensure_ascii=False)
+    db.conn.execute(
+        "INSERT INTO knowledge_versions(shop, kind, snapshot, chunk_count, created_at)"
+        " VALUES (?,?,?,?,?)", (shop, kind, snap, len(rows), datetime.now().isoformat()))
+    # Chỉ giữ MAX_VERSIONS bản gần nhất mỗi (shop,kind)
+    old = db.query(
+        "SELECT id FROM knowledge_versions WHERE shop=? AND kind=? ORDER BY id DESC "
+        "LIMIT -1 OFFSET ?", (shop, kind, MAX_VERSIONS))
+    for r in old:
+        db.conn.execute("DELETE FROM knowledge_versions WHERE id=?", (r["id"],))
+
+
+def list_versions(shop: str = DEFAULT_SHOP, kind: str = None) -> list:
+    """Danh sách bản kho đã lưu (mới nhất trước) để UI cho chọn khôi phục."""
+    db = get_db()
+    _ensure_versions_table(db)
+    if kind:
+        rows = db.query(
+            "SELECT id, kind, chunk_count, created_at FROM knowledge_versions "
+            "WHERE shop=? AND kind=? ORDER BY id DESC", (shop, kind))
+    else:
+        rows = db.query(
+            "SELECT id, kind, chunk_count, created_at FROM knowledge_versions "
+            "WHERE shop=? ORDER BY id DESC", (shop,))
+    return [{"id": r["id"], "kind": r["kind"], "chunk_count": r["chunk_count"],
+             "created_at": r["created_at"]} for r in rows]
+
+
+def restore_version(version_id: int, shop: str = DEFAULT_SHOP) -> int:
+    """Khôi phục kho về 1 bản đã lưu (chỉ bản CỦA shop này — chống rollback nhầm
+    shop khác). Snapshot kho hiện tại TRƯỚC khi khôi phục (rollback cũng undo được).
+    Trả số mẩu đã khôi phục, hoặc -1 nếu không tìm thấy bản."""
+    db = get_db()
+    _ensure_versions_table(db)
+    rows = db.query(
+        "SELECT kind, snapshot FROM knowledge_versions WHERE id=? AND shop=?",
+        (version_id, shop))
+    if not rows:
+        return -1
+    kind = rows[0]["kind"]
+    try:
+        chunks = json.loads(rows[0]["snapshot"]) or []
+    except Exception:
+        return -1
+    cleaned = _sanitize(chunks, limit=(MAX_STYLE_CHUNKS if kind == KIND_STYLE else MAX_CHUNKS),
+                        kind=kind)
+    with db.lock:
+        _snapshot(db, shop, kind)   # kho hiện tại thành 1 bản nữa (undo được)
+        db.conn.execute("DELETE FROM knowledge_chunks WHERE shop=? AND kind=?", (shop, kind))
+        _insert(db, cleaned, shop)
+        db.conn.commit()
+    return len(cleaned)
+
+
 def ingest(chunks: list, shop: str = DEFAULT_SHOP, kind: str = KIND_FACT) -> int:
     """Thay TOÀN BỘ tri thức LOẠI kind của shop bằng danh sách mẩu mới.
     QUAN TRỌNG: chỉ xoá mẩu cùng kind — dạy lại não (fact) KHÔNG quét mất kho
-    mẫu hội thoại (style) và ngược lại. Trả số mẩu đã lưu."""
+    mẫu hội thoại (style) và ngược lại. SNAPSHOT kho cũ trước khi xoá (rollback
+    được nếu bản mới hỏng). Trả số mẩu đã lưu."""
     cleaned = _sanitize(chunks, limit=(MAX_STYLE_CHUNKS if kind == KIND_STYLE else MAX_CHUNKS),
                         kind=kind)
     db = get_db()
     with db.lock:
+        _snapshot(db, shop, kind)   # giữ bản cũ để rollback
         # DB cũ chưa migrate cột kind sẽ không có dòng kind≠fact — WHERE kind=? an toàn
         db.conn.execute("DELETE FROM knowledge_chunks WHERE shop=? AND kind=?", (shop, kind))
         _insert(db, cleaned, shop)
@@ -286,23 +366,40 @@ def retrieve(query: str, shop: str = DEFAULT_SHOP, k: int = 6,
     return top + [c for c in pinned if c["id"] not in seen][:4]
 
 
-def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6) -> tuple:
+def context_chunks(query: str, shop: str = DEFAULT_SHOP, k: int = 6,
+                   budget: int | None = None) -> tuple:
     """Chọn mẩu đưa vào prompt cho 1 câu hỏi. Trả (chunks, mode):
-    - Kho NHỎ (tổng content ≤ FULL_KB_CHAR_BUDGET) → TRẢ HẾT (mode='full'):
-      không retrieval, không bao giờ tra trượt — bot thấy toàn bộ dữ liệu shop.
+    - Kho NHỎ (tổng content ≤ budget) → TRẢ HẾT (mode='full'): không retrieval,
+      không bao giờ tra trượt — bot thấy toàn bộ dữ liệu shop.
     - Kho LỚN → retrieve top-k liên quan (mode='retrieval').
     - Kho trống → ([], 'empty').
+    budget: ngân sách ký tự để nhồi hết (None = mặc định FULL_KB_CHAR_BUDGET).
+      Model ĐẮT truyền budget nhỏ hơn (ai_models.kb_char_budget) → co lại, khỏi
+      đốt tiền input; model rẻ (DeepSeek) giữ nguyên 24k.
     CHỈ mẩu FACT — mẫu hội thoại (style) đi block riêng qua style_block()."""
     chunks = list_chunks(shop, kind=KIND_FACT)
     if not chunks:
         return [], "empty"
+    if budget is None or budget <= 0:
+        budget = FULL_KB_CHAR_BUDGET
     total = sum(len(c.get("content") or "") for c in chunks)
-    if total <= FULL_KB_CHAR_BUDGET:
+    if total <= budget:
         # pinned trước cho quen mắt, rồi theo id — thứ tự ổn định
         chunks.sort(key=lambda c: (0 if c.get("pinned") else 1, c["id"]))
         return chunks, "full"
     # tái dùng kho đã đọc — khỏi query DB + parse JSON lần 2 mỗi tin nhắn
-    return retrieve(query, shop, k, chunks=chunks), "retrieval"
+    hits = retrieve(query, shop, k, chunks=chunks)
+    # TRẦN budget CẢ ở chế độ retrieval: top-6 + 4 pinned × 4000 ký tự có thể
+    # tới ~40k — gấp nhiều lần sàn 6k của model đắt. Cắt cộng dồn theo content
+    # (giữ tối thiểu 1 mẩu; hits[0] luôn là mẩu khớp nhất — pinned cuối bị cắt trước).
+    out, used = [], 0
+    for c in hits:
+        n = len(c.get("content") or "")
+        if out and used + n > budget:
+            continue
+        out.append(c)
+        used += n
+    return out, "retrieval"
 
 
 def retrieve_style(query: str, shop: str = DEFAULT_SHOP, k: int = 2,

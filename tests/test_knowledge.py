@@ -23,7 +23,11 @@ sys.modules.update({
     'openai': MagicMock(), 'groq': MagicMock(), 'winsound': MagicMock(),
     'dotenv': MagicMock(),
 })
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -42,8 +46,8 @@ def check(cond, name, detail=""):
     else: FAIL += 1; print(f"  ✗ FAIL {name}: {detail}")
 
 # Cô lập: file prompt test + dọn bảng tri thức
-pb.CUSTOM_FILE = Path("test_custom_prompt_kn_tmp.txt")
-pb.BACKUP_DIR = Path("test_prompt_backups_kn_tmp")
+pb.CUSTOM_FILE = Path(str(_TMPDIR / "test_custom_prompt_kn_tmp.txt"))
+pb.BACKUP_DIR = Path(str(_TMPDIR / "test_prompt_backups_kn_tmp"))
 if pb.CUSTOM_FILE.exists(): pb.CUSTOM_FILE.unlink()
 kn.clear()
 
@@ -299,6 +303,32 @@ check("PROMPT MẪU CHUẨN" in ref_in_user and "[TÊN SHOP]" in ref_in_user, "G
 r = api.get("/prompt/template", headers=H)
 check(r.status_code == 200 and "PROMPT MẪU CHUẨN" in r.get_json()["template"], "G5 api_template")
 check(api.get("/prompt/template").status_code == 401, "G6 template_needs_auth")
+
+print("\n── H. Versioning kho tri thức (snapshot/rollback) ──")
+kn.clear(shop="ver@x")
+# DỌN version cũ của shop test: DB tạm KHÔNG xoá giữa các lần chạy nên version
+# tích luỹ; vượt MAX_VERSIONS là prune xoay vòng làm vers[-1] không còn là V1
+# của lần chạy này (test từng fail chập chờn đúng vì thế).
+from app.core.db import get_db as _gdb
+try:
+    _gdb().execute("DELETE FROM knowledge_versions WHERE shop=?", ("ver@x",))
+except Exception:
+    pass   # bảng chưa tồn tại ở lần chạy đầu — ingest bên dưới sẽ tự tạo
+# Ingest V1 → V2: bản V1 phải được snapshot lại trước khi bị ghi đè
+kn.ingest([{"title": "V1", "content": "giá gốc 500k", "keywords": ["gia"]}], shop="ver@x")
+kn.ingest([{"title": "V2", "content": "giá mới 700k", "keywords": ["gia"]}], shop="ver@x")
+vers = kn.list_versions(shop="ver@x")
+check(len(vers) >= 1 and vers[0]["chunk_count"] == 1, "H1 snapshot_created", vers)
+cur = kn.list_chunks(shop="ver@x", kind=kn.KIND_FACT)
+check(cur and cur[0]["content"] == "giá mới 700k", "H2 hien_tai_la_V2")
+# Khôi phục về bản V1 (kho cũ "giá gốc 500k")
+oldest = kn.list_versions(shop="ver@x")[-1]
+n = kn.restore_version(oldest["id"], shop="ver@x")
+cur = kn.list_chunks(shop="ver@x", kind=kn.KIND_FACT)
+check(n == 1 and cur and cur[0]["content"] == "giá gốc 500k", "H3 rollback_ve_V1", cur)
+# Rollback nhầm shop khác → không tìm thấy bản → -1 (cách ly)
+check(kn.restore_version(oldest["id"], shop="shop-khac") == -1, "H4 khong_rollback_cheo_shop")
+kn.clear(shop="ver@x")
 
 # Dọn file tạm
 import shutil

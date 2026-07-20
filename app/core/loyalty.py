@@ -72,12 +72,10 @@ def get_by_code(code: str) -> dict | None:
 
 
 def _tenant_where(tenant_ws):
-    if not tenant_ws:
-        return "", ()
+    """Mảnh ' WHERE ...' multi-tenant (nguồn chung: tenant.tenant_where)."""
     from app.core import tenant as _t
-    if tenant_ws == _t.default_owner():
-        return " WHERE (tenant=? OR tenant='')", (tenant_ws,)
-    return " WHERE tenant=?", (tenant_ws,)
+    frag, params = _t.tenant_where(tenant_ws)
+    return (" WHERE " + frag, tuple(params)) if frag else ("", ())
 
 
 def list_vouchers(tenant_ws: str = None) -> list:

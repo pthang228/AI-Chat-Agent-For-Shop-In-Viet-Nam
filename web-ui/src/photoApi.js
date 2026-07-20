@@ -1,27 +1,12 @@
 // API Thư viện ảnh (bridge 5005) — bộ ảnh đặt tên để bot gửi khách.
-import { getToken } from "./auth.js";
-
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401; opts.json → body JSON,
+// FormData (upload) giữ nguyên để trình duyệt tự set multipart boundary.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
+
 export const PHOTO_BASE = HOST.bridge;
 
-async function j(path, opts = {}) {
-  try {
-    const r = await fetch(PHOTO_BASE + path, {
-      ...opts,
-      headers: {
-        ...(opts.json ? { "Content-Type": "application/json" } : {}),
-        Authorization: `Bearer ${getToken()}`,
-        ...(opts.headers || {}),
-      },
-      body: opts.json ? JSON.stringify(opts.json) : opts.body,
-    });
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };
-  }
-}
+const j = makeClient(PHOTO_BASE);
 
 export const photoApi = {
   sets: () => j("/photos/sets"),

@@ -21,7 +21,11 @@ sys.modules.update({
     'google.oauth2.service_account': MagicMock(), 'openai': MagicMock(),
     'groq': MagicMock(), 'winsound': MagicMock(), 'requests': MagicMock(), 'dotenv': MagicMock(),
 })
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_security_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_security_tmp.sqlite')
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
 

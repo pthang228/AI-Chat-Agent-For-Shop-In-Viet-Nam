@@ -122,10 +122,17 @@ def register_billing_routes(app):
             return err
         from app.core import ai_models
         key = ((request.get_json(force=True, silent=True) or {}).get("model") or "").strip()
-        if key and key not in ai_models.CATALOG:
+        if key and key not in ai_models.public_catalog():
             return {"ok": False, "error": "Mô hình không hợp lệ"}, 400
         if key and key not in ai_models.available_keys():
             return {"ok": False, "error": "Mô hình này máy chủ chưa cấu hình API key"}, 400
+        # TRẦN MODEL THEO HẠNG GÓI — chống shop gói rẻ chọn model đắt (nền tảng
+        # lỗ tiền LLM vì quota đếm lượt, không đếm token)
+        if key and not ai_models.allowed_for_tier(key, billing.tier_of(u["username"])):
+            need = ai_models.min_tier_for(key)
+            return {"ok": False, "error": f"Mô hình này cần hạng gói "
+                    f"{billing.TIERS.get(need, {}).get('label', need)} trở lên — "
+                    f"nâng hạng hoặc chọn mô hình rẻ hơn"}, 400
         billing.ensure_billing(u["username"])
         db.execute("UPDATE billing SET ai_model=? WHERE username=?", (key, u["username"]))
         return {"ok": True, **billing.status(u["username"])}

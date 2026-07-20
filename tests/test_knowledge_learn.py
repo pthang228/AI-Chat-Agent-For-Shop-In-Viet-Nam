@@ -23,7 +23,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_klearn_tmp.sqlite'   # DB test RIÊNG file này
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_klearn_tmp.sqlite')   # DB test RIÊNG file này
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -215,7 +219,7 @@ cm._sessions.clear()
 conv = cm.get("KH1")
 conv.add_user_message("cho hỏi homestay có cho mượn xe máy không ạ?")
 
-bridge_mod.BOT_STATE_FILE = Path("test_bot_state_kl_tmp.json")
+bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_kl_tmp.json"))
 brain = Brain(channel=FakeChannel(), conv_manager=cm)
 client = bridge_mod.create_bridge(brain, cm).test_client()
 
@@ -233,7 +237,7 @@ check(sug["channel"] == "zalo" and "xe máy" in sug["question"], "E1 channel_and
 # Dọn
 db.execute("DELETE FROM knowledge_suggestions")
 db.execute("DELETE FROM knowledge_chunks")
-Path("test_bot_state_kl_tmp.json").unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_bot_state_kl_tmp.json")).unlink(missing_ok=True)
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

@@ -26,11 +26,8 @@ from app.core.telegram_store import TelegramStore
 from app.channels.telegram import TelegramChannel
 from app.web_api.telegram_api import create_telegram_api, start_poller
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("bot_telegram.log", encoding="utf-8")],
-)
+from app.core.logging_setup import setup_logging
+setup_logging("bot_telegram.log")
 log = logging.getLogger(__name__)
 
 

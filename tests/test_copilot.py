@@ -23,7 +23,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_copilot_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_copilot_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 sys.path.insert(0, '.')
 
@@ -41,8 +45,18 @@ def check(cond, name, detail=""):
 
 db = get_db()
 db.execute("DELETE FROM canned_replies")
-bridge_mod.BOT_STATE_FILE = Path("test_bot_state_co_tmp.json")
+bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_co_tmp.json"))
 bridge_mod.BOT_STATE_FILE.unlink(missing_ok=True)
+
+# Copilot toggle cờ GLOBAL/kênh cha nay là QUẢN TRỊ NỀN TẢNG (chống 1 shop tắt bot
+# toàn hệ thống). Chủ chạy copilot trong test = quản trị nền tảng → đăng ký admin.
+from app.web_api.auth_api import hash_password as _hp
+from datetime import datetime as _dtn
+db.execute("DELETE FROM users")
+for _u in ("chu@test", "co@test"):
+    db.execute("INSERT OR IGNORE INTO users(username,password_hash,homestay,email,provider,picture,created_at)"
+               " VALUES(?,?,?,?,?,?,?)", (_u, _hp("x"), "", "", "password", "", _dtn.now().isoformat()))
+db.execute("UPDATE users SET role='admin' WHERE username IN ('chu@test','co@test')")
 
 # A–D test hạng CHUYÊN SÂU (có gói) → ép premium; hạng cơ bản test riêng ở E.
 _orig_is_premium = copilot._is_premium

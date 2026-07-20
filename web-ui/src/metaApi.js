@@ -1,19 +1,9 @@
 // Gọi server Meta (meta_webhook Flask, cổng 5006) — đã bật CORS.
-import { withAuth } from "./apiAuth.js";
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401 + offline → status 0.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const META_URL = HOST.meta;
 
-async function j(path, opts) {
-  try {
-    const r = await fetch(META_URL + path, withAuth(opts));
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    // server Meta chưa chạy / mạng lỗi → trả về để UI hiện "offline", không treo
-    return { ok: false, status: 0, body: null };
-  }
-}
+const j = makeClient(HOST.meta);
 
 export const meta = {
   config: () => j("/meta/config"),

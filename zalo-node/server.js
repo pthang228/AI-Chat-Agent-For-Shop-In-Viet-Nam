@@ -39,6 +39,16 @@ async function imageMetadataGetter(filePath) {
 }
 
 const PORT = process.env.ZALO_NODE_PORT || 4000;
+// BẢO MẬT: mặc định chỉ nghe localhost — service này KHÔNG có auth theo mặc
+// định, bind mọi interface là ai cùng mạng cũng /send /logout được. Docker
+// (Python gọi qua mạng nội bộ compose) đặt NODE_BIND=0.0.0.0.
+const BIND_HOST = process.env.NODE_BIND || "127.0.0.1";
+// NODE_API_KEY đặt → mọi request phải kèm header X-Node-Key khớp (middleware
+// bên dưới). Rỗng = như cũ (dev/test local).
+const NODE_API_KEY = process.env.NODE_API_KEY || "";
+// BRIDGE_SECRET đặt → gửi kèm X-Bridge-Secret khi forward tin sang Python
+// (bridge /incoming từ chối request thiếu secret khi production).
+const BRIDGE_SECRET = process.env.BRIDGE_SECRET || "";
 const BRIDGE_URL = process.env.PY_BRIDGE_URL || "http://127.0.0.1:5005/incoming";
 // Acc default (chủ nền tảng) giữ NGUYÊN đường dẫn session cũ; acc shop thuê nằm
 // trong SESSIONS_DIR (Docker: cả hai trỏ vào volume /data để giữ phiên qua restart).
@@ -61,6 +71,25 @@ const MAX_QR_REGEN = 20;
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
+
+// So sánh chuỗi thời-gian-cố-định (chống timing attack); khác độ dài → false
+// ngay (timingSafeEqual ném lỗi nếu buffer lệch độ dài).
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a || ""), "utf-8");
+  const bb = Buffer.from(String(b || ""), "utf-8");
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+
+// BẢO MẬT: NODE_API_KEY đặt → mọi request (trừ GET /health) phải có header
+// X-Node-Key khớp. Chặn kẻ cùng mạng gọi thẳng /send, /logout, /accounts…
+// (service này điều khiển acc Zalo THẬT của các shop). Rỗng → như cũ.
+app.use((req, res, next) => {
+  if (!NODE_API_KEY) return next();
+  if (req.method === "GET" && req.path === "/health") return next();
+  if (safeEqual(req.get("X-Node-Key"), NODE_API_KEY)) return next();
+  console.warn(`[auth] thiếu/sai X-Node-Key: ${req.method} ${req.path} từ ${req.ip}`);
+  return res.status(401).json({ error: "unauthorized" });
+});
 
 // ── Config per-acc (nhóm/chủ nhận thông báo) ──
 // Định dạng mới {accounts: {id: {ownerGroupId, ownerUserId}}}; file CŨ phẳng
@@ -234,9 +263,13 @@ class ZaloAccount {
             : message.data.avt || (await this.getAvatar(message.threadId)) || "",
           ownId: this.state.ownId,
         };
+        // BRIDGE_SECRET đặt → gửi kèm X-Bridge-Secret (bridge production
+        // từ chối POST /incoming thiếu secret — chống giả tin cùng mạng)
+        const bridgeHeaders = { "Content-Type": "application/json" };
+        if (BRIDGE_SECRET) bridgeHeaders["X-Bridge-Secret"] = BRIDGE_SECRET;
         const r = await fetch(BRIDGE_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: bridgeHeaders,
           body: JSON.stringify(payload),
         });
         if (!r.ok) console.error(`[${this.id}][bridge] HTTP`, r.status);
@@ -374,6 +407,20 @@ function reqAcc(req) {
 // ═════════════════════════════════════════════════════════════════════
 //  API — mọi endpoint nhận acc (mặc định "default" — tương thích bản cũ)
 // ═════════════════════════════════════════════════════════════════════
+
+// Health cho Docker healthcheck + uptime monitor. Trước đây middleware whitelist
+// GET /health nhưng KHÔNG có route → 404: container "Up" xanh trong khi listener
+// Zalo chết im lặng. 503 khi có account từng đăng nhập mà rơi khỏi logged_in.
+app.get("/health", (req, res) => {
+  const accs = [];
+  let degraded = false;
+  for (const [id, acct] of accounts) {
+    const st = acct.state.status;
+    accs.push({ acc: id, status: st });
+    if (st !== "logged_in" && fs.existsSync(acct.sessionFile())) degraded = true;
+  }
+  res.status(degraded ? 503 : 200).json({ ok: !degraded, accounts: accs });
+});
 
 // Danh sách account đang quản lý (debug/quản trị)
 app.get("/accounts", (req, res) => {
@@ -614,8 +661,10 @@ setInterval(poll,2000); poll();
 });
 
 // ── Boot: resume acc default (auto-QR như bản cũ) + mọi acc có session ──
-app.listen(PORT, () => {
-  console.log(`🌐 Zalo Node service (multi-account): http://localhost:${PORT}`);
+// BIND_HOST mặc định 127.0.0.1 (chỉ máy này gọi được); Docker đặt NODE_BIND=0.0.0.0
+app.listen(PORT, BIND_HOST, () => {
+  console.log(`🌐 Zalo Node service (multi-account): http://${BIND_HOST}:${PORT}` +
+              (NODE_API_KEY ? " (yêu cầu X-Node-Key)" : ""));
   loadConfig();
   getAccount("default").tryResumeSession(true);
   try {

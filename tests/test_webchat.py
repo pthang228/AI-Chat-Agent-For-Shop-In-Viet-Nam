@@ -27,7 +27,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_webchat_tmp.sqlite'   # DB riêng cho suite này
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_webchat_tmp.sqlite')   # DB riêng cho suite này
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
@@ -45,15 +49,16 @@ def check(cond, name, detail=""):
     if cond: PASS += 1; print(f"  ✓ {name}")
     else: FAIL += 1; print(f"  ✗ FAIL {name}: {detail}")
 
-bridge_mod.BOT_STATE_FILE = Path("test_bot_state_wc_tmp.json")
+bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_wc_tmp.json"))
 bridge_mod.BOT_STATE_FILE.unlink(missing_ok=True)
 
 cm = ConversationManager(account="webchat-test")
 cm._sessions.clear()
 
 print("\n── A. WebChatStore ──")
-store = WebChatStore(path=Path("test_wc_store_tmp.json"))
-store._sites.clear()
+# Backend giờ là SQLite — clear() dọn dữ liệu kênh sót từ lần chạy trước
+store = WebChatStore(path=Path(str(_TMPDIR / "test_wc_store_tmp.json")))
+store.clear()
 
 sid = store.create("Web Haru", owner_username="chu@x")
 check(sid.startswith("wc") and len(sid) == 12, "A1 site_id_format", sid)
@@ -64,7 +69,7 @@ store.set_owner(sid, "vOwner123", "Anh Chủ")
 check(store.get_owner_user_id(sid) == "vOwner123", "A5 set_owner")
 ls = store.list_sites()
 check(len(ls) == 1 and ls[0]["owner_registered"] and ls[0]["name"] == "Web Haru", "A6 list", f"{ls}")
-store2 = WebChatStore(path=Path("test_wc_store_tmp.json"))   # persist qua file
+store2 = WebChatStore(path=Path(str(_TMPDIR / "test_wc_store_tmp.json")))   # persist qua SQLite (instance mới đọc chung DB)
 check(store2.exists(sid), "A7 persisted")
 sid2 = store.create("", None)
 check(store.get(sid2)["name"] == "Website của tôi", "A8 default_name")
@@ -282,6 +287,6 @@ check(len(cm.get(f"web:{sid}:vKhach01").messages) == 0, "D8 reset")
 
 # Dọn
 bridge_mod.BOT_STATE_FILE.unlink(missing_ok=True)
-Path("test_wc_store_tmp.json").unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_wc_store_tmp.json")).unlink(missing_ok=True)
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

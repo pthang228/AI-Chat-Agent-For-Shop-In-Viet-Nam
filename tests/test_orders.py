@@ -21,7 +21,11 @@ sys.modules.update({
     'openai': MagicMock(), 'groq': MagicMock(), 'winsound': MagicMock(),
     'dotenv': MagicMock(),
 })
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')
 sys.path.insert(0, '.')
 
 import json

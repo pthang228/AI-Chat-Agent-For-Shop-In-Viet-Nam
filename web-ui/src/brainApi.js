@@ -1,18 +1,9 @@
 // Gọi "não bộ" Python (bridge Flask, cổng 5005) — đã bật CORS.
-import { withAuth } from "./apiAuth.js";
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401 + offline → status 0.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const BRIDGE_URL = HOST.bridge;
 
-async function j(path, opts) {
-  try {
-    const r = await fetch(BRIDGE_URL + path, withAuth(opts));
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };   // não bộ (5005) chưa chạy → offline
-  }
-}
+const j = makeClient(HOST.bridge);
 
 export const brain = {
   botStatus: (channel) => j("/bot-status" + (channel ? "?channel=" + encodeURIComponent(channel) : "")),

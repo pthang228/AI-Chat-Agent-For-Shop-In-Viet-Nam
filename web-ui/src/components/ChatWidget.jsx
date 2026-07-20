@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { HOST } from "../apiConfig.js";
+import { useI18n } from "../i18n.jsx";
 
 // Bong bóng chat tư vấn DỊCH VỤ (kiểu Crisp) — KÉO THẢ được + bấm ✕ để xoá.
 // Chat với bot bán hàng của NovaChat (backend /support/chat, không cần đăng nhập).
@@ -27,6 +28,7 @@ function loadPos() {
 }
 
 export default function ChatWidget() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState(loadMsgs);
   const [text, setText] = useState("");
@@ -98,7 +100,7 @@ export default function ChatWidget() {
 
   function removeBubble(e) {
     e.stopPropagation();
-    if (!confirm("Ẩn bong bóng chat tư vấn?\n(Muốn hiện lại: vào Cài đặt → Hiện lại bong bóng chat, hoặc xoá dữ liệu trình duyệt.)")) return;
+    if (!confirm(t("cwc.hide_confirm"))) return;
     localStorage.setItem(HIDDEN_KEY, "1");
     setHidden(true); setOpen(false);
   }
@@ -173,7 +175,7 @@ export default function ChatWidget() {
       {/* Bong bóng — kéo để di chuyển, bấm để mở, ✕ để xoá */}
       <div className={"cw-fab-wrap" + (open ? " open" : "")}>
         {!open && (
-          <button className="cw-fab-x" onClick={removeBubble} title="Ẩn bong bóng chat" aria-label="Ẩn bong bóng">✕</button>
+          <button className="cw-fab-x" onClick={removeBubble} title={t("cwc.hide_title")} aria-label={t("cwc.hide_title")}>✕</button>
         )}
         <button
           className={"cw-fab" + (open ? " open" : "") + (pos ? " moved" : "")}

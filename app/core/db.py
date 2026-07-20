@@ -13,13 +13,23 @@ Bảng:
   stats_archive — số liệu thống kê của hội thoại đã dọn (giữ vĩnh viễn, rất nhỏ)
 """
 
+import logging
 import sqlite3
 import threading
+from datetime import datetime
 
 from app.core.config import Config
 
+log = logging.getLogger(__name__)
+
 _conns: dict = {}
 _lock = threading.Lock()
+
+# PHIÊN BẢN SCHEMA hiện tại — ghi vào bảng schema_version sau khi migrate xong.
+# CÁCH TĂNG: mỗi khi thêm migration mới (thêm bảng/cột/di chuyển dữ liệu) thì
+# TĂNG số này +1; khởi động sẽ tự chèn 1 dòng (version, applied_at) mới → nhìn
+# bảng schema_version biết DB đã qua những đợt migrate nào, lúc nào.
+SCHEMA_VERSION = 1
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -336,6 +346,30 @@ CREATE TABLE IF NOT EXISTS broadcast_log (
 );
 CREATE INDEX IF NOT EXISTS idx_bclog_bid ON broadcast_log(broadcast_id);
 
+-- KHO TÀI KHOẢN KÊNH (gộp 7 file data/*.json cũ: telegram_bots / meta_pages /
+-- zalo_oa_accounts / webchat_sites / tiktok_accounts / shopee_shops /
+-- zalo_accounts). Vì sao chuyển sang SQLite: các file JSON ghi per-process →
+-- 2 tiến trình (bridge + kênh) cùng ghi là last-writer-wins NUỐT bản ghi của
+-- nhau; WAL lo đồng thời liên tiến trình. data = JSON toàn bộ hồ sơ account,
+-- các field bí mật (token/refresh_token/caller_session) được secretbox mã hoá
+-- at-rest ngay trong JSON (xem app/core/channel_store.py).
+CREATE TABLE IF NOT EXISTS channel_accounts (
+    channel        TEXT NOT NULL,               -- telegram|meta|zalo_oa|webchat|tiktok|shopee|zalo_node
+    account_id     TEXT NOT NULL,               -- bot_id/page_id/oa_id/site_id/...
+    owner_username TEXT NOT NULL DEFAULT '',    -- chủ shop sở hữu (mirror từ data để query nhanh)
+    data           TEXT NOT NULL DEFAULT '{}',  -- JSON hồ sơ account (secret đã mã hoá)
+    updated_at     TEXT,
+    PRIMARY KEY (channel, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chacc_owner ON channel_accounts(channel, owner_username);
+
+-- NHẬT KÝ PHIÊN BẢN SCHEMA — mỗi đợt migrate chèn 1 dòng (xem SCHEMA_VERSION
+-- ở đầu file: thêm migration mới → tăng hằng số đó +1)
+CREATE TABLE IF NOT EXISTS schema_version (
+    version    INTEGER NOT NULL,
+    applied_at TEXT NOT NULL
+);
+
 -- LIÊN HỆ KHẨN CẤP & THÔNG BÁO CHỦ SHOP (thay cơ chế tự-gọi-điện không scale).
 -- 1 dòng / chủ shop. emergency_* = liên hệ bot ĐƯA CHO KHÁCH khi cần gấp;
 -- share_mode = khi nào bot đưa (off|strict|ask|greeting); events = JSON
@@ -367,7 +401,24 @@ class Db:
             self.conn.executescript(_SCHEMA)
             self._migrate_columns()
             self._migrate_tenant()
+            self._stamp_schema_version()
             self.conn.commit()
+
+    def _stamp_schema_version(self):
+        """Ghi SCHEMA_VERSION hiện tại vào schema_version SAU khi migrate xong.
+        Chỉ chèn khi version trong DB < SCHEMA_VERSION (mỗi đợt nâng cấp 1 dòng
+        — giữ lịch sử applied_at, không ghi lại mỗi lần khởi động)."""
+        try:
+            row = self.conn.execute(
+                "SELECT MAX(version) AS v FROM schema_version").fetchone()
+            current = (row["v"] if row else None) or 0
+            if current < SCHEMA_VERSION:
+                self.conn.execute(
+                    "INSERT INTO schema_version(version, applied_at) VALUES (?,?)",
+                    (SCHEMA_VERSION, datetime.now().isoformat()))
+        except Exception as e:
+            # Không chặn khởi động vì bảng nhật ký — nhưng phải thấy trong log
+            log.warning(f"[db.migrate] ghi schema_version lỗi: {e}")
 
     def _migrate_columns(self):
         """Thêm cột mới vào bảng đã tồn tại (CREATE TABLE IF NOT EXISTS không tự thêm).
@@ -433,14 +484,26 @@ class Db:
             # summary_upto = index tin nhắn đã được tóm (messages[:upto] nằm trong summary)
             ("sessions", "summary",      "TEXT NOT NULL DEFAULT ''"),
             ("sessions", "summary_upto", "INTEGER NOT NULL DEFAULT 0"),
+            # BROADCAST RESUME: ghi chú trạng thái cho chủ shop (vd bị gián đoạn
+            # do crash — recover_stuck đánh dấu để UI hiện "bấm gửi lại")
+            ("broadcasts", "note", "TEXT NOT NULL DEFAULT ''"),
+            # NHẮC VIỆC job nền: đã báo chủ lúc nào (NULL = chưa) — chống nhắc
+            # trùng mỗi vòng quét (giống orders.reminded nhưng giữ timestamp)
+            ("followups", "notified_at", "TEXT"),
+            # MULTI-TENANT cho thống kê lưu trữ: session bị dọn vẫn biết thuộc
+            # shop nào → shop thuê không MẤT số liệu lịch sử (trước đây archive
+            # không mang tenant nên chỉ chủ nền tảng được cộng)
+            ("stats_archive", "tenant", "TEXT NOT NULL DEFAULT ''"),
         ]
         for table, col, decl in adds:
             try:
                 cols = [r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")]
                 if col not in cols:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
-            except Exception:
-                pass
+            except Exception as e:
+                # KHÔNG nuốt im lặng: migrate cột hỏng làm lệch schema (INSERT theo
+                # tên cột sẽ lỗi runtime khó truy) → phải thấy trong log.
+                log.warning(f"[db.migrate] thêm cột {table}.{col} lỗi: {e}")
 
     def _migrate_tenant(self):
         """MULTI-TENANT migrate 1 lần: dữ liệu cũ (tenant='') gán về CHỦ ĐẦU TIÊN

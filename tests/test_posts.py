@@ -27,7 +27,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_posts_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_posts_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
@@ -67,7 +71,7 @@ for t in NO:
     check(not comments.contains_phone(t), f"A phone_no: {t[:30]!r}")
 
 print("\n── B. CommentStore ──")
-cs = CommentStore(path=Path("test_cmt_store_tmp.json"))
+cs = CommentStore(path=Path(str(_TMPDIR / "test_cmt_store_tmp.json")))
 cs._pages = {}
 s = cs.get("PG1")
 check(s == DEFAULTS, "B1 defaults", f"{s}")
@@ -76,7 +80,7 @@ cs.set("PG1", {"auto_hide_phone": 1, "auto_reply_text": "  Cảm ơn {name}!  ",
 s = cs.get("PG1")
 check(s["auto_hide_phone"] is True and s["auto_reply_text"] == "Cảm ơn {name}!"
       and "khong_hop_le" not in s, "B2 set_clean", f"{s}")
-cs2 = CommentStore(path=Path("test_cmt_store_tmp.json"))
+cs2 = CommentStore(path=Path(str(_TMPDIR / "test_cmt_store_tmp.json")))
 check(cs2.get("PG1")["auto_hide_phone"] is True, "B3 persist")
 
 print("\n── C. handle_feed_change ──")
@@ -148,7 +152,7 @@ from app.core.meta_store import MetaStore
 import app.web_api.meta_webhook as mw
 import app.web_api.bridge as bridge_mod
 
-bridge_mod.BOT_STATE_FILE = Path("test_bot_state_posts_tmp.json")
+bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_posts_tmp.json"))
 
 class _FakeCh:
     def __init__(self): self.notes = []
@@ -162,12 +166,12 @@ class FakeBrain:
 
 cm = ConversationManager(account="posts-test")
 cm._sessions.clear()
-mstore = MetaStore(path=Path("test_meta_store_posts_tmp.json"))
-mstore._pages = {}
+mstore = MetaStore(path=Path(str(_TMPDIR / "test_meta_store_posts_tmp.json")))
+mstore.clear()   # backend SQLite — dọn dữ liệu kênh sót từ lần chạy trước
 mstore.upsert("PG9", name="Page Test", access_token="PTOK")
 
 fb = FakeBrain()
-_cstore = CommentStore(path=Path("test_cmt_settings_api_tmp.json"))
+_cstore = CommentStore(path=Path(str(_TMPDIR / "test_cmt_settings_api_tmp.json")))
 _cstore._pages = {}
 api = mw.create_meta_webhook(fb, cm, mstore, comment_store=_cstore).test_client()
 
@@ -251,8 +255,8 @@ with patch.object(mw, '_load_bot_state', return_value={"enabled": True}), \
 check(fb.handled and fb.handled[-1][0] == "fb:PG9:U55", "E3 messaging_still_works", f"{fb.handled}")
 
 # Dọn file tạm
-for f in ["test_cmt_store_tmp.json", "test_meta_store_posts_tmp.json",
-          "test_bot_state_posts_tmp.json", "test_cmt_settings_api_tmp.json"]:
+for f in [str(_TMPDIR / "test_cmt_store_tmp.json"), str(_TMPDIR / "test_meta_store_posts_tmp.json"),
+          str(_TMPDIR / "test_bot_state_posts_tmp.json"), str(_TMPDIR / "test_cmt_settings_api_tmp.json")]:
     Path(f).unlink(missing_ok=True)
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")

@@ -9,11 +9,17 @@ Cấu trúc sheet thực tế:
 Tab theo tháng: "Lịch tháng 5/2026"
 """
 
+import os
 import re
+import time as _time
+import logging
+import threading
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, date, time as dtime
 from app.core.config import Config
+
+log = logging.getLogger(__name__)
 
 
 def _parse_slot_times(slot_str: str):
@@ -82,11 +88,55 @@ def homestays_for(tenant: str | None) -> list:
                 (tenant,))
         out += [{"name": r["name"] or "Chi nhánh", "sheet_id": r["sheet_id"]} for r in rows]
     except Exception as e:
-        print(f"[Sheets] lỗi đọc shop_sheets: {e}")
+        log.warning(f"[Sheets] lỗi đọc shop_sheets: {e}")
     return out
 
 
 _client_cache = None    # gspread client tái dùng — google-auth tự refresh token khi hết hạn
+
+# ── CACHE DỮ LIỆU SHEET (in-process, TTL ngắn) ───────────────────────────
+# LÝ DO: mỗi câu hỏi của khách = ≥2 call Google API (open_by_key + get_all_values),
+# giờ cao điểm dính quota 429 → bot phải trả lời "không chắc chắn" ([LOI_DOC_SHEET]).
+# TRADE-OFF: booking mới ghi vào sheet trong vòng TTL giây có thể CHƯA thấy —
+# chấp nhận vì luồng verify-trước-confirm vẫn đọc qua cache mới nhất trong TTL,
+# đổi lại bot sống sót giờ cao điểm thay vì sập vì quota.
+# Chỉ cache RAW VALUES của tab (all_rows), KHÔNG cache kết quả lọc theo ngày —
+# lọc "ca hôm nay đã qua giờ" phụ thuộc đồng hồ nên phải tính lại mỗi lần.
+SHEETS_CACHE_TTL = float(os.getenv("SHEETS_CACHE_TTL", "45"))
+
+# key = (sheet_id, year, month) → (timestamp, tab_title, all_rows)
+_rows_cache: dict[tuple, tuple[float, str, list]] = {}
+_rows_cache_lock = threading.Lock()   # nhiều thread webhook đọc/ghi cùng lúc
+
+
+def _cache_get(key: tuple, allow_stale: bool = False):
+    """Trả (tab_title, all_rows) nếu còn hạn TTL; allow_stale=True → trả cả bản
+    ĐÃ HẾT HẠN (dùng tạm khi Google trả 429 — stale-while-error)."""
+    with _rows_cache_lock:
+        ent = _rows_cache.get(key)
+    if ent is None:
+        return None
+    ts, title, rows = ent
+    if allow_stale or (_time.time() - ts) <= SHEETS_CACHE_TTL:
+        return title, rows
+    return None
+
+
+def _cache_put(key: tuple, title: str, rows: list):
+    with _rows_cache_lock:
+        _rows_cache[key] = (_time.time(), title, rows)
+
+
+def clear_cache():
+    """Xoá cache (dùng cho test / khi chủ shop vừa sửa sheet muốn thấy ngay)."""
+    with _rows_cache_lock:
+        _rows_cache.clear()
+
+
+def _is_quota_error(e: Exception) -> bool:
+    """Nhận diện lỗi quota/rate-limit của Google API (đáng dùng cache cũ tạm)."""
+    s = str(e)
+    return ("429" in s) or ("RESOURCE_EXHAUSTED" in s) or ("Quota" in s)
 
 
 def _get_client():
@@ -149,23 +199,80 @@ def _parse_column_map(row1: list[str], row2: list[str]) -> dict[int, tuple[str, 
     return col_map
 
 
+def _load_month_rows(sheet_id: str, homestay_name: str, year: int, month: int,
+                     errors: list | None, open_state: dict):
+    """Lấy (tab_title, all_rows) của 1 tab tháng — ưu tiên cache TTL, miss mới
+    gọi Google API. Trả None nếu không có tab / lỗi không cứu được.
+
+    open_state: dict dùng chung cho các tháng trong 1 lần _query_sheet —
+    giữ spreadsheet đã mở (open_by_key chỉ gọi 1 lần) và exception mở lỗi
+    (không thử mở lại + không log lặp cho tháng sau).
+    """
+    cache_key = (sheet_id, year, month)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached   # cache hit → 0 call Google API
+
+    def _stale_or_error(e):
+        # 429/quota → dùng TẠM bản cache ĐÃ HẾT HẠN nếu có (stale-while-error):
+        # dữ liệu hơi cũ vẫn tốt hơn bắt bot trả lời "không chắc chắn" giờ cao điểm.
+        if _is_quota_error(e):
+            stale = _cache_get(cache_key, allow_stale=True)
+            if stale is not None:
+                log.warning(
+                    f"[Sheets] Quota/429 khi đọc {homestay_name} tháng {month}/{year} "
+                    f"— dùng tạm cache cũ: {e}")
+                return stale
+        if errors is not None:
+            errors.append(homestay_name)
+        return None
+
+    spreadsheet = open_state.get("ss")
+    if spreadsheet is None:
+        if "err" in open_state:
+            # Đã mở lỗi ở tháng trước — không gọi lại, chỉ thử stale
+            return _stale_or_error(open_state["err"])
+        try:
+            client = _get_client()
+            spreadsheet = client.open_by_key(sheet_id)
+            open_state["ss"] = spreadsheet
+        except Exception as e:
+            open_state["err"] = e
+            log.warning(f"[Sheets] Không mở được sheet {homestay_name}: {e}")
+            return _stale_or_error(e)
+
+    try:
+        ws = _open_tab(spreadsheet, year, month)
+    except Exception as e:
+        log.warning(f"[Sheets] Lỗi mở tab {month}/{year} {homestay_name}: {e}")
+        return _stale_or_error(e)
+    if ws is None:
+        log.info(f"[Sheets] Không tìm thấy tab tháng {month}/{year} trong {homestay_name}")
+        return None
+
+    try:
+        all_rows = ws.get_all_values()
+    except Exception as e:
+        log.warning(f"[Sheets] Lỗi đọc dữ liệu tab {ws.title} {homestay_name}: {e}")
+        return _stale_or_error(e)
+
+    _cache_put(cache_key, ws.title, all_rows)
+    return ws.title, all_rows
+
+
 def _query_sheet(sheet_id: str, homestay_name: str,
                  dates: list[date],
-                 dates_found: set | None = None) -> list[dict]:
+                 dates_found: set | None = None,
+                 errors: list | None = None) -> list[dict]:
     """
     Đọc một file sheet, trả về danh sách ca trống cho các ngày yêu cầu.
     Kết quả: [{"homestay", "phong", "ca", "ngay"}, ...]
     dates_found: nếu truyền vào, sẽ được cập nhật với các ngày tìm thấy trong sheet
                  (bất kể phòng còn hay hết — để phân biệt "không có row" vs "hết phòng")
+    errors: nếu truyền vào, TÊN sheet ĐỌC LỖI (mạng/quota/permission) sẽ được thêm
+            vào — để caller phân biệt "đọc lỗi" với "không có dữ liệu" (fail-closed).
     """
     if not sheet_id:
-        return []
-
-    try:
-        client = _get_client()
-        spreadsheet = client.open_by_key(sheet_id)
-    except Exception as e:
-        print(f"[Sheets] Không mở được sheet {homestay_name}: {e}")
         return []
 
     # Nhóm ngày theo tháng để mở đúng tab
@@ -175,14 +282,13 @@ def _query_sheet(sheet_id: str, homestay_name: str,
         months_needed.setdefault(key, []).append(d)
 
     results = []
+    open_state: dict = {}   # spreadsheet mở LƯỜI — cache hit thì 0 call Google
 
     for (year, month), month_dates in months_needed.items():
-        ws = _open_tab(spreadsheet, year, month)
-        if ws is None:
-            print(f"[Sheets] Không tìm thấy tab tháng {month}/{year} trong {homestay_name}")
+        got = _load_month_rows(sheet_id, homestay_name, year, month, errors, open_state)
+        if got is None:
             continue
-
-        all_rows = ws.get_all_values()
+        tab_title, all_rows = got
         if len(all_rows) < 3:
             continue
 
@@ -191,7 +297,7 @@ def _query_sheet(sheet_id: str, homestay_name: str,
         data = all_rows[2:]  # dữ liệu
 
         col_map = _parse_column_map(row1, row2)
-        print(f"[Sheets] {homestay_name} tab={ws.title} col_map={col_map}")
+        log.debug(f"[Sheets] {homestay_name} tab={tab_title} col_map={col_map}")
 
         # Dùng date object để so sánh, tránh lỗi format "23/5/2026" vs "23/05/2026"
         target_date_set = set(month_dates)
@@ -210,7 +316,7 @@ def _query_sheet(sheet_id: str, homestay_name: str,
                     pass
             if row_date is None or row_date not in target_date_set:
                 continue
-            print(f"[Sheets]   matched row date={ngay_str} raw={row[:6]}")
+            log.debug(f"[Sheets]   matched row date={ngay_str} raw={row[:6]}")
             # Đánh dấu ngày này ĐÃ CÓ trong sheet (dù phòng còn hay hết)
             if dates_found is not None:
                 dates_found.add(row_date)
@@ -240,7 +346,7 @@ def _query_sheet(sheet_id: str, homestay_name: str,
                             else:
                                 # Ca thường: ẩn nếu đã kết thúc hoàn toàn
                                 if end_t <= now_time:
-                                    print(f"[Sheets]   Bỏ ca đã xong: {phong} {ca} (kết thúc {end_t}, giờ {now_time})")
+                                    log.debug(f"[Sheets]   Bỏ ca đã xong: {phong} {ca} (kết thúc {end_t}, giờ {now_time})")
                                     continue
                     results.append({
                         "homestay": homestay_name,
@@ -269,7 +375,8 @@ def _dates_in_range(checkin_str: str, checkout_str: str) -> list[date]:
 
 
 def get_available_slots(checkin_str: str, checkout_str: str,
-                        homestays: list | None = None) -> tuple[dict, set]:
+                        homestays: list | None = None,
+                        errors: list | None = None) -> tuple[dict, set]:
     """
     Trả về (summary_dict, dates_found_in_sheet).
 
@@ -277,6 +384,7 @@ def get_available_slots(checkin_str: str, checkout_str: str,
     dates_found_in_sheet: tập hợp date object của các ngày tìm thấy trong sheet
         (dùng để phân biệt "ngày chưa có trong sheet" vs "ngày có nhưng hết phòng")
     homestays: danh sách sheet của SHOP (None = legacy shop gốc — tương thích cũ)
+    errors: nếu truyền vào, tên sheet ĐỌC LỖI sẽ được thêm vào (fail-closed).
     """
     try:
         dates = _dates_in_range(checkin_str, checkout_str)
@@ -287,7 +395,7 @@ def get_available_slots(checkin_str: str, checkout_str: str,
     dates_found: set = set()
 
     for hs in (homestays if homestays is not None else HOMESTAYS):
-        slots = _query_sheet(hs["sheet_id"], hs["name"], dates, dates_found)
+        slots = _query_sheet(hs["sheet_id"], hs["name"], dates, dates_found, errors)
         if not slots:
             continue
 
@@ -309,9 +417,11 @@ def format_availability_for_ai(checkin: str, checkout: str,
     """
     Tạo đoạn văn bản mô tả lịch trống để bot gửi cho khách.
 
-    Phân biệt 4 trường hợp:
+    Phân biệt 5 trường hợp:
     - [KHONG_CO_SHEET] : SHOP này chưa nối Google Sheet nào → bot không tra được,
                          brain sẽ ghi nhận yêu cầu + báo chủ shop (không bịa lịch)
+    - [LOI_DOC_SHEET]  : ĐỌC sheet THẤT BẠI (mạng/quota 429/permission) và không
+                         lấy được dữ liệu → KHÔNG suy ra 'còn phòng' (fail-closed)
     - [CHUA_CO_LICH]   : ngày không có trong sheet → chưa có booking, có thể đặt
     - KHÔNG có ca trống: ngày có trong sheet nhưng tất cả đã được đặt
     - Bình thường      : có ca trống cụ thể
@@ -327,9 +437,19 @@ def format_availability_for_ai(checkin: str, checkout: str,
     except ValueError:
         queried_dates = set()
 
-    data, dates_found = get_available_slots(checkin, checkout, homestays=homestays)
+    errors: list = []
+    data, dates_found = get_available_slots(checkin, checkout,
+                                            homestays=homestays, errors=errors)
 
     if not data:
+        # ĐỌC LỖI mà không lấy được dữ liệu nào → KHÔNG kết luận còn/hết phòng.
+        # (Có dữ liệu thì vẫn hiển thị bên dưới — ca trống là dữ liệu THẬT.)
+        if errors:
+            return (
+                "[LOI_DOC_SHEET]\n"
+                f"Không đọc được lịch từ Google Sheet ({', '.join(sorted(set(errors)))}). "
+                "Chưa thể xác nhận còn phòng hay không cho ngày này."
+            )
         # Không có ca trống nào — phân biệt nguyên nhân
         if not queried_dates.intersection(dates_found):
             # Không tìm thấy row ngày nào trong sheet → ngày tương lai chưa có booking

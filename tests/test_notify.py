@@ -23,14 +23,18 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_notify_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_notify_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
 
 from pathlib import Path
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_notify_tmp.sqlite{suf}").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_notify_tmp.sqlite{suf}")).unlink(missing_ok=True)
 
 from datetime import datetime
 from app.core.db import get_db

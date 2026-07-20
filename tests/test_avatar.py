@@ -23,7 +23,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_avatar_tmp.sqlite'   # DB test RIÊNG file này
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_avatar_tmp.sqlite')   # DB test RIÊNG file này
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
@@ -65,7 +69,7 @@ class FakeChannel(Channel):
     def notify_owner(self, text): pass
     def call_owner(self): pass
 
-bridge_mod.BOT_STATE_FILE = Path("test_bot_state_av_tmp.json")
+bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_av_tmp.json"))
 cm._sessions.clear()
 brain = Brain(channel=FakeChannel(), conv_manager=cm)
 client = bridge_mod.create_bridge(brain, cm).test_client()
@@ -134,7 +138,7 @@ from app.core.telegram_store import TelegramStore
 from app.channels.telegram import TelegramChannel
 import app.web_api.telegram_api as tg_mod
 
-store = TelegramStore(path=Path("test_tg_store_av_tmp.json"))
+store = TelegramStore(path=Path(str(_TMPDIR / "test_tg_store_av_tmp.json")))
 store._bots = {}
 ch = TelegramChannel(store=store, token="", conv_manager=cm)
 
@@ -159,8 +163,8 @@ check("avatar" in d, "E3 detail_has_avatar")
 
 # Dọn file tạm
 (av_dir / "tg_test_av.jpg").unlink(missing_ok=True)
-Path("test_bot_state_av_tmp.json").unlink(missing_ok=True)
-Path("test_tg_store_av_tmp.json").unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_bot_state_av_tmp.json")).unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_tg_store_av_tmp.json")).unlink(missing_ok=True)
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

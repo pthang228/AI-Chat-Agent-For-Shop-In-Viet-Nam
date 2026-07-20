@@ -1,0 +1,50 @@
+{"text": "tối nay còn phòng không", "intent": "availability_check", "checkin": "+0"}
+{"text": "mai còn chỗ ko shop", "intent": "availability_check", "checkin": "+1"}
+{"text": "ngày mốt con phong k", "intent": "availability_check", "checkin": "+2"}
+{"text": "cho e hỏi t7 này còn slot k ạ", "intent": "availability_check"}
+{"text": "25/12 con cho trong ko", "intent": "availability_check", "checkin": "25/12"}
+{"text": "check giúp mình lịch ngày 15 tháng sau với", "intent": "availability_check"}
+{"text": "cuối tuần này còn phòng qua đêm hông", "intent": "availability_check"}
+{"text": "đêm nay ở đc k", "intent": "availability_check", "checkin": "+0"}
+{"text": "hnay con ca chieu nao trong ko", "intent": "availability_check", "checkin": "+0"}
+{"text": "chủ nhật tuần sau còn trống ko b", "intent": "availability_check"}
+{"text": "tonight còn available ko", "intent": "availability_check", "checkin": "+0"}
+{"text": "mn còn phòng k ạ", "intent": "availability_check"}
+{"text": "3/8 với 4/8 còn phòng ko", "intent": "availability_check"}
+{"text": "còn chỗ cho 2 người tối nay ko", "intent": "availability_check", "checkin": "+0"}
+{"text": "bảng giá", "intent": "price_list_request"}
+{"text": "cho xin giá phòng vs ạ", "intent": "price_list_request"}
+{"text": "giá qua đêm nhiêu v shop", "intent": "price_list_request"}
+{"text": "phòng rẻ nhất bao nhiêu tiền", "intent": "price_list_request"}
+{"text": "gia ca the nao b oi", "intent": "price_list_request"}
+{"text": "cho mình xem ảnh phòng với", "intent": "photo_request"}
+{"text": "xin ảnh phòng", "intent": "photo_request"}
+{"text": "co hinh phong ko cho xem thu", "intent": "photo_request"}
+{"text": "cho em xem ảnh thực tế đc k ạ", "intent": "photo_request"}
+{"text": "cho gặp chủ nhà đi", "intent": "contact_request"}
+{"text": "mình muốn nói chuyện với người thật", "intent": "contact_request"}
+{"text": "cho xin sdt chủ shop", "intent": "contact_request"}
+{"text": "gọi chủ giúp e vs, gấp lắm", "intent": "contact_request"}
+{"text": "admin oi vao rep e voi", "intent": "contact_request"}
+{"text": "ok chốt phòng tối nay nhé", "intent": "availability_check", "expect_booking": true, "checkin": "+0"}
+{"text": "đặt phòng tối nay cho mình", "intent": "availability_check", "expect_booking": true, "checkin": "+0"}
+{"text": "ok lấy phòng đó nha, mai mình qua", "expect_booking": true}
+{"text": "chốt đơn giúp em nhé shop", "expect_booking": true}
+{"text": "mình xác nhận đặt ngày 20/12 nhé", "expect_booking": true}
+{"text": "cho mình dời lịch sang tối mai đc ko", "intent": "reschedule_request"}
+{"text": "đổi giúp e sang ngày 28 nha", "intent": "reschedule_request"}
+{"text": "xin lỗi shop cho mình hủy phòng tối nay", "intent": "reschedule_request"}
+{"text": "hello", "intent": "other"}
+{"text": "cảm ơn shop nhiều nha", "intent": "other"}
+{"text": "ok để mình suy nghĩ thêm", "intent": "other"}
+{"text": "dạ vâng ạ", "intent": "other"}
+{"text": "shop ở đâu vậy", "intent": "other"}
+{"text": "chỗ mình có gần biển không", "intent": "other"}
+{"text": "đi từ sân bay tới đó bao xa", "intent": "other"}
+{"text": "có cho mang thú cưng không ạ", "intent": "other"}
+{"text": "phòng có máy giặt sấy riêng không", "intent": "other"}
+{"text": "bên mình có xuất hóa đơn đỏ được không", "intent": "other"}
+{"text": "combo nghỉ dưỡng 3 ngày 2 đêm giá gói bao nhiêu có kèm xe đưa đón sân bay không", "intent": "other"}
+{"text": "wifi mạnh ko shop, mình cần làm việc online", "intent": "other"}
+{"text": "checkin mấy giờ checkout mấy giờ vậy", "intent": "other"}
+{"text": "cho 6 người ở 1 phòng đc ko phụ thu nhiêu", "intent": "other"}

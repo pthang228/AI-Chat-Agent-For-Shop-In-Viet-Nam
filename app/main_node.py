@@ -31,11 +31,8 @@ from app.core.brain import Brain
 from app.channels.zalo_node import ZaloNodeChannel
 from app.web_api.bridge import create_bridge
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("bot.log", encoding="utf-8")],
-)
+from app.core.logging_setup import setup_logging
+setup_logging("bot.log")   # stdout + file XOAY VÒNG (DATA_DIR/logs/) — không phình vô hạn
 log = logging.getLogger(__name__)
 
 

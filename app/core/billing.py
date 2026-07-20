@@ -225,7 +225,18 @@ def pending_deposits() -> list:
         "WHERE status='pending' ORDER BY id")]
 
 
-def confirm_deposit(code: str) -> dict:
+def confirm_deposit(code: str, paid_amount: int | None = None) -> dict:
+    """Xác nhận 1 lệnh nạp → cộng ví.
+
+    paid_amount:
+      - None  → XÁC NHẬN TAY (admin/script tin tưởng): ghi có đúng số tiền của lệnh nạp.
+      - số    → ĐỐI SOÁT TỰ ĐỘNG (webhook SePay/Casso): ghi có ĐÚNG SỐ TIỀN THẬT
+                nhận được, TUYỆT ĐỐI không tin số ghi trong lệnh nạp. Đây là bản vá
+                lỗ hổng: trước đây tạo lệnh 100tr rồi chỉ chuyển 10k đúng nội dung
+                cũng được cộng đủ 100tr.
+    Ghi có + đổi trạng thái là NGUYÊN TỬ (UPDATE ... WHERE status='pending') để 2
+    webhook trùng không cộng ví 2 lần.
+    """
     db = get_db()
     rows = db.query("SELECT * FROM deposits WHERE code=?", ((code or "").strip().upper(),))
     if not rows:
@@ -233,15 +244,29 @@ def confirm_deposit(code: str) -> dict:
     d = rows[0]
     if d["status"] != "pending":
         raise ValueError(f"Lệnh nạp {code} đã ở trạng thái {d['status']}")
+    requested = int(d["amount"])
+    credit = requested if paid_amount is None else int(paid_amount)
+    if credit <= 0:
+        raise ValueError(f"Số tiền nạp không hợp lệ ({credit})")
+    note = f"Nạp tiền (mã {d['code']})"
+    if paid_amount is not None and credit != requested:
+        note = (f"Nạp tiền (mã {d['code']}; lệnh {requested:,}₫, "
+                f"thực nhận {credit:,}₫)")
     with db.lock:
-        db.conn.execute("UPDATE deposits SET status='confirmed', confirmed_at=? WHERE id=?",
-                        (_now().isoformat(), d["id"]))
+        cur = db.conn.execute(
+            "UPDATE deposits SET status='confirmed', confirmed_at=? "
+            "WHERE id=? AND status='pending'",
+            (_now().isoformat(), d["id"]))
+        if cur.rowcount == 0:                      # đã có luồng khác xác nhận trước
+            db.conn.rollback()
+            raise ValueError(f"Lệnh nạp {code} vừa được xác nhận rồi")
         db.conn.execute("UPDATE billing SET balance = balance + ? WHERE username=?",
-                        (d["amount"], d["username"]))
-        _tx(db, d["username"], "deposit", d["amount"], f"Nạp tiền (mã {d['code']})")
+                        (credit, d["username"]))
+        _tx(db, d["username"], "deposit", credit, note)
         db.conn.commit()
-    log.info(f"[Billing] XÁC NHẬN nạp {d['amount']:,}₫ cho {d['username']} (mã {d['code']})")
-    return {"username": d["username"], "amount": d["amount"]}
+    log.info(f"[Billing] XÁC NHẬN nạp {credit:,}₫ cho {d['username']} "
+             f"(mã {d['code']}, lệnh {requested:,}₫)")
+    return {"username": d["username"], "amount": credit, "requested": requested}
 
 
 def cancel_deposit(username: str, code: str):
@@ -318,12 +343,40 @@ def durations_catalog() -> list:
 
 # ── Quota lượt AI ───────────────────────────────────────────────────
 
+_usage_log_ready = False
+
+
+def _ensure_usage_log(db):
+    """Bảng SỔ GIÁ VỐN LLM per shop — ghi MỌI lượt gọi (kể cả trong quota).
+    Trước đây cost tính xong bị VỨT với lượt trong quota → không có con số nào
+    để biết shop nào đang làm nền tảng lỗ tiền LLM."""
+    global _usage_log_ready
+    if _usage_log_ready:
+        return
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS ai_usage_log ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " username   TEXT NOT NULL,"
+        " model_key  TEXT NOT NULL DEFAULT '',"
+        " tokens_in  INTEGER NOT NULL DEFAULT 0,"
+        " tokens_out INTEGER NOT NULL DEFAULT 0,"
+        " cost_vnd   INTEGER NOT NULL DEFAULT 0,"
+        " billed     INTEGER NOT NULL DEFAULT 0,"   # 1 = đã trừ ví (vượt quota + usage bật)
+        " created_at TEXT NOT NULL)")
+    db.conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_usage_user_time"
+        " ON ai_usage_log(username, created_at)")
+    db.conn.commit()
+    _usage_log_ready = True
+
+
 def record_token_usage(username: str, model_key: str,
                        tokens_in: int, tokens_out: int) -> None:
     """Ghi chi phí token của 1 lượt gọi AI (gọi từ ai_models.chat).
     Đang trong quota → chi phí thuộc gói, không trừ ví. ĐÃ HẾT quota (hoặc
     kỳ khác) + shop bật 'tính theo usage' → TRỪ VÍ + cộng usage_spent
-    (reset theo tháng usage_period) — giống extra usage của Claude."""
+    (reset theo tháng usage_period) — giống extra usage của Claude.
+    MỌI lượt (trong lẫn ngoài quota) đều vào ai_usage_log để soi giá vốn/shop."""
     from app.core import ai_models
     cost = ai_models.cost_vnd(model_key, tokens_in, tokens_out)
     cost_i = max(1, round(cost)) if (tokens_in or tokens_out) else 0
@@ -333,11 +386,13 @@ def record_token_usage(username: str, model_key: str,
     ensure_billing(username)
     period = _now().strftime("%Y-%m")
     with db.lock:
+        _ensure_usage_log(db)
         b = db.conn.execute("SELECT * FROM billing WHERE username=?", (username,)).fetchone()
         spent = (b["usage_spent"] or 0) if b["usage_period"] == period else 0
         used = b["ai_used"] if b["ai_period"] == _period(_tier_of(b)) else 0
         over_quota = used >= _quota_of(b)
-        if over_quota and b["usage_enabled"]:
+        billed = bool(over_quota and b["usage_enabled"])
+        if billed:
             db.conn.execute(
                 "UPDATE billing SET balance=balance-?, usage_spent=?, usage_period=? "
                 "WHERE username=?", (cost_i, spent + cost_i, period, username))
@@ -345,7 +400,44 @@ def record_token_usage(username: str, model_key: str,
             db.conn.execute(
                 "UPDATE billing SET usage_spent=?, usage_period=? WHERE username=?",
                 (spent, period, username))
+        db.conn.execute(
+            "INSERT INTO ai_usage_log(username, model_key, tokens_in, tokens_out,"
+            " cost_vnd, billed, created_at) VALUES (?,?,?,?,?,?,?)",
+            (username, model_key or "", int(tokens_in or 0), int(tokens_out or 0),
+             cost_i, 1 if billed else 0, _now().isoformat()))
         db.conn.commit()
+
+
+def ai_costs_by_shop(month: str = None) -> list:
+    """Giá vốn LLM theo shop trong 1 tháng (YYYY-MM, mặc định tháng này) —
+    kèm giá gói tháng để admin nhìn ra shop lỗ. Sắp theo cost giảm dần."""
+    db = get_db()
+    _ensure_usage_log(db)
+    month = (month or _now().strftime("%Y-%m")).strip()
+    rows = db.query(
+        "SELECT username, COUNT(*) AS n_calls, SUM(tokens_in) AS tokens_in,"
+        " SUM(tokens_out) AS tokens_out, SUM(cost_vnd) AS cost_vnd,"
+        " SUM(CASE WHEN billed=1 THEN cost_vnd ELSE 0 END) AS billed_vnd"
+        " FROM ai_usage_log WHERE created_at LIKE ? GROUP BY username"
+        " ORDER BY cost_vnd DESC", (month + "%",))
+    out = []
+    for r in rows:
+        d = dict(r)
+        tier = tier_of(d["username"])
+        d["tier"] = tier
+        d["plan_month_vnd"] = PRICES.get(tier, {}).get("month", 0)
+        out.append(d)
+    return out
+
+
+def tier_of(username: str) -> str:
+    """Hạng gói hiện tại của user ('trial' khi chưa có dòng billing) — cho
+    ai_models chặn model vượt hạng lúc runtime, không tạo dòng billing mới."""
+    try:
+        rows = get_db().query("SELECT tier FROM billing WHERE username=?", (username,))
+        return (rows[0]["tier"] if rows else "") or "trial"
+    except Exception:
+        return "trial"
 
 
 def is_blocked(username: str) -> bool:
@@ -419,6 +511,123 @@ def has_active_subscription() -> bool:
         v = True
     _active_cache.update(t=now, v=v)
     return v
+
+
+# ── Cảnh báo hết hạn gói / hết quota (thread nền) ───────────────────
+# Trước đây bot tắt IM LẶNG khi hết hạn/hết quota (channel_gate chỉ log rồi
+# drop) — chủ shop mất khách nhiều ngày không biết. Thread này quét hằng giờ,
+# nhắc mỗi mốc đúng 1 LẦN (bảng billing_warnings chống trùng, an toàn đa tiến
+# trình nhờ PRIMARY KEY + INSERT OR IGNORE).
+# Kênh nhắc: EMAIL từng chủ shop (username là email, SMTP sẵn từ OTP) — KHÔNG
+# bắn notify_owner kênh chat cho mọi shop vì notify_owner trỏ về chủ NỀN TẢNG
+# (đúng bài học lỗi cross-tenant của thread nhắc đơn); notify_fn chỉ dùng thêm
+# cho chính chủ nền tảng.
+
+WARN_DAYS_LEFT = 3          # gói trả tiền: nhắc khi còn ≤3 ngày (trial: ≤1)
+WARN_SCAN_SECONDS = 3600
+
+
+def _ensure_warnings_table(db):
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS billing_warnings ("
+        " username TEXT NOT NULL, kind TEXT NOT NULL, stamp TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, PRIMARY KEY (username, kind, stamp))")
+    db.conn.commit()
+
+
+def _warn_once(db, username: str, kind: str, stamp: str,
+               subject: str, body: str, notify_fn=None) -> int:
+    """Gửi cảnh báo đúng 1 lần cho (username, kind, stamp). Trả 1 nếu vừa gửi."""
+    with db.lock:
+        cur = db.conn.execute(
+            "INSERT OR IGNORE INTO billing_warnings(username, kind, stamp, created_at)"
+            " VALUES (?,?,?,?)", (username, kind, stamp, _now().isoformat()))
+        db.conn.commit()
+    if cur.rowcount == 0:
+        return 0                       # mốc này đã nhắc rồi
+    from app.core import mailer
+    sent = mailer.send_mail(username, subject, body) if mailer.configured() else False
+    if notify_fn:
+        from app.core import tenant
+        if username == tenant.default_owner():
+            try:
+                notify_fn(f"{subject}\n{body}")
+            except Exception as e:
+                log.error(f"[Billing] notify cảnh báo lỗi: {e}")
+    log.info(f"[Billing] cảnh báo {kind} ({stamp}) → {username}"
+             f" (email {'đã gửi' if sent else 'chưa cấu hình/lỗi'})")
+    return 1
+
+
+def check_and_warn(notify_fn=None) -> int:
+    """Quét mọi CHỦ shop: gói sắp/đã hết hạn + quota chạm 80%/100%.
+    Trả số cảnh báo vừa gửi. Gọi từ thread nền hoặc test gọi thẳng."""
+    db = get_db()
+    _ensure_warnings_table(db)
+    n = 0
+    dash = "https://" + (Config.PUBLIC_BASE_URL or "dashboard").replace("https://", "").replace("http://", "")
+    for r in db.query("SELECT username FROM users WHERE COALESCE(role,'owner') != 'staff'"):
+        u = r["username"]
+        try:
+            st = status(u)
+        except Exception as e:
+            log.error(f"[Billing] check_and_warn {u} lỗi: {e}")
+            continue
+        # 1) Thời hạn gói (bỏ qua lifetime)
+        if not st["lifetime"] and st["expires_at"]:
+            limit = 1 if st["on_trial"] else WARN_DAYS_LEFT
+            if st["active"] and st["days_left"] is not None and st["days_left"] <= limit:
+                n += _warn_once(
+                    db, u, "expiry_soon", st["expires_at"],
+                    f"[NovaChat] Gói {st['tier_label']} còn {st['days_left']} ngày",
+                    f"Gói {st['tier_label']} của bạn hết hạn ngày {st['expires_at'][:10]}.\n"
+                    f"Hết hạn là bot NGỪNG trả lời khách — gia hạn tại {dash} → Gói dịch vụ.",
+                    notify_fn)
+            elif not st["active"]:
+                n += _warn_once(
+                    db, u, "expired", st["expires_at"],
+                    "[NovaChat] Gói ĐÃ HẾT HẠN — bot đã ngừng trả lời khách",
+                    f"Gói {st['tier_label']} đã hết hạn ({st['expires_at'][:10]}). Bot đang "
+                    f"KHÔNG trả lời khách của bạn.\nGia hạn tại {dash} → Gói dịch vụ để bot chạy lại.",
+                    notify_fn)
+        # 2) Quota lượt AI trong kỳ (chỉ khi gói còn hạn)
+        quota = st["ai_quota"] or 0
+        if st["active"] and quota > 0:
+            pct = st["ai_used"] * 100 // quota
+            if pct >= 100:
+                n += _warn_once(
+                    db, u, "quota_100", st["ai_period"],
+                    "[NovaChat] HẾT quota AI — bot đã ngừng trả lời",
+                    f"Đã dùng {st['ai_used']:,}/{quota:,} lượt AI {st['ai_period_label']}. "
+                    f"Bot NGỪNG trả lời tới kỳ sau.\nNâng hạng hoặc bật 'tính theo usage' "
+                    f"tại {dash} → Gói dịch vụ.", notify_fn)
+            elif pct >= 80:
+                n += _warn_once(
+                    db, u, "quota_80", st["ai_period"],
+                    f"[NovaChat] Đã dùng {pct}% quota AI {st['ai_period_label']}",
+                    f"Đã dùng {st['ai_used']:,}/{quota:,} lượt AI {st['ai_period_label']}. "
+                    f"Hết quota là bot ngừng trả lời — cân nhắc nâng hạng tại {dash}.",
+                    notify_fn)
+    return n
+
+
+def start_expiry_warning_thread(notify_fn=None, interval: int = WARN_SCAN_SECONDS):
+    """Thread nền quét cảnh báo gói/quota (gọi 1 lần từ create_bridge)."""
+    import threading
+
+    def _loop():
+        while True:
+            try:
+                n = check_and_warn(notify_fn)
+                if n:
+                    log.info(f"[Billing] đã gửi {n} cảnh báo gói/quota")
+            except Exception as e:
+                log.error(f"[Billing] warning loop lỗi: {e}")
+            time.sleep(interval)
+
+    t = threading.Thread(target=_loop, daemon=True, name="billing-warnings")
+    t.start()
+    return t
 
 
 # ── Quản trị nền tảng: cấp / thu hồi gói (không trừ ví) ─────────────

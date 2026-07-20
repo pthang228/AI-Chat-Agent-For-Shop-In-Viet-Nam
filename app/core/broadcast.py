@@ -202,14 +202,49 @@ def cancel(bid: int) -> bool:
 
 # ── Worker gửi ───────────────────────────────────────────────────────
 
+def recover_stuck(max_age_minutes: int = 30) -> int:
+    """PHỤC HỒI sau crash: tiến trình chết giữa chừng để lại chiến dịch kẹt
+    'sending' VĨNH VIỄN (worker là thread daemon — không sống lại cùng process).
+
+    Chọn phương án đánh 'failed' + note (KHÔNG tự gửi tiếp) vì auth_token của
+    người bấm gửi chỉ nằm trong RAM thread cũ — không lưu DB nên worker mới
+    không có Bearer để POST tới server kênh. Nhưng broadcast_log đã ghi TỪNG
+    người nhận, nên chủ bấm "Gửi lại" (start trên chiến dịch failed) là RESUME
+    thật: _run bỏ qua khách đã 'sent', chỉ gửi phần còn thiếu.
+
+    Còn sống hay kẹt phân biệt bằng log gần nhất: worker ghi 1 dòng
+    broadcast_log mỗi tin, nên chiến dịch đang chạy luôn có log mới hơn
+    max_age_minutes (throttle mỗi tin chỉ vài giây). Trả về số chiến dịch đã gỡ."""
+    db = get_db()
+    cutoff = (datetime.now() - timedelta(minutes=max_age_minutes)).isoformat()
+    n = 0
+    for r in db.query("SELECT id, started_at FROM broadcasts WHERE status='sending'"):
+        last = db.query(
+            "SELECT MAX(created_at) AS ts FROM broadcast_log WHERE broadcast_id=?",
+            (r["id"],))
+        ts = (last[0]["ts"] if last else None) or r["started_at"] or ""
+        if ts >= cutoff:
+            continue    # còn nhịp tim (log/started mới) → đang chạy thật, không đụng
+        db.execute(
+            "UPDATE broadcasts SET status='failed', finished_at=?,"
+            " note='(gián đoạn — bấm gửi lại phần còn thiếu)' WHERE id=?",
+            (datetime.now().isoformat(), r["id"]))
+        n += 1
+    if n:
+        log.warning(f"[broadcast] gỡ {n} chiến dịch kẹt 'sending' (crash trước đó) → failed")
+    return n
+
+
 def start(bid: int, auth_token: str = "") -> bool:
     """Bắt đầu gửi (thread nền). auth_token = Bearer của người bấm gửi — dùng để
-    gọi HTTP nội bộ tới các server kênh (chúng cũng đứng sau auth guard)."""
+    gọi HTTP nội bộ tới các server kênh (chúng cũng đứng sau auth guard).
+    Nhận cả chiến dịch 'failed' (gián đoạn do crash) → GỬI LẠI phần còn thiếu
+    (_run tự bỏ qua khách đã sent nhờ broadcast_log)."""
     db = get_db()
     r = get(bid)
-    if not r or r["status"] != "draft":
+    if not r or r["status"] not in ("draft", "failed"):
         return False
-    db.execute("UPDATE broadcasts SET status='sending', started_at=? WHERE id=?",
+    db.execute("UPDATE broadcasts SET status='sending', started_at=?, note='' WHERE id=?",
                (datetime.now().isoformat(), bid))
     t = threading.Thread(target=_run, args=(bid, auth_token),
                          daemon=True, name=f"broadcast-{bid}")
@@ -242,11 +277,25 @@ def _run(bid: int, auth_token: str = ""):
     # MULTI-TENANT: worker chỉ gửi cho khách của SHOP đã tạo chiến dịch
     # (created_by — /broadcasts chỉ owner dùng được nên đây là chủ shop)
     targets = audience(r["channels"], r["segment"], tenant_ws=r.get("created_by") or None)
-    db.execute("UPDATE broadcasts SET total=? WHERE id=?", (len(targets), bid))
-    log.info(f"[broadcast] #{bid} '{r['name']}' bắt đầu — {len(targets)} khách")
 
-    sent = failed = 0
-    for item in targets:
+    # RESUME sau gián đoạn: khách đã 'sent' ở lần chạy trước (log ghi từng
+    # người nhận) → bỏ qua, không gửi trùng. Dòng 'failed' cũ xoá đi để lần
+    # này retry họ mà log/counters không bị đếm kép.
+    already = {(x["account"], x["user_id"]) for x in db.query(
+        "SELECT account, user_id FROM broadcast_log"
+        " WHERE broadcast_id=? AND status='sent'", (bid,))}
+    db.execute("DELETE FROM broadcast_log WHERE broadcast_id=? AND status='failed'", (bid,))
+    remaining = [t for t in targets if (t["account"], t["user_id"]) not in already]
+
+    sent, failed = len(already), 0
+    # total = đã gửi lần trước + phần còn thiếu (audience tính lại có thể lệch
+    # nhẹ so với lần đầu — khách đã nhận vẫn phải nằm trong mẫu số tiến độ)
+    db.execute("UPDATE broadcasts SET total=?, sent=?, failed=0 WHERE id=?",
+               (sent + len(remaining), sent, bid))
+    log.info(f"[broadcast] #{bid} '{r['name']}' bắt đầu — {len(remaining)} khách"
+             + (f" (tiếp tục, {sent} đã gửi trước đó)" if sent else ""))
+
+    for item in remaining:
         # Chủ bấm Dừng → status đổi ở DB → thoát vòng
         cur = get(bid)
         if not cur or cur["status"] != "sending":
@@ -257,6 +306,8 @@ def _run(bid: int, auth_token: str = ""):
             sent += 1
         else:
             failed += 1
+        # Ghi tiến độ TỪNG TIN ngay (log + counters) — crash lúc nào thì
+        # recover_stuck/resume cũng biết chính xác đã dừng ở đâu
         db.execute(
             "INSERT INTO broadcast_log (broadcast_id, account, user_id, status,"
             " error, created_at) VALUES (?,?,?,?,?,?)",
@@ -269,3 +320,12 @@ def _run(bid: int, auth_token: str = ""):
     db.execute("UPDATE broadcasts SET status='done', finished_at=? WHERE id=?",
                (datetime.now().isoformat(), bid))
     log.info(f"[broadcast] #{bid} xong — gửi {sent}, lỗi {failed}")
+
+
+# PHỤC HỒI lúc nạp module (bridge khởi động): crash lần trước để lại hàng kẹt
+# 'sending' → gỡ ngay để chủ shop thấy nút "Gửi lại". try/except vì lỗi DB
+# lúc import không được phép chặn cả tiến trình khởi động.
+try:
+    recover_stuck()
+except Exception as _e:
+    log.warning(f"[broadcast] recover lúc khởi động lỗi: {_e}")

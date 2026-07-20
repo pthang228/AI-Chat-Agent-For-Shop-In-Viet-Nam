@@ -23,14 +23,18 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_zmulti_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_zmulti_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
 
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_zmulti_tmp.sqlite{suf}").unlink(missing_ok=True)
-Path("test_zmulti_store_tmp.json").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_zmulti_tmp.sqlite{suf}")).unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_zmulti_store_tmp.json")).unlink(missing_ok=True)
 
 from datetime import datetime
 from app.core.channel import Channel
@@ -95,7 +99,7 @@ with patch("app.channels.zalo_node.owner_call") as oc:
 
 # ── B. ZaloNodeStore ─────────────────────────────────────────────────
 print("B. ZaloNodeStore")
-store = ZaloNodeStore(path=Path("test_zmulti_store_tmp.json"))
+store = ZaloNodeStore(path=Path(str(_TMPDIR / "test_zmulti_store_tmp.json")))
 acc_b = store.create("chub@x.vn", name="Zalo Shop B")
 check(acc_b.startswith("z") and len(acc_b) == 11, "B1 accId format", acc_b)
 check(store.get_owner_username(acc_b) == "chub@x.vn", "B2 mapping owner")
@@ -104,7 +108,7 @@ check(store.acc_for_owner("chub@x.vn") == acc_b, "B4 acc_for_owner")
 check(store.ensure_for_owner("chub@x.vn") == acc_b, "B5 ensure không cấp trùng")
 acc_c = store.ensure_for_owner("chuc@x.vn")
 check(acc_c != acc_b, "B6 shop khác → acc khác")
-store2 = ZaloNodeStore(path=Path("test_zmulti_store_tmp.json"))
+store2 = ZaloNodeStore(path=Path(str(_TMPDIR / "test_zmulti_store_tmp.json")))
 check(store2.get_owner_username(acc_b) == "chub@x.vn", "B7 persist qua file")
 
 # ── C. bridge /incoming multi-acc ────────────────────────────────────
@@ -195,7 +199,7 @@ _bs_patch.stop()
 
 # dọn acc test khỏi store THẬT
 _clean_test_accs()
-Path("test_zmulti_store_tmp.json").unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_zmulti_store_tmp.json")).unlink(missing_ok=True)
 
 print(f"\nKẾT QUẢ: {PASS} pass, {FAIL} fail")
 sys.exit(1 if FAIL else 0)

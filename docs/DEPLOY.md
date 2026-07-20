@@ -147,6 +147,18 @@ Zalo cá nhân & Telegram không cần webhook (quét QR / long-poll).
 
 ## 8. Vận hành
 
+**Giám sát chủ động (làm 1 lần, ~10 phút — đừng bỏ qua khi có shop trả tiền):**
+
+1. **Uptime monitor**: tạo monitor MIỄN PHÍ ở [uptimerobot.com](https://uptimerobot.com)
+   (hoặc BetterStack) ping `https://<DOMAIN>/health` mỗi 1-5 phút. `/health` giờ là
+   health SÂU (chạm DB + kiểm disk, trả 503 khi hỏng) nên monitor bắt được cả sự cố
+   "container sống nhưng DB nghẹt". Zalo Node cũng có `/health` riêng (503 khi acc
+   rớt phiên) — Docker healthcheck đã gắn sẵn.
+2. **Alert lỗi qua Telegram**: đặt `ALERT_TG_BOT_TOKEN` + `ALERT_TG_CHAT_ID` trong
+   `.env.production` → mọi log ERROR của 7 service Python bắn thẳng vào Telegram
+   của bạn (throttle 1 tin/5 phút mỗi nguồn). 2h sáng DeepSeek hết hạn mức là biết liền.
+3. (Tuỳ chọn) Sentry free-tier nếu muốn stack trace đầy đủ + gom nhóm lỗi.
+
 ```bash
 # Xem log 1 dịch vụ
 docker compose logs -f meta        # hoặc bridge / telegram / zalo-node ...
@@ -161,10 +173,34 @@ docker compose restart bridge
 docker compose down                # (giữ nguyên volume dữ liệu)
 ```
 
-**Sao lưu dữ liệu** (DB + media + phiên Zalo nằm trong Docker volume):
+**Sao lưu dữ liệu**
+
+DB (ví tiền/billing/hội thoại) được service `backup` **tự sao lưu hằng đêm** bằng
+`sqlite3 .backup()` (nhất quán qua WAL — KHÔNG dùng tar/cp file .db đang mở, dễ ra
+bản hỏng) sang volume **riêng** `backups` — xoá nhầm `dbdata` vẫn còn bản sao:
+
 ```bash
-docker run --rm -v novachat_dbdata:/d -v $PWD:/b alpine tar czf /b/backup-db.tgz -C /d .
-docker run --rm -v novachat_media:/d  -v $PWD:/b alpine tar czf /b/backup-media.tgz -C /d .
+docker compose logs backup                  # xem nhật ký sao lưu
+docker compose exec backup ls -lh /backups  # liệt kê các bản (giữ 14 bản gần nhất)
+
+# KHÔI PHỤC (dừng stack → chép bản sao đè DB → bật lại):
+docker compose stop
+docker compose run --rm backup sh -c 'cp /backups/homestay-<STAMP>.db /app/data/homestay.db && rm -f /app/data/homestay.db-wal /app/data/homestay.db-shm'
+docker compose up -d
+```
+
+**Offsite (KHUYẾN NGHỊ khi có shop trả tiền)** — VPS cháy/mất là backup trên cùng
+máy cũng mất. Cron trên host đẩy `/backups` lên cloud (rclone/S3/Google Drive):
+
+```bash
+# crontab -e trên VPS (rclone config trước 1 lần):
+0 4 * * * docker cp $(docker compose -f /root/novachat/deploy/docker-compose.yml ps -q backup):/backups /tmp/nb && rclone sync /tmp/nb remote:novachat-backups
+```
+
+Media + phiên Zalo (ít quan trọng hơn DB, mất thì kết nối lại):
+```bash
+docker run --rm -v novachat_media:/d -v $PWD:/b alpine tar czf /b/backup-media.tgz -C /d .
+docker run --rm -v novachat_zalosession:/d -v $PWD:/b alpine tar czf /b/backup-zalosession.tgz -C /d .
 ```
 
 ---

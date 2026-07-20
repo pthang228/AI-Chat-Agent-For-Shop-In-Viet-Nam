@@ -20,6 +20,8 @@ API Prompt Builder — gắn vào bridge (5005). Tất cả cần Bearer token.
 
 import logging
 import re
+import threading
+import time
 from pathlib import Path
 
 from flask import request
@@ -31,6 +33,13 @@ from app.core.db import get_db
 
 TEST_HISTORY_MAX = 20   # trần lịch sử chat thử gửi lên (chống context phình)
 _IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+# COOLDOWN /prompt/health: mỗi lượt đốt ~11 call AI (10 câu + 1 giám khảo) —
+# không giới hạn thì 1 user spam là cháy quota. In-process (dict RAM + lock)
+# là ĐỦ vì /prompt/health chỉ chạy trên tiến trình bridge (không cần Redis).
+HEALTH_COOLDOWN_SECONDS = 60
+_health_last: dict = {}          # username → epoch lần chấm gần nhất
+_health_lock = threading.Lock()
 
 
 def _dir_photos(folder: Path, url_prefix: str, caption: str, limit: int = 4) -> list:
@@ -489,11 +498,38 @@ def register_prompt_routes(app):
         log.info(f"[prompt] {u['username']} bổ sung tri thức từ báo cáo ({chunk['title']!r})")
         return {"ok": True, "chunk": chunk}
 
+    # ── Versioning kho tri thức (rollback khi "Áp dụng" hỏng) ────────
+    @app.route("/prompt/versions")
+    def prompt_versions():
+        u, err = _auth_or_401()
+        if err:
+            return err
+        return {"ok": True, "versions": knowledge.list_versions(shop=_shop(u))}
+
+    @app.route("/prompt/versions/<int:vid>/restore", methods=["POST"])
+    def prompt_version_restore(vid):
+        u, err = _auth_or_401()
+        if err:
+            return err
+        n = knowledge.restore_version(vid, shop=_shop(u))
+        if n < 0:
+            return {"ok": False, "error": "Không tìm thấy bản kho này"}, 404
+        log.info(f"[prompt] {u['username']} KHÔI PHỤC kho về bản {vid} ({n} mẩu)")
+        return {"ok": True, "restored": n,
+                "chunks": knowledge.list_chunks(shop=_shop(u), kind=knowledge.KIND_FACT)}
+
     _JUDGE_PROMPT = (
-        "Bạn chấm điểm chatbot của shop. Cho danh sách CÂU KHÁCH HỎI và CÂU BOT TRẢ LỜI. "
-        "Câu trả lời ĐẠT khi: có thông tin cụ thể đúng trọng tâm câu hỏi. KHÔNG ĐẠT khi: "
-        "nói 'chưa có thông tin', né tránh, trả lời chung chung không số liệu, hoặc lạc đề.\n"
-        'Trả về DUY NHẤT JSON array: [{"i": số thứ tự, "ok": true/false, "note": "thiếu gì (ngắn)"}]'
+        "Bạn chấm điểm chatbot của shop, có ĐỐI CHIẾU DỮ LIỆU THẬT của shop (phần "
+        "'DỮ LIỆU SHOP' người dùng đưa) — đây là NGUỒN SỰ THẬT DUY NHẤT.\n"
+        "Câu trả lời ĐẠT khi: đúng trọng tâm câu hỏi VÀ mọi con số/giá/tên/chính sách "
+        "nêu ra ĐỀU KHỚP dữ liệu shop.\n"
+        "KHÔNG ĐẠT khi: (a) BỊA số/giá/thông tin KHÔNG có trong dữ liệu shop (lỗi nặng "
+        "nhất — thà nói chưa có còn hơn bịa); (b) né tránh/chung chung/lạc đề; (c) nói "
+        "'chưa có thông tin' TRONG KHI dữ liệu shop CÓ thông tin đó.\n"
+        "Lưu ý: nếu dữ liệu shop THỰC SỰ không có thông tin để trả lời câu đó, thì việc "
+        "bot nói 'chưa có, để báo chủ' là ĐẠT (thành thật, không bịa).\n"
+        'Trả về DUY NHẤT JSON array: [{"i": số thứ tự, "ok": true/false, '
+        '"note": "lý do ngắn — ghi rõ nếu BỊA số"}]'
     )
 
     @app.route("/prompt/health", methods=["POST"])
@@ -503,6 +539,17 @@ def register_prompt_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
+        # Rate-limit per-user: gọi lại trong 60s → 429 (ghi mốc TRƯỚC khi chạy
+        # để 2 request song song không cùng lọt qua)
+        now = time.time()
+        with _health_lock:
+            waited = now - _health_last.get(u["username"], 0)
+            if waited < HEALTH_COOLDOWN_SECONDS:
+                wait = int(HEALTH_COOLDOWN_SECONDS - waited) + 1
+                return {"ok": False, "error":
+                        f"Vui lòng chờ {wait} giây rồi chấm lại "
+                        f"(mỗi lượt chấm tốn ~11 lần gọi AI)"}, 429
+            _health_last[u["username"]] = now
         from concurrent.futures import ThreadPoolExecutor
         from app.core import industry as _ind
         from app.core.db import get_db
@@ -522,10 +569,18 @@ def register_prompt_routes(app):
 
         qa = "\n\n".join(f"[{i + 1}] KHÁCH: {q}\nBOT: {r[:600]}"
                          for i, (q, r) in enumerate(zip(questions, replies)))
+        # GROUND TRUTH cho giám khảo: dữ liệu THẬT của shop (fact KB) → phát hiện bot
+        # BỊA số/giá không có trong kho (trước đây judge không thấy data → bịa vẫn "ĐẠT").
+        try:
+            facts = knowledge.list_chunks(shop=shop, kind=knowledge.KIND_FACT)
+            kb_ref = knowledge.format_block(facts)[:8000] if facts else "(shop chưa dạy dữ liệu nào)"
+        except Exception:
+            kb_ref = "(không đọc được dữ liệu shop)"
+        judge_input = f"DỮ LIỆU SHOP (nguồn sự thật để đối chiếu):\n{kb_ref}\n\n═══\n\nCÂU HỎI & TRẢ LỜI CẦN CHẤM:\n{qa}"
         verdicts = []
         try:
             raw = _call_ai([{"role": "system", "content": _JUDGE_PROMPT},
-                            {"role": "user", "content": qa}], owner=u["username"])
+                            {"role": "user", "content": judge_input}], owner=u["username"])
             import json as _json, re as _re
             m = _re.search(r"\[.*\]", raw or "", _re.DOTALL)
             if m:

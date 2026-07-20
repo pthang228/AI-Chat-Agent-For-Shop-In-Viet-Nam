@@ -30,7 +30,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_crmplus_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_crmplus_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
@@ -148,6 +152,20 @@ except ValueError: check(True, "D8 note trống raise")
 try:
     fu.create("1", "Z001", "x", "khong-phai-ngay"); check(False, "D9 ngày rác raise")
 except ValueError: check(True, "D9 ngày rác raise")
+
+# Job nền: việc tới hạn chưa báo → notify_fn(text) + đánh dấu notified_at
+f3 = fu.create("1", "Z001", "Nhắc job nền", "2020-06-01")
+notes = []
+n = fu.check_and_notify(notes.append)
+check(n == 1 and len(notes) == 1 and "Nhắc job nền" in notes[0] and "Cường Zalo" in notes[0],
+      "D10 job nền báo việc tới hạn (kèm tên khách)", notes)
+check(fu.get(f3["id"])["notified_at"], "D11 đánh dấu notified_at")
+check(fu.check_and_notify(notes.append) == 0, "D12 vòng quét sau KHÔNG nhắc trùng")
+def _boom(text): raise RuntimeError("kênh chủ chết")
+f4 = fu.create("1", "Z001", "Notify lỗi", "2020-06-02")
+check(fu.check_and_notify(_boom) == 0 and not fu.get(f4["id"])["notified_at"],
+      "D13 notify lỗi → không đánh dấu (vòng sau thử lại)")
+fu.mark_done(f3["id"]); fu.remove(f4["id"])   # dọn cho các section sau
 
 # ══ E. Voucher ═══════════════════════════════════════════════════════
 print("\nE. VOUCHER")
@@ -268,6 +286,23 @@ r = cl.delete(f"/vouchers/{vid}")
 check(r.status_code == 200 and loyalty.get_voucher(vid) is None, "H17 DELETE voucher")
 r = cl.post("/vouchers", json={"code": "x", "value": 0})
 check(r.status_code == 400, "H18 voucher rác → 400")
+
+# ══ I. Stats archive giữ tenant ══════════════════════════════════════
+print("\nI. STATS ARCHIVE GIỮ TENANT")
+from app.web_api.stats_util import compute_stats
+db.execute("DELETE FROM stats_archive")
+# Session của shop A bị dọn → archive phải mang tenant của session
+c1.tenant = "shop-a@x.vn"
+cm_zalo._archive_session(c1)
+arch = cm_zalo.archived_stats()
+check(len(arch) == 1 and arch[0]["user_id"] == "Z001" and arch[0]["tenant"] == "shop-a@x.vn",
+      "I1 archive ghi tenant của session", arch)
+# compute_stats: shop A thấy cả session sống + archive của mình
+st_a = compute_stats(cm_zalo, tenant_ws="shop-a@x.vn")
+check(st_a["total_conv"] == 2, "I2 shop A thấy session sống + archive (2)", st_a["total_conv"])
+# Shop B KHÔNG thấy số liệu shop A (session sống lẫn archive)
+st_b = compute_stats(cm_zalo, tenant_ws="shop-b@x.vn")
+check(st_b["total_conv"] == 0, "I3 shop khác không lẫn số liệu", st_b["total_conv"])
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

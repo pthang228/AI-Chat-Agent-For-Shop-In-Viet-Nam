@@ -25,9 +25,25 @@ log = logging.getLogger("posts_api")
 def register_posts_routes(app, store, comment_store):
     """store = MetaStore (token Page); comment_store = CommentStore (cài đặt)."""
 
+    def _owns_page(page_id) -> bool:
+        """MULTI-TENANT: user đăng nhập có sở hữu Page này không (chống shop A
+        đọc/trả lời/ẩn bình luận Page shop B). Quản trị nền tảng → mọi Page.
+        Page chưa gắn chủ (kết nối trước khi có owner) → chỉ quản trị nền tảng."""
+        from app.web_api.auth_api import current_username
+        from app.core import tenant as _t
+        u = current_username()
+        if u is None:          # không có ngữ cảnh đăng nhập (test/guard tắt) → cho qua
+            return True
+        if _t.is_platform_admin(u):
+            return True
+        owner = store.get_owner_username(page_id) if store else None
+        return owner == u
+
     def _token_or_400(page_id):
         if not page_id:
             return None, ({"ok": False, "error": "thiếu page_id"}, 400)
+        if not _owns_page(page_id):     # kiểm quyền sở hữu TRƯỚC khi trả token
+            return None, ({"ok": False, "error": "not found"}, 404)
         token = store.get_token(page_id) if store else None
         if not token:
             return None, ({"ok": False, "error": "Page chưa kết nối (không có token)"}, 400)
@@ -100,6 +116,8 @@ def register_posts_routes(app, store, comment_store):
         page_id = request.args.get("page_id", "").strip()
         if not page_id:
             return {"ok": False, "error": "thiếu page_id"}, 400
+        if not _owns_page(page_id):
+            return {"ok": False, "error": "not found"}, 404
         return {"ok": True, "settings": comment_store.get(page_id)}
 
     @app.route("/posts/settings", methods=["POST"])
@@ -108,6 +126,8 @@ def register_posts_routes(app, store, comment_store):
         page_id = (data.get("page_id") or "").strip()
         if not page_id:
             return {"ok": False, "error": "thiếu page_id"}, 400
+        if not _owns_page(page_id):
+            return {"ok": False, "error": "not found"}, 404
         saved = comment_store.set(page_id, data)
         # Page nối TRƯỚC khi có tính năng này chưa subscribe field "feed" →
         # re-subscribe để Meta bắt đầu đẩy bình luận về (best-effort).

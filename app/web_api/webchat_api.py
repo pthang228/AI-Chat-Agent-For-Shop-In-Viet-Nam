@@ -29,8 +29,7 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 
 from app.core.config import Config
-from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary, _tenant_visible
-from app.web_api.stats_util import compute_stats
+from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled
 from app.web_api.api_guard import install_cors, install_auth_guard, submit
 
 log = logging.getLogger("webchat_api")
@@ -102,7 +101,9 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
 
     @app.route("/health")
     def health():
-        return {"ok": True}
+        # health SÂU dùng chung: chạm DB + kiểm disk, 503 khi hỏng (api_guard)
+        from app.web_api.api_guard import health_payload
+        return health_payload()
 
     @app.route("/webchat/config")
     def wc_config():
@@ -241,9 +242,13 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
         base = (Config.PUBLIC_BASE_URL or request.host_url).rstrip("/")
         return f'<script src="{base}/widget.js" data-site="{sid}" defer></script>'
 
+    # MULTI-TENANT: guard sở hữu dùng chung (api_guard) — chống shop A đụng
+    # site widget của shop B (IDOR từng chỉ được vá ở telegram_api).
+    from app.web_api.api_guard import own_account_or_404, filter_owned
+
     @app.route("/webchat/sites")
     def wc_sites():
-        sites = store.list_sites() if store else []
+        sites = filter_owned(store, store.list_sites(), "site_id") if store else []
         state = _load_bot_state()
         for s in sites:
             s["bot_enabled"] = _channel_enabled(state, f"webchat:{s['site_id']}")
@@ -263,12 +268,18 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
 
     @app.route("/webchat/sites/<site_id>", methods=["DELETE"])
     def wc_remove_site(site_id):
+        deny = own_account_or_404(store, site_id)
+        if deny:
+            return deny
         if store:
             store.remove(site_id)
         return {"ok": True}
 
     @app.route("/webchat/sites/<site_id>/toggle", methods=["POST"])
     def wc_toggle_site(site_id):
+        deny = own_account_or_404(store, site_id)
+        if deny:
+            return deny
         data = request.get_json(force=True, silent=True) or {}
         enabled = bool(data.get("enabled", True))
         state = _load_bot_state()
@@ -285,107 +296,18 @@ def create_webchat_api(brain, conv_manager, channel, store=None) -> Flask:
         uid = (data.get("user_id") or "").strip()
         parts = uid.split(":")
         if len(parts) >= 3 and store:
+            deny = own_account_or_404(store, parts[1])
+            if deny:
+                return deny
             store.set_owner(parts[1], ":".join(parts[2:]), data.get("name") or "")
             return {"ok": True}
         return {"ok": False, "error": "user_id không hợp lệ"}, 400
 
-    # ── Thống kê + hội thoại (Bearer) ──────────────────────────────────
-
-    @app.route("/webchat/stats")
-    def wc_stats():
-        site_id = request.args.get("site_id", "")
-
-        def _flt(u):
-            if not u.startswith("web:"):
-                return False
-            if site_id:
-                parts = u.split(":")
-                return len(parts) >= 3 and parts[1] == site_id
-            return True
-
-        return jsonify(compute_stats(
-            conv_manager, request.args.get("from"), request.args.get("to"),
-            uid_filter=_flt))
-
-    @app.route("/webchat/conversations")
-    def wc_conversations():
-        site_id = request.args.get("site_id", "")
-        try:
-            limit = min(max(int(request.args.get("limit", 50)), 1), 200)
-            offset = max(int(request.args.get("offset", 0)), 0)
-        except ValueError:
-            limit, offset = 50, 0
-        rows = []
-        for uid, conv in list(conv_manager._sessions.items()):
-            if not uid.startswith("web:"):
-                continue
-            parts = uid.split(":")
-            uid_site = parts[1] if len(parts) >= 3 else ""
-            if site_id and uid_site != site_id:
-                continue
-            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
-                continue
-            rows.append(_conv_summary(uid, conv))
-        rows.sort(key=lambda r: r["last_updated"], reverse=True)
-        total = len(rows)
-        return jsonify({"total": total, "offset": offset, "limit": limit,
-                        "items": rows[offset:offset + limit]})
-
-    @app.route("/webchat/conversations/<user_id>")
-    def wc_conversation(user_id):
-        conv = conv_manager._sessions.get(user_id)
-        if not conv or not _tenant_visible(conv):
-            return {"error": "not found"}, 404
-        msgs = [
-            {"role": m.get("role"), "content": m.get("content", "")}
-            for m in conv.messages
-            if not m.get("content", "").startswith("[HỆ THỐNG]")
-        ]
-        return jsonify({
-            "user_id": user_id,
-            "name": getattr(conv, "name", ""),
-            "avatar": getattr(conv, "avatar", "") or "",
-            "owner_active": conv.is_owner_active(),
-            "stage": conv.stage,
-            "assigned_to": getattr(conv, "assigned_to", "") or "",
-            "messages": msgs,
-        })
-
-    @app.route("/webchat/conversations/<user_id>/send", methods=["POST"])
-    def wc_send_message(user_id):
-        data = request.get_json(force=True, silent=True) or {}
-        text = (data.get("text") or "").strip()
-        if not text:
-            return {"ok": False, "error": "tin trống"}, 400
-        parts = user_id.split(":")
-        site_id = parts[1] if len(parts) >= 3 else None
-        try:
-            channel.set_ctx(site_id)
-            channel.send_text(user_id, text)
-        except Exception as e:
-            log.error(f"[webchat send] lỗi gửi {user_id}: {e}")
-            return {"ok": False, "error": str(e)}, 500
-        conv = conv_manager.get(user_id)
-        conv.add_assistant_message(text)
-        conv.set_owner_active(True)
-        conv_manager.save()
-        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền)
-        from app.core import knowledge_learn
-        submit(knowledge_learn.suggest_from_reply, user_id, "webchat", list(conv.messages), text)
-        return {"ok": True}
-
-    @app.route("/webchat/conversations/<user_id>/toggle-bot", methods=["POST"])
-    def wc_toggle_bot(user_id):
-        data = request.get_json(force=True, silent=True) or {}
-        bot_on = bool(data.get("bot_on", True))
-        conv = conv_manager.get(user_id)
-        conv.set_owner_active(not bot_on)
-        conv_manager.save()
-        return {"ok": True, "bot_on": bot_on, "owner_active": conv.is_owner_active()}
-
-    @app.route("/webchat/conversations/<user_id>", methods=["DELETE"])
-    def wc_reset(user_id):
-        conv_manager.reset(user_id)
-        return {"ok": True}
+    # ── Thống kê + hội thoại (Bearer): nhóm route dùng chung (conv_routes) ──
+    from app.web_api.conv_routes import register_conversation_routes
+    register_conversation_routes(
+        app, "/webchat", conv_manager, channel,
+        channel_name="webchat", uid_prefix="web:", id_param="site_id",
+    )
 
     return app

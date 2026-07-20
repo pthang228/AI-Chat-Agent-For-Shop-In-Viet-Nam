@@ -21,7 +21,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -67,7 +71,7 @@ with patch.object(bridge_mod, 'threading') as mth, \
     bt.sleep = lambda *a: None
     fc = FakeChannel()
     brain = Brain(channel=fc, conv_manager=cm)
-    bridge_mod.BOT_STATE_FILE = Path("test_bot_state_tmp.json")  # cô lập, không đụng data thật
+    bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_tmp.json"))  # cô lập, không đụng data thật
     try: bridge_mod.BOT_STATE_FILE.unlink()
     except: pass
     app = bridge_mod.create_bridge(brain, cm)
@@ -118,6 +122,54 @@ with patch.object(bridge_mod, 'threading') as mth, \
     check(r.get_json().get("skipped")=="self-non-text", "A8 self_non_text_skipped")
     check(not cm.get("cust4").is_owner_active(), "A8 owner_active_not_set")
 
+    # A9: GATE-LAST — tin bị DROP sớm (owner_active / non-text) KHÔNG được gọi
+    # channel_gate: gate GHI 1 lượt AI khi cho qua, gọi trước các check sớm là
+    # trừ quota oan của chủ shop dù bot không hề trả lời
+    with patch("app.core.billing.channel_gate", return_value=True) as mgate:
+        r = client.post("/incoming", json={"userId":"cust2","text":"alo"})   # cust2 owner_active từ A4
+        check(r.get_json().get("skipped")=="owner_active" and not mgate.called,
+              "A9 gate_after_owner_active", f"called={mgate.called}")
+        r = client.post("/incoming", json={"userId":"cust1","text":""})      # cust1 đã có lịch sử (A3)
+        check(r.get_json().get("skipped")=="non-text non-first" and not mgate.called,
+              "A9 gate_after_non_text", f"called={mgate.called}")
+
+    # A10: gate chặn (hết gói/quota) → không vào brain, skipped=billing_expired
+    with patch("app.core.billing.channel_gate", return_value=False) as mgate:
+        fc.texts.clear()
+        r = client.post("/incoming", json={"userId":"custgate","text":"hi"})
+        check(r.get_json().get("skipped")=="billing_expired" and mgate.called and not fc.texts,
+              "A10 gate_blocks_before_brain", f"{r.get_json()}")
+
+    # ── D. BRIDGE_SECRET: shared-secret bảo vệ /incoming ──
+    print("\n── D. BRIDGE_SECRET /incoming ──")
+    with patch.object(bridge_mod.Config, 'BRIDGE_SECRET', 'sec-test-123'):
+        # D1: secret đặt + KHÔNG header → 401 (chặn giả tin cùng mạng)
+        fc.texts.clear()
+        r = client.post("/incoming", json={"userId": "sec1", "text": "hi"})
+        check(r.status_code == 401 and not fc.texts, "D1 secret_no_header_401", f"{r.status_code}")
+        # D2: header SAI → 401
+        r = client.post("/incoming", json={"userId": "sec1", "text": "hi"},
+                        headers={"X-Bridge-Secret": "sai-secret"})
+        check(r.status_code == 401, "D2 secret_wrong_header_401", f"{r.status_code}")
+        # D3: header ĐÚNG → xử lý bình thường (khách mới được chào)
+        fc.texts.clear()
+        r = client.post("/incoming", json={"userId": "sec1", "text": "xin chào"},
+                        headers={"X-Bridge-Secret": "sec-test-123"})
+        check(r.status_code == 200 and r.get_json().get("ok") is True,
+              "D3 secret_ok_processed", f"{r.status_code}")
+        check(any("trợ lý AI" in t for t in fc.texts), "D3 greeting_after_secret", f"texts={fc.texts}")
+        # D4: kể cả isSelf+ownerTyped cũng bị chặn khi thiếu secret (chính là
+        # vector tắt bot 48h mà secret sinh ra để chặn)
+        r = client.post("/incoming", json={"userId": "sec2", "text": "x",
+                                           "isSelf": True, "ownerTyped": True})
+        check(r.status_code == 401 and not cm.get("sec2").is_owner_active(),
+              "D4 ownerTyped_forgery_blocked", f"{r.status_code}")
+    # D5: KHÔNG đặt secret → hành vi cũ, không cần header (dev/test)
+    fc.texts.clear()
+    r = client.post("/incoming", json={"userId": "sec3", "text": "xin chào"})
+    check(r.status_code == 200 and r.get_json().get("ok") is True,
+          "D5 no_secret_old_behavior", f"{r.status_code}")
+
     # ── C. Bật/tắt bot toàn cục (nút màn hình chính) ──
     print("\n── C. Bật/tắt bot toàn cục ──")
     # C1: mặc định bot đang BẬT
@@ -145,6 +197,42 @@ with patch.object(bridge_mod, 'threading') as mth, \
     r = client.post("/incoming", json={"userId":"cust6","text":"xin chào"})
     check(any("trợ lý AI" in t for t in fc.texts), "C5 reply_resumed", f"texts={fc.texts}")
 
+    # ── E. /zalo-node proxy: UI gọi Node QUA bridge (whitelist + ép acc) ──
+    print("\n── E. /zalo-node proxy ──")
+    import requests as _real_rq
+
+    # E1: endpoint ngoài whitelist (/send — chỉ nội bộ) → 404, không forward
+    r = client.post("/zalo-node/send", json={"userId": "x", "text": "hack"})
+    check(r.status_code == 404, "E1 non_whitelist_404", f"{r.status_code}")
+
+    # E2: chưa đăng nhập (không workspace) → 401
+    r = client.get("/zalo-node/status?acc=default")
+    check(r.status_code == 401, "E2 no_login_401", f"{r.status_code}")
+
+    # E3: shop thường → acc bị ÉP về acc CỦA SHOP (bỏ qua ?acc= client tự khai —
+    # chặn shop A mượn proxy đụng acc Zalo shop B)
+    with patch.object(bridge_mod, "_ws", return_value="shopA@x"), \
+         patch("app.core.tenant.is_platform_admin", return_value=False), \
+         patch.object(_real_rq, "get") as mget:
+        mresp = MagicMock(); mresp.content = b'{"ok":true}'
+        mresp.status_code = 200; mresp.headers = {"Content-Type": "application/json"}
+        mget.return_value = mresp
+        r = client.get("/zalo-node/status?acc=default")   # cố xin acc default
+        sent = (mget.call_args.kwargs.get("params") or {}) if mget.call_args else {}
+        check(r.status_code == 200 and sent.get("acc") not in ("", None, "default"),
+              "E3 acc_forced_per_shop", f"params={sent}")
+
+    # E4: admin nền tảng → được giữ acc chỉ định (quản trị mọi shop)
+    with patch.object(bridge_mod, "_ws", return_value="admin@x"), \
+         patch("app.core.tenant.is_platform_admin", return_value=True), \
+         patch.object(_real_rq, "get") as mget:
+        mresp = MagicMock(); mresp.content = b'{}'
+        mresp.status_code = 200; mresp.headers = {}
+        mget.return_value = mresp
+        client.get("/zalo-node/status?acc=acc-shopB")
+        sent = (mget.call_args.kwargs.get("params") or {}) if mget.call_args else {}
+        check(sent.get("acc") == "acc-shopB", "E4 admin_keeps_acc", f"params={sent}")
+
 print("\n── B. ZaloNodeChannel gọi Node đúng ──")
 with patch.object(httputil.requests, 'post') as mreq:
     calls=[]
@@ -171,7 +259,7 @@ with patch.object(httputil.requests, 'post') as mreq:
           "B3 notify_owner_endpoint", f"calls={calls}")
 
 print(f"\n{'='*40}\n  KẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
-for _f in ("test_bridge_tmp.json", "test_bot_state_tmp.json"):
+for _f in (str(_TMPDIR / "test_bridge_tmp.json"), str(_TMPDIR / "test_bot_state_tmp.json")):
     try: Path(_f).unlink()
     except: pass
 sys.exit(1 if FAIL else 0)

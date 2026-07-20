@@ -26,12 +26,14 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_fixes_tmp.sqlite'
+from pathlib import Path
+_TMP = Path(__file__).parent / '.tmp'   # rác test vào tests/.tmp, không ra gốc repo
+_TMP.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMP / 'test_db_fixes.sqlite')
 sys.path.insert(0, '.')
 
 import json
 from datetime import datetime, timedelta
-from pathlib import Path
 
 PASS = FAIL = 0
 def check(cond, name, detail=""):
@@ -57,7 +59,7 @@ check(out["intent"] == "booking_request" and out["booking_confirmed"] is True an
 print("\n── B. store_util.atomic_write_json ──")
 from app.core.store_util import atomic_write_json
 
-p = Path("test_atomic_tmp.json")
+p = _TMP / "test_atomic_tmp.json"
 p.unlink(missing_ok=True)
 ok = atomic_write_json(p, {"a": 1, "tên": "Nắng"}, "test")
 check(ok and json.loads(p.read_text(encoding="utf-8"))["tên"] == "Nắng", "B1 write_read")
@@ -72,9 +74,10 @@ import app.web_api.payment_api as pay
 from flask import Flask
 _app = Flask(__name__)
 
-def _auth_with(header, key):
+def _auth_with(header, key, public=""):
     with _app.test_request_context(headers={"Authorization": header} if header else {}):
-        with patch.object(pay.Config, "SEPAY_API_KEY", key):
+        with patch.object(pay.Config, "SEPAY_API_KEY", key), \
+             patch.object(pay.Config, "PUBLIC_BASE_URL", public):
             return pay._payhook_authorized()
 
 check(_auth_with("Apikey SECRET123", "SECRET123") is True, "C1 apikey_prefix_ok")
@@ -83,7 +86,9 @@ check(_auth_with("SECRET123", "SECRET123") is True, "C3 bare_key_ok")
 check(_auth_with("Apikey SECRET123EXTRA", "SECRET123") is False, "C4 substring_rejected")
 check(_auth_with("Apikey WRONG", "SECRET123") is False, "C5 wrong_rejected")
 check(_auth_with("", "SECRET123") is False, "C6 missing_rejected")
-check(_auth_with("bất kỳ", "") is True, "C7 no_key_allows_all")
+# CHƯA đặt key: local (không public) → nhận tất; ĐÃ public mà chưa có key → TỪ CHỐI
+check(_auth_with("bất kỳ", "", public="") is True, "C7 no_key_local_allows")
+check(_auth_with("bất kỳ", "", public="https://shop.example") is False, "C7b no_key_public_rejected")
 
 print("\n── D. Channel.get_ctx/set_ctx ──")
 from app.core.channel import Channel
@@ -162,7 +167,7 @@ check("FRESH" in cm2._sessions, "E2 fresh_kept")
 
 # Dọn
 for f in ["test_atomic_tmp.json", "test_atomic_tmp.json.tmp"]:
-    Path(f).unlink(missing_ok=True)
+    (_TMP / f).unlink(missing_ok=True)
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

@@ -26,7 +26,11 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_ai_models_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_ai_models_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '1'
 os.environ['WORKER_SYNC'] = '1'
 os.environ['AI_USD_VND'] = '25000'      # tỷ giá cố định cho test
@@ -34,7 +38,7 @@ os.environ['AI_PRICE_MARKUP'] = '1.0'
 sys.path.insert(0, '.')
 
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_ai_models_tmp.sqlite{suf}").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_ai_models_tmp.sqlite{suf}")).unlink(missing_ok=True)
 
 from flask import Flask
 from app.web_api.auth_api import register_auth_routes
@@ -56,8 +60,15 @@ check(pin == 6500 and pout == 9500, "A1 giá VNĐ/1M đúng tỷ giá", (pin, po
 c = am.cost_vnd("gpt-4o", 1000, 500)           # (1000*2.5 + 500*10)/1e6 × 25000
 check(abs(c - 187.5) < 0.01, "A2 cost_vnd đúng công thức", c)
 ui = am.catalog_for_ui()
-check(len(ui) == len(am.CATALOG) and all("in_vnd" in m for m in ui), "A3 catalog_for_ui đủ model")
+check(len(ui) == len(am.public_catalog()) and all("in_vnd" in m for m in ui), "A3 catalog_for_ui đủ model public")
 check(any(m["default"] for m in ui), "A4 có model mặc định")
+# Model nội bộ (Groq fallback) KHÔNG lộ ra UI / KHÔNG cho shop chọn, nhưng có giá để tính
+check(not any(m["key"].startswith("groq-") for m in ui), "A5 model nội bộ ẩn khỏi UI")
+check("groq-llama-70b" in am.CATALOG and am.cost_vnd("groq-llama-70b", 1000, 1000) > 0,
+      "A6 model nội bộ vẫn tính được chi phí")
+# KB budget co theo giá: DeepSeek nhồi hết, GPT-4o co lại
+check(am.kb_char_budget("deepseek-chat") == 24000 and am.kb_char_budget("gpt-4o") < 24000,
+      "A7 kb_char_budget co theo giá model")
 
 print("B. model_for_owner")
 from app.core.config import Config
@@ -118,7 +129,7 @@ check(billing.can_reply(U), "D5 còn quota → chạy bình thường")
 
 print("E. API chọn model + usage")
 r = cli.get("/billing/me", headers=H)
-check(r.status_code == 200 and len(r.json["ai_models"]) == len(am.CATALOG),
+check(r.status_code == 200 and len(r.json["ai_models"]) == len(am.public_catalog()),
       "E1 /billing/me kèm bảng giá model")
 r = cli.post("/billing/ai-model", headers=H, json={"model": "gpt-4o-mini"})
 check(r.status_code == 200 and r.json["ai_model"] == "gpt-4o-mini", "E2 chọn model OK", r.text[:80])
@@ -173,13 +184,55 @@ check(am.model_for(U, "telegram") == am.DEFAULT_MODEL, "G7 sau xoá → về mod
 r = cli.post("/auth/apps/khong-ton-tai/ai-model", headers=H, json={"model": "gpt-4o-mini"})
 check(r.status_code == 404, "G8 app không tồn tại → 404")
 
+# ── H. Trần model theo HẠNG gói (chống shop gói rẻ chọn model đắt) ──
+print("\n── H. Trần model theo hạng gói ──")
+check(am.allowed_for_tier("deepseek-chat", "trial"), "H1 trial dùng được DeepSeek")
+check(not am.allowed_for_tier("gpt-4o", "starter"), "H2 starter KHÔNG được GPT-4o")
+check(not am.allowed_for_tier("gpt-5", "pro"), "H3 pro KHÔNG được GPT-5")
+check(am.allowed_for_tier("gpt-5", "business"), "H4 business được mọi model")
+check(am.min_tier_for("gpt-4o") == "business" and am.min_tier_for("gpt-5-mini") == "pro",
+      "H5 min_tier_for đúng", (am.min_tier_for("gpt-4o"), am.min_tier_for("gpt-5-mini")))
+check(all("min_tier" in m for m in am.catalog_for_ui()), "H6 catalog_for_ui kèm min_tier")
+
+# API: user trial chọn model đắt → 400; model rẻ → 200
+r = cli.post("/billing/ai-model", headers=H, json={"model": "gpt-4o"})
+check(r.status_code == 400 and "hạng gói" in (r.json.get("error") or ""),
+      "H7 trial chọn GPT-4o → 400 kèm lý do", r.text[:100])
+r = cli.post("/billing/ai-model", headers=H, json={"model": "gpt-4o-mini"})
+check(r.status_code == 200, "H8 trial chọn GPT-4o mini → OK", r.text[:80])
+r = cli.post(f"/auth/apps/{app_id}/ai-model", headers=H, json={"model": "gpt-4o"})
+check(r.status_code == 400, "H9 per-app cũng bị trần theo hạng", r.text[:80])
+
+# Runtime downgrade: DB còn ghi model đắt (hạ gói sau khi chọn) → chat() hạ về mặc định
+get_db().execute("UPDATE billing SET ai_model='gpt-4o', tier='starter' WHERE username=?", (U,))
+_calls = {}
+class _FakeResp:
+    class _C:
+        class _M: content = "ok"
+        message = _M()
+    choices = [_C()]
+    usage = None
+class _FakeClient:
+    class chat:
+        class completions:
+            @staticmethod
+            def create(**kw):
+                _calls["model"] = kw.get("model")
+                return _FakeResp()
+from unittest.mock import patch
+with patch.object(am, "client_for", lambda k, t=None: (_FakeClient(), am.CATALOG[k]["model"])):
+    am.chat([{"role": "user", "content": "hi"}], owner=U)
+check(_calls.get("model") == am.CATALOG[am.DEFAULT_MODEL]["model"],
+      "H10 runtime hạ model vượt hạng về mặc định", _calls)
+get_db().execute("UPDATE billing SET ai_model='', tier='trial' WHERE username=?", (U,))
+
 # dọn
 try:
     get_db().conn.close()
 except Exception:
     pass
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_ai_models_tmp.sqlite{suf}").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_ai_models_tmp.sqlite{suf}")).unlink(missing_ok=True)
 
 print(f"\nKẾT QUẢ: {PASS} pass, {FAIL} fail")
 sys.exit(1 if FAIL else 0)

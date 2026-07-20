@@ -24,7 +24,11 @@ sys.modules.update({
     'openai': MagicMock(), 'groq': MagicMock(), 'winsound': MagicMock(),
     'dotenv': MagicMock(),
 })
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')
 os.environ.setdefault('REPLY_DELAY', '0')
 sys.path.insert(0, '.')
 
@@ -115,6 +119,15 @@ check(billing.status("pay@x.vn")["balance"] == 500000, "C7 wallet_credited")
 # xác nhận lần 2 → không khớp nữa (đã confirmed)
 r = pay.process_transfer(f"lap lai {dep['code']}", 500000, notes.append)
 check(r["matched"] is None, "C8 deposit_once")
+
+# BẢO MẬT: tạo lệnh nạp 100tr, chỉ chuyển 10k đúng mã → ví CHỈ được cộng 10k
+# (không tin số ở lệnh nạp) — chống lỗ hổng "chuyển 10k, ví +100tr".
+bal0 = billing.status("pay@x.vn")["balance"]
+big = billing.create_deposit("pay@x.vn", 100_000_000)
+r = pay.process_transfer(f"nap {big['code']}", 10_000, notes.append)
+check(r["matched"] == "deposit" and r["amount"] == 10_000, "C8b credit_actual_amount", r)
+check(billing.status("pay@x.vn")["balance"] == bal0 + 10_000, "C8c no_overcredit",
+      billing.status("pay@x.vn")["balance"])
 
 # không khớp gì → ignore
 check(pay.process_transfer("mua tra sua", 30000, notes.append)["matched"] is None, "C9 no_match")

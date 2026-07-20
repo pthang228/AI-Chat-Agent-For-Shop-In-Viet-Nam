@@ -30,7 +30,14 @@ def _payhook_authorized() -> bool:
     (chống timing attack + không lọt header rác chỉ CHỨA key như 'in' cũ)."""
     key = Config.SEPAY_API_KEY
     if not key:
-        return True   # chưa đặt key → nhận tất (dev/test)
+        # CHƯA đặt key. Nếu webhook đang PHƠI RA INTERNET (có PUBLIC_BASE_URL) thì
+        # TỪ CHỐI — nếu không ai cũng POST giả /payhook để cộng ví / đánh dấu đơn
+        # "đã thanh toán". Chỉ cho qua khi chạy nội bộ (local/dev, không public).
+        if Config.PUBLIC_BASE_URL:
+            log.warning("[Pay] /payhook đang public nhưng CHƯA đặt SEPAY_API_KEY → "
+                        "từ chối. Hãy đặt SEPAY_API_KEY trong .env cho khớp SePay.")
+            return False
+        return True   # local/dev không public → nhận tất
     raw = (request.headers.get("Authorization") or "").strip()
     token = raw.split(None, 1)[1].strip() if " " in raw else raw   # bỏ tiền tố Apikey/Bearer
     return hmac.compare_digest(token, key) or hmac.compare_digest(raw, key)

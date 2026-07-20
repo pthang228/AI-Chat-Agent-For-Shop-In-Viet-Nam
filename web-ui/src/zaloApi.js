@@ -2,17 +2,16 @@
 // Mọi hàm nhận acc (mặc định "default" = acc chủ nền tảng, tương thích cũ).
 // Acc của shop lấy từ bridge /zalo/my-account (myAccount() bên dưới).
 import { HOST } from "./apiConfig.js";
-import { withAuth } from "./apiAuth.js";
+// httpClient chung. Node giờ gọi QUA BRIDGE proxy /zalo-node/* (Bearer bắt buộc,
+// bridge tự ÉP acc theo shop đăng nhập — hết chuyện truyền ?acc= của shop khác;
+// Caddy không còn phơi Node :4000 ra internet). 400/409 là trạng thái hợp lệ
+// (chưa chọn nhóm / chưa đăng nhập Zalo) — vẫn trả body; fallbackBody {} để
+// caller đọc body.x không phải optional-chain.
+import { makeClient, request } from "./api/http.js";
 
-const NODE_URL = HOST.node;
+const NODE_URL = HOST.bridge + "/zalo-node";
 
-async function j(path, opts) {
-  const r = await fetch(NODE_URL + path, opts);
-  // 400/409 là trạng thái hợp lệ (chưa chọn nhóm / chưa đăng nhập) — vẫn trả body
-  let body = {};
-  try { body = await r.json(); } catch { /* ignore */ }
-  return { ok: r.ok, status: r.status, body };
-}
+const j = makeClient(NODE_URL, { fallbackBody: {} });
 
 const q = (acc) => "?acc=" + encodeURIComponent(acc || "default");
 const json = (body) => ({
@@ -22,14 +21,7 @@ const json = (body) => ({
 
 export const zalo = {
   // Acc Zalo của shop đang đăng nhập (bridge cấp; chủ nền tảng = "default")
-  myAccount: async () => {
-    try {
-      const r = await fetch(HOST.bridge + "/zalo/my-account", withAuth());
-      let body = {};
-      try { body = await r.json(); } catch { /* ignore */ }
-      return { ok: r.ok, status: r.status, body };
-    } catch { return { ok: false, status: 0, body: {} }; }
-  },
+  myAccount: () => request(HOST.bridge, "/zalo/my-account", { fallbackBody: {} }),
 
   status: (acc) => j("/status" + q(acc)),
   startQR: (acc) => j("/login/qr", json({ acc: acc || "default" })),

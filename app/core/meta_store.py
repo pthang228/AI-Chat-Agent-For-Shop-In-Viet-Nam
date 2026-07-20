@@ -4,42 +4,43 @@ khách kết nối qua nút "Kết nối Facebook" trên UI.
 
 Mỗi Page: { name, access_token, ig_id, ig_username }.
 Webhook nhận tin của Page nào → tra token Page đó để trả lời (gửi đúng danh nghĩa).
-Lưu JSON ở data/meta_pages.json. Đây là "danh bạ kênh" cho nhiều homestay.
+
+LƯU TRỮ: SQLite bảng channel_accounts (channel='meta') qua SQLiteChannelStore
+— thay data/meta_pages.json cũ (ghi cả file per-process → race liên tiến trình).
+access_token được mã hoá at-rest ở tầng store. File JSON cũ migrate 1 lần rồi
+đổi tên *.migrated (xem channel_store.py).
 """
 
-import json
 import logging
 import threading
 
+from app.core.channel_store import SQLiteChannelStore
 from app.core.config import Config
-from app.core.store_util import atomic_write_json
 
 log = logging.getLogger(__name__)
 
 
 class MetaStore:
     def __init__(self, path=None):
-        self._file = path or (Config.DATA_DIR / "meta_pages.json")
-        self._lock = threading.RLock()   # RLock: mark_token_invalid() gọi save() lồng nhau
-        self._pages: dict = {}   # page_id -> {name, access_token, ig_id, ig_username}
-        self._load()
-
-    def _load(self):
-        try:
-            if self._file.exists():
-                self._pages = json.loads(self._file.read_text(encoding="utf-8")) or {}
-        except Exception as e:
-            log.error(f"[MetaStore] load lỗi: {e}")
-            self._pages = {}
+        # path giữ làm legacy_file để migrate JSON cũ 1 lần (tương thích chữ ký cũ)
+        self._store = SQLiteChannelStore(
+            "meta",
+            legacy_file=path or (Config.DATA_DIR / "meta_pages.json"),
+            secret_fields=("access_token",))
+        self._lock = threading.RLock()   # tuần tự hoá đọc-sửa-ghi trong tiến trình
 
     def save(self):
+        """No-op tương thích cũ — SQLite ghi ngay từng thao tác."""
+
+    def clear(self):
+        """Xoá sạch Page (tests dọn dữ liệu)."""
         with self._lock:
-            atomic_write_json(self._file, self._pages, "MetaStore")
+            self._store.clear()
 
     def upsert(self, page_id, name=None, access_token=None, ig_id=None, ig_username=None, owner_username=None):
         pid = str(page_id)
-        with self._lock:   # mutate + save trong cùng lock (2 request connect song song)
-            p = self._pages.get(pid, {})
+        with self._lock:   # mutate + ghi trong cùng lock (2 request connect song song)
+            p = self._store.get(pid)
             if name is not None:         p["name"] = name
             if access_token is not None:
                 p["access_token"] = access_token
@@ -49,29 +50,28 @@ class MetaStore:
             # owner_username = tài khoản chủ homestay sở hữu Page (để tính quota/gói)
             if owner_username and not p.get("owner_username"):
                 p["owner_username"] = owner_username
-            self._pages[pid] = p
-            self.save()
+            self._store.upsert(pid, p)
 
     def get_token(self, page_id):
-        p = self._pages.get(str(page_id))
+        p = self._store.get(str(page_id))
         return p.get("access_token") if p else None
 
     def mark_token_invalid(self, page_id):
         """Token Page hết hạn/thu hồi (Meta code 190) → đánh dấu để UI báo chủ
-        kết nối lại. Chỉ ghi khi đổi trạng thái (tránh save liên tục)."""
+        kết nối lại. Chỉ ghi khi đổi trạng thái (tránh ghi DB liên tục)."""
         with self._lock:
-            p = self._pages.get(str(page_id))
-            if p is not None and not p.get("token_invalid"):
+            p = self._store.get(str(page_id))
+            if p and not p.get("token_invalid"):
                 p["token_invalid"] = True
-                self.save()
+                self._store.upsert(str(page_id), p)
 
     def get_owner_username(self, page_id):
-        p = self._pages.get(str(page_id))
+        p = self._store.get(str(page_id))
         return p.get("owner_username") if p else None
 
     def page_for_ig(self, ig_id):
         """Map IG business account id → page_id (sự kiện Instagram dùng ig id ở entry)."""
-        for pid, p in self._pages.items():
+        for pid, p in self._store.list():
             if str(p.get("ig_id")) == str(ig_id):
                 return pid
         return None
@@ -86,9 +86,9 @@ class MetaStore:
                 "has_ig": bool(p.get("ig_id")),
                 "token_valid": not p.get("token_invalid"),
             }
-            for pid, p in self._pages.items()
+            for pid, p in self._store.list()
         ]
 
     def remove(self, page_id):
-        self._pages.pop(str(page_id), None)
-        self.save()
+        with self._lock:
+            self._store.remove(str(page_id))

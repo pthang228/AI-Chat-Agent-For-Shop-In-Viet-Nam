@@ -6,6 +6,7 @@ Node POST sang  http://127.0.0.1:5005/incoming  với body:
   { userId, uidFrom, text, isSelf, isGroup, dName, ownId }
 """
 
+import hmac
 import json
 import time
 import logging
@@ -71,6 +72,15 @@ def _save_bot_state(state: dict) -> None:
         tmp.replace(BOT_STATE_FILE)
     except Exception as e:
         log.error(f"[bot_state] save lỗi: {e}")
+
+
+def resolve_perbot_owner(channel_key: str):
+    """Chủ (owner_username) của bot/page/site sau key 'kênh:<id>'. None nếu không
+    rõ (bot chưa gắn chủ / acc default → chỉ quản trị nền tảng đụng được). Dùng để
+    chặn shop A bật/tắt bot per-bot của shop B (bridge /bot-toggle + copilot).
+    Map kênh→store nằm ở channel_registry (1 nguồn sự thật — hết if/elif 7 nhánh)."""
+    from app.core import channel_registry
+    return channel_registry.owner_of(channel_key)
 
 
 def _norm_text(text: str) -> str:
@@ -178,6 +188,13 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.core.zalo_node_store import ZaloNodeStore
     zalo_store = ZaloNodeStore()
 
+    # Chủ của bot per-bot (dùng ở /bot-toggle) — logic ở cấp module (resolve_perbot_owner),
+    # copilot dùng chung. zalo dùng store sẵn trong closure cho nhanh.
+    def _perbot_owner(channel_key: str):
+        if channel_key.startswith("zalo:"):
+            return zalo_store.get_owner_username(channel_key.split(":", 1)[1])
+        return resolve_perbot_owner(channel_key)
+
     # (bot_state đọc TƯƠI trong từng route qua _load_bot_state() — không giữ
     # snapshot lúc boot để tránh trạng thái lỗi thời khi copilot/kênh khác ghi file.)
 
@@ -208,6 +225,16 @@ def create_bridge(brain, conv_manager) -> Flask:
     from app.core import orders as _orders
     _orders.start_reminder_thread(brain.channel.notify_owner)
 
+    # Việc cần làm / nhắc hẹn CRM (followups) — cùng pattern nhắc đơn: core chỉ
+    # export hàm, bridge wire notify_fn lúc khởi động (không import bridge từ core)
+    from app.core import followups as _followups
+    _followups.start_reminder_thread(brain.channel.notify_owner)
+
+    # Cảnh báo gói sắp/đã hết hạn + quota 80%/100% — email từng chủ shop
+    # (trước đây bot tắt IM LẶNG, chủ shop mất khách không biết)
+    from app.core import billing as _billing
+    _billing.start_expiry_warning_thread(brain.channel.notify_owner)
+
     # Thanh toán: /payhook (đối soát SePay/Casso, bản local) + /orders/bank (QR shop)
     from app.web_api.payment_api import register_payment_routes
     register_payment_routes(app, notify_fn=brain.channel.notify_owner)
@@ -218,7 +245,9 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     @app.route("/health")
     def health():
-        return {"ok": True}
+        # health SÂU dùng chung: chạm DB + kiểm disk, 503 khi hỏng (api_guard)
+        from app.web_api.api_guard import health_payload
+        return health_payload()
 
     # ── Bật/tắt bot toàn cục (nút trên màn hình chính) ─────────────────
 
@@ -240,15 +269,20 @@ def create_bridge(brain, conv_manager) -> Flask:
         app_name = _norm_text(data.get("app_name") or "")
 
         # MULTI-TENANT: công tắc GLOBAL / kênh cha trần (zalo, meta…) ảnh hưởng
-        # MỌI shop → chỉ CHỦ NỀN TẢNG được bấm. Key per-bot "kênh:<id>" (bot/page/
-        # site của riêng shop) thì shop nào cũng dùng được.
+        # MỌI shop → chỉ CHỦ NỀN TẢNG được bấm. Key per-bot "kênh:<id>" thì phải
+        # ĐÚNG CHỦ của bot/page/site đó (chống shop A tắt bot shop B qua file
+        # bot_state.json dùng chung — bỏ qua guard của server kênh).
+        from app.core import tenant as _t
+        ws = _ws()
         if ":" not in channel:
-            from app.core import tenant as _t
-            ws = _ws()
             if ws and not _t.is_platform_admin(ws):
                 return {"ok": False,
                         "error": "Chỉ quản trị nền tảng mới bật/tắt bot toàn cục — "
                                  "hãy bật/tắt từng kênh của shop bạn"}, 403
+        elif ws and not _t.is_platform_admin(ws):
+            owner = _perbot_owner(channel)
+            if owner is None or owner != ws:
+                return {"ok": False, "error": "not found"}, 404
 
         state = _load_bot_state()   # đọc TƯƠI rồi sửa → không đua với ghi từ copilot
         chans = state.setdefault("channels", {})
@@ -287,11 +321,15 @@ def create_bridge(brain, conv_manager) -> Flask:
         import requests as _rq
         node_url = getattr(brain.channel, "node_url", "") or "http://127.0.0.1:4000"
         _parse = getattr(brain.channel, "_parse", lambda u: ("default", str(u)))
+        # Node có thể yêu cầu khoá API (NODE_API_KEY) → gửi kèm X-Node-Key
+        _hdrs = ({"X-Node-Key": Config.ZALO_NODE_API_KEY}
+                 if Config.ZALO_NODE_API_KEY else None)
         changed = False
         for uid in missing:
             try:
                 _acc, _zuid = _parse(uid)
-                r = _rq.get(f"{node_url}/avatar/{_zuid}", params={"acc": _acc}, timeout=10)
+                r = _rq.get(f"{node_url}/avatar/{_zuid}", params={"acc": _acc},
+                            headers=_hdrs, timeout=10)
                 av = (r.json() or {}).get("avatar") if r.status_code == 200 else ""
                 if av:
                     conv_manager.get(uid).avatar = av
@@ -415,8 +453,65 @@ def create_bridge(brain, conv_manager) -> Flask:
         return {"ok": True, "acc": zalo_store.ensure_for_owner(ws),
                 "platform_admin": False}
 
+    # ── PROXY Node AN TOÀN: UI gọi Node QUA bridge (Bearer + ép acc theo shop) ──
+    # Trước đây Caddy phơi thẳng /zalo-node/* → Node:4000 ra internet KHÔNG auth:
+    # ai cũng gọi được /send, /logout... danh nghĩa acc Zalo của shop; và shop A
+    # truyền ?acc= của shop B là đụng acc shop B. Giờ: (1) route nằm SAU auth
+    # guard (Bearer bắt buộc, staff bị chặn — staff_deny "/zalo-node"), (2) acc
+    # bị ÉP về acc của chính workspace (chỉ admin nền tảng được chỉ định acc),
+    # (3) whitelist đúng các endpoint UI cần — /send, /friends... KHÔNG proxy.
+    # Caddyfile trỏ /zalo-node/* về bridge:5005 thay vì zalo-node:4000.
+    _NODE_UI_PATHS = {"status", "login/qr", "groups", "config", "logout",
+                      "disconnect", "reconnect", "restore-session"}
+
+    @app.route("/zalo-node/<path:sub>", methods=["GET", "POST"])
+    def zalo_node_proxy(sub):
+        from app.core import tenant as _tenant
+        if sub not in _NODE_UI_PATHS:
+            return {"ok": False, "error": "not found"}, 404
+        ws = _ws()
+        if not ws:
+            return {"ok": False, "error": "Cần đăng nhập"}, 401
+        body = request.get_json(force=True, silent=True) or {}
+        if _tenant.is_platform_admin(ws):
+            acc = (request.args.get("acc") or body.get("acc") or "default").strip() or "default"
+        else:
+            acc = zalo_store.ensure_for_owner(ws)   # shop thường: CHỈ acc của mình
+        node_url = getattr(brain.channel, "node_url", "") or "http://127.0.0.1:4000"
+        headers = {}
+        if Config.ZALO_NODE_API_KEY:
+            headers["X-Node-Key"] = Config.ZALO_NODE_API_KEY
+        import requests as _rq
+        try:
+            if request.method == "GET":
+                params = request.args.to_dict()
+                params["acc"] = acc
+                r = _rq.get(f"{node_url}/{sub}", params=params, headers=headers, timeout=30)
+            else:
+                body["acc"] = acc
+                r = _rq.post(f"{node_url}/{sub}", json=body, headers=headers, timeout=30)
+        except Exception as e:
+            log.error(f"[zalo-node proxy] {sub} lỗi: {e}")
+            return {"ok": False, "error": f"Không gọi được Zalo Node: {e}"}, 502
+        return (r.content, r.status_code,
+                {"Content-Type": r.headers.get("Content-Type", "application/json")})
+
     @app.route("/incoming", methods=["POST"])
     def incoming():
+        # BẢO MẬT BIÊN: /incoming là route PUBLIC (Node gọi vào, không Bearer) —
+        # ai cùng mạng POST {isSelf:true, ownerTyped:true} là tắt được bot 48h
+        # cho khách bất kỳ. Đặt BRIDGE_SECRET (production BẮT BUỘC) → chỉ nhận
+        # request có header X-Bridge-Secret khớp (Node đọc cùng env gửi kèm).
+        # compare_digest trên bytes: chống timing attack + không nổ khi header
+        # chứa ký tự lạ. Không đặt secret → hành vi cũ (dev/test local).
+        if Config.BRIDGE_SECRET:
+            got = request.headers.get("X-Bridge-Secret", "")
+            if not hmac.compare_digest(got.encode("utf-8"),
+                                       Config.BRIDGE_SECRET.encode("utf-8")):
+                log.warning("[incoming] sai/thiếu X-Bridge-Secret từ "
+                            f"{request.remote_addr} → 401")
+                return {"ok": False, "error": "unauthorized"}, 401
+
         data = request.get_json(force=True, silent=True) or {}
 
         # Tin nhóm → bỏ qua (bot chỉ tư vấn 1-1)
@@ -466,19 +561,7 @@ def create_bridge(brain, conv_manager) -> Flask:
             log.info(f"[Skip] bot_disabled ({_zl_key}) {user_id}")
             return {"ok": True, "skipped": "bot_disabled"}
 
-        # Gói/quota AI: acc shop → theo gói CHỦ SHOP đó (channel_gate như mọi
-        # kênh); acc default → gate toàn cục (chủ nền tảng) như cũ.
-        from app.core import billing
-        owner = zalo_store.get_owner_username(acc)
-        if not billing.channel_gate(owner):
-            log.info(f"[Skip] gói/quota chủ ({owner or 'nền tảng'}) → bỏ qua {user_id}")
-            return {"ok": True, "skipped": "billing_expired"}
-
         conv = conv_manager.get(user_id)
-
-        # MULTI-TENANT: đóng dấu shop sở hữu (acc default → chủ nền tảng)
-        from app.core import tenant as _tenant
-        _tenant.assign(conv_manager, user_id, owner)
 
         # (ctx acc set TRONG _run — thread-local không kế thừa sang thread pool)
 
@@ -498,6 +581,21 @@ def create_bridge(brain, conv_manager) -> Flask:
         # Tin không có text (sticker/media) — chỉ rep nếu là khách mới
         if not text and len(conv.messages) > 0:
             return {"ok": True, "skipped": "non-text non-first"}
+
+        # GATE-LAST — Gói/quota AI: acc shop → theo gói CHỦ SHOP đó (channel_gate
+        # như mọi kênh); acc default → gate toàn cục (chủ nền tảng) như cũ.
+        # channel_gate GHI 1 LƯỢT AI khi cho qua → phải là CHECK CUỐI CÙNG, đứng
+        # SAU mọi đường return sớm (bot tắt / owner_active / non-text) — nếu gọi
+        # sớm hơn thì tin bị DROP vẫn trừ quota oan của chủ shop.
+        from app.core import billing
+        owner = zalo_store.get_owner_username(acc)
+        if not billing.channel_gate(owner):
+            log.info(f"[Skip] gói/quota chủ ({owner or 'nền tảng'}) → bỏ qua {user_id}")
+            return {"ok": True, "skipped": "billing_expired"}
+
+        # MULTI-TENANT: đóng dấu shop sở hữu (acc default → chủ nền tảng)
+        from app.core import tenant as _tenant
+        _tenant.assign(conv_manager, user_id, owner)
 
         log.info(f"[MSG] {user_id} | {text[:80]!r}")
 
@@ -573,7 +671,7 @@ def create_bridge(brain, conv_manager) -> Flask:
         # Nhân viên (role=staff) chỉ làm hộp thư/khách/đơn — cấm phần quản trị
         staff_deny=(
             "/billing", "/prompt", "/team", "/broadcasts", "/copilot", "/notify",
-            "/admin", "/zalo", "/sheets", "/orders/bank", "/bot-toggle",
+            "/admin", "/zalo", "/zalo-node", "/sheets", "/orders/bank", "/bot-toggle",
             "POST /photos/sets", "DELETE /photos/sets",
             "DELETE /conversations",     # xoá hội thoại: chỉ chủ
         ),

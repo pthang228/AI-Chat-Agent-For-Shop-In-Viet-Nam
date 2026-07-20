@@ -61,13 +61,10 @@ def _row(r) -> dict:
 # ── CRUD ─────────────────────────────────────────────────────────────
 
 def _tenant_where(tenant_ws):
-    """Mảnh WHERE multi-tenant (chủ nền tảng thấy cả bộ ảnh cũ tenant='')."""
+    """Mảnh ' WHERE ...' multi-tenant (nguồn chung: tenant.tenant_where)."""
     from app.core import tenant as _t
-    if not tenant_ws:
-        return "", ()
-    if tenant_ws == _t.default_owner():
-        return " WHERE (tenant=? OR tenant='')", (tenant_ws,)
-    return " WHERE tenant=?", (tenant_ws,)
+    frag, params = _t.tenant_where(tenant_ws)
+    return (" WHERE " + frag, tuple(params)) if frag else ("", ())
 
 
 def list_sets(tenant_ws: str = None) -> list:

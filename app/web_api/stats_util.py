@@ -24,8 +24,9 @@ def compute_stats(conv_manager, from_s=None, to_s=None, uid_filter=None,
                   tenant_ws=None) -> dict:
     """Trả payload thống kê {total_conv, total_msg, user_msg, bot_msg, confirmed,
     by_stage, timeline}. uid_filter(uid)->bool để lọc theo kênh/bot.
-    tenant_ws: MULTI-TENANT — chỉ đếm hội thoại của workspace này (None = tất cả;
-    session archive cũ không mang tenant nên chỉ chủ nền tảng thấy — như visible())."""
+    tenant_ws: MULTI-TENANT — chỉ đếm hội thoại của workspace này (None = tất cả).
+    Archive giờ MANG tenant (ghi lúc dọn session) → shop thuê giữ được số liệu
+    lịch sử; dòng cũ trước migrate (tenant='') chỉ chủ nền tảng thấy — visible()."""
     from_dt, to_dt = parse_range(from_s, to_s)
     total_conv = total_msg = user_msg = bot_msg = confirmed = 0
     by_stage: dict = {}
@@ -69,13 +70,13 @@ def compute_stats(conv_manager, from_s=None, to_s=None, uid_filter=None,
         )
 
     # 2) Session đã lưu trữ (bị dọn khỏi RAM sau 48h không hoạt động).
-    # Archive không mang tenant → chỉ CHỦ NỀN TẢNG được cộng số liệu này.
-    if tenant_ws and tenant_ws != _tenant.default_owner():
-        archived = None
-    else:
-        archived = getattr(conv_manager, "archived_stats", None)
+    # Lọc theo tenant TỪNG DÒNG (archive ghi tenant lúc dọn) — cùng luật
+    # visible() với session sống: dòng mồ côi ('') chỉ chủ nền tảng thấy.
+    archived = getattr(conv_manager, "archived_stats", None)
     for row in (archived() if archived else []):
         if uid_filter and not uid_filter(row.get("user_id", "")):
+            continue
+        if tenant_ws and not _tenant.visible(row.get("tenant", "") or "", tenant_ws):
             continue
         day = row.get("date") or ""
         try:

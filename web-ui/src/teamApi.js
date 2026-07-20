@@ -1,20 +1,10 @@
 // TEAM — quản lý nhân viên (chủ) + danh sách thành viên workspace (mọi người).
 // Backend: bridge 5005 (auth_api). /team* chỉ CHỦ; /teammates cả nhân viên đọc được.
-import { withAuth } from "./apiAuth.js";
-
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401 + offline → status 0.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const BASE = HOST.bridge;
 
-async function j(path, opts) {
-  try {
-    const r = await fetch(BASE + path, withAuth(opts));
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };
-  }
-}
+const j = makeClient(HOST.bridge);
 
 const json = (method, body) => ({
   method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

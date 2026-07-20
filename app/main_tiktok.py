@@ -25,11 +25,8 @@ from app.core.tiktok_store import TikTokStore
 from app.channels.tiktok import TikTokChannel
 from app.web_api.tiktok_api import create_tiktok_api
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("bot_tiktok.log", encoding="utf-8")],
-)
+from app.core.logging_setup import setup_logging
+setup_logging("bot_tiktok.log")
 log = logging.getLogger(__name__)
 
 

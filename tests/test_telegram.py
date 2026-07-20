@@ -20,7 +20,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -165,7 +169,8 @@ with patch.object(tgch.telegram_owner, 'get_owner_chat_id', return_value="900"):
 
 print("\n── D. Đa khách (token + chủ theo từng bot) ──")
 from app.core.telegram_store import TelegramStore
-store = TelegramStore(path=Path("test_tg_store_tmp.json")); store._bots.clear()
+# Backend giờ là SQLite — clear() dọn dữ liệu kênh sót từ lần chạy trước
+store = TelegramStore(path=Path(str(_TMPDIR / "test_tg_store_tmp.json"))); store.clear()
 store.upsert("BOT1", token="TOK1", username="haru_bot", name="Haru")
 store.set_owner("BOT1", "OWN1", "Chu Haru")
 
@@ -241,7 +246,7 @@ client.post("/tg/caller/logout", json={"bot_id": "BOT1"})
 check(store.get_caller_session("BOT1") is None, "F6 logout_clears")
 
 print(f"\n{'='*40}\n  KẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
-for _f in ("test_tg_tmp.json", "test_tg_store_tmp.json"):
+for _f in (str(_TMPDIR / "test_tg_tmp.json"), str(_TMPDIR / "test_tg_store_tmp.json")):
     try: Path(_f).unlink()
     except: pass
 sys.exit(1 if FAIL else 0)

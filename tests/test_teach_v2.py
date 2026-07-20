@@ -21,7 +21,11 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-_DB = 'test_db_teach_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+_DB = str(_TMPDIR / 'test_db_teach_tmp.sqlite')
 for _f in (_DB, _DB + '-shm', _DB + '-wal'):
     try: os.remove(_f)
     except OSError: pass

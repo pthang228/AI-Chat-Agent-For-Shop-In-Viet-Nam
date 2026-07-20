@@ -11,3 +11,4 @@ waitress>=3.0.0
 telethon>=1.34.0
 qrcode>=7.4
 pypdf>=4.0.0
+cryptography>=42.0         # mã hoá at-rest session Telethon/token (app/core/secretbox.py)

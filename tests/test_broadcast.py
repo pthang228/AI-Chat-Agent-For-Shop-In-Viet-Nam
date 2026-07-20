@@ -24,7 +24,11 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_broadcast_tmp.sqlite'   # DB test riêng
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_broadcast_tmp.sqlite')   # DB test riêng
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 os.environ['BROADCAST_THROTTLE'] = '0'   # test không chờ giãn cách
@@ -32,7 +36,7 @@ sys.path.insert(0, '.')
 
 from pathlib import Path
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_broadcast_tmp.sqlite{suf}").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_broadcast_tmp.sqlite{suf}")).unlink(missing_ok=True)
 
 from datetime import datetime, timedelta
 from app.core.db import get_db
@@ -225,6 +229,57 @@ boom = Flask(__name__)
 register_chat_tools(boom, "/tg2", cm, BoomChannel(), account="telegram2")
 r = boom.test_client().post("/tg2/conversations/tg:B1:C7/broadcast-send", json={"text": "x"})
 check(r.status_code == 502 and "token hỏng" in r.json["error"], "G8 kênh nổ → 502 + lỗi rõ")
+
+# ── H. recover_stuck + resume (crash giữa chừng) ─────────────────────
+print("H. recover_stuck + resume")
+b4 = broadcast.create("Kẹt sending", "Tin bị crash giữa chừng nè", ["zalo", "meta", "telegram"],
+                      {"type": "all"})
+old_ts = (NOW - timedelta(hours=2)).isoformat()
+db.execute("UPDATE broadcasts SET status='sending', started_at=? WHERE id=?",
+           (old_ts, b4["id"]))
+# giả lập crash SAU khi gửi được 1 khách (log ghi từng người nhận) + 1 khách fail
+db.execute("INSERT INTO broadcast_log (broadcast_id, account, user_id, status, error, created_at)"
+           " VALUES (?,?,?,?,?,?)", (b4["id"], "1", "Z_MOI", "sent", "", old_ts))
+db.execute("INSERT INTO broadcast_log (broadcast_id, account, user_id, status, error, created_at)"
+           " VALUES (?,?,?,?,?,?)", (b4["id"], "telegram", "tg:B1:C7", "failed", "chết", old_ts))
+
+n = broadcast.recover_stuck(max_age_minutes=30)
+r = broadcast.get(b4["id"])
+check(n == 1 and r["status"] == "failed", "H1 kẹt sending quá hạn → failed", (n, r["status"]))
+check("gián đoạn" in (r.get("note") or ""), "H2 note ghi rõ gián đoạn", r.get("note"))
+
+# chiến dịch 'sending' CÒN SỐNG (log mới trong hạn) → recover không đụng
+b5 = broadcast.create("Đang chạy", "Tin đang gửi bình thường", ["zalo"], {"type": "all"})
+db.execute("UPDATE broadcasts SET status='sending', started_at=? WHERE id=?",
+           (old_ts, b5["id"]))
+db.execute("INSERT INTO broadcast_log (broadcast_id, account, user_id, status, error, created_at)"
+           " VALUES (?,?,?,'sent','',?)", (b5["id"], "1", "Z_MOI", NOW.isoformat()))
+check(broadcast.recover_stuck(30) == 0 and broadcast.get(b5["id"])["status"] == "sending",
+      "H3 còn nhịp tim (log mới) → không đánh failed")
+db.execute("UPDATE broadcasts SET status='done' WHERE id=?", (b5["id"],))   # dọn
+
+# start() nhận lại chiến dịch failed (mock Thread → không chạy nền, kiểm deterministic)
+with patch.object(broadcast.threading, "Thread") as mt:
+    check(broadcast.start(b4["id"], "TOK"), "H4 start() nhận chiến dịch failed (gửi lại)")
+r = broadcast.get(b4["id"])
+check(r["status"] == "sending" and not r.get("note"), "H5 gửi lại → sending, xoá note")
+
+# _run resume: bỏ qua khách đã sent, retry khách failed, counters gộp lần trước
+sent_urls = []
+def resume_post(url, **kw):
+    sent_urls.append(url)
+    return fake_resp(200, {"ok": True})
+with patch.object(broadcast.requests, "post", side_effect=resume_post):
+    broadcast._run(b4["id"], "TOK")
+r = broadcast.get(b4["id"])
+check(r["status"] == "done", "H6 gửi lại xong → done", r["status"])
+check(len(sent_urls) == 3 and not any("Z_MOI" in u for u in sent_urls),
+      "H7 resume bỏ qua khách đã sent, gửi 3 khách còn lại (kể cả retry failed)", sent_urls)
+check(r["total"] == 4 and r["sent"] == 4 and r["failed"] == 0,
+      "H8 counters gộp: 1 lần trước + 3 lần này", (r["total"], r["sent"], r["failed"]))
+logs4 = broadcast.logs(b4["id"])
+check(len(logs4) == 4 and sum(1 for l in logs4 if l["status"] == "sent") == 4,
+      "H9 log không đếm kép (failed cũ đã dọn khi retry)", [(l["user_id"], l["status"]) for l in logs4])
 
 print(f"\nKẾT QUẢ: {PASS} pass, {FAIL} fail")
 sys.exit(1 if FAIL else 0)

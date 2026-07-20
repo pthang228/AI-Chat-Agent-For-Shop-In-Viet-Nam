@@ -29,7 +29,7 @@ from urllib.parse import quote
 import requests
 
 from app.core.config import Config
-from app.core.channel import Channel
+from app.core.channel import Channel, LEGACY_ROOM_SETS
 from app.core.http_util import post_with_retry
 from app.core import owner_call
 
@@ -186,7 +186,7 @@ class TikTokChannel(Channel):
         business_id, uid = self._parse(user_id)
         base = Path(Config.PRICE_PHOTOS_DIR)
         sent = False
-        for folder_name, label in [("haru", "Haru Staycation"), ("mochi", "Mochi Home")]:
+        for folder_name, label in LEGACY_ROOM_SETS:
             if self._send_dir(business_id, uid, base / folder_name, f"📋 Bảng giá {label}:"):
                 sent = True
         if not sent:

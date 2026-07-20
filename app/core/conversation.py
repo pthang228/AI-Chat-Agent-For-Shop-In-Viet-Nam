@@ -235,13 +235,15 @@ class ConversationManager:
         """Gấp 1 session sắp bị dọn thành 1 dòng thống kê (không giữ nội dung chat)."""
         msgs = s.messages
         try:
+            # Ghi kèm TENANT của session: shop thuê vẫn thấy số liệu lịch sử
+            # sau khi session bị dọn (compute_stats lọc archive theo tenant)
             self._db.execute(
-                "INSERT INTO stats_archive(account,user_id,stage,total_msg,user_msg,bot_msg,date) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO stats_archive(account,user_id,stage,total_msg,user_msg,bot_msg,date,tenant) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (self._account, s.user_id, s.stage, len(msgs),
                  sum(1 for m in msgs if m.get("role") == "user"),
                  sum(1 for m in msgs if m.get("role") == "assistant"),
-                 s.last_updated.strftime("%Y-%m-%d")))
+                 s.last_updated.strftime("%Y-%m-%d"), s.tenant or ""))
         except Exception as e:
             print(f"[Sessions] Lỗi archive: {e}")
 
@@ -249,7 +251,9 @@ class ConversationManager:
         try:
             return [
                 {"user_id": r["user_id"], "stage": r["stage"], "total_msg": r["total_msg"],
-                 "user_msg": r["user_msg"], "bot_msg": r["bot_msg"], "date": r["date"]}
+                 "user_msg": r["user_msg"], "bot_msg": r["bot_msg"], "date": r["date"],
+                 # tenant để compute_stats lọc theo shop (dòng cũ trước migrate = '')
+                 "tenant": (r["tenant"] if "tenant" in r.keys() else "") or ""}
                 for r in self._db.query(
                     "SELECT * FROM stats_archive WHERE account=?", (self._account,))
             ]

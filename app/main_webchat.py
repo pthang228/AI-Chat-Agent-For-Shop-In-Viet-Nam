@@ -25,11 +25,8 @@ from app.core.webchat_store import WebChatStore
 from app.channels.webchat import WebChatChannel
 from app.web_api.webchat_api import create_webchat_api
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("bot_webchat.log", encoding="utf-8")],
-)
+from app.core.logging_setup import setup_logging
+setup_logging("bot_webchat.log")
 log = logging.getLogger(__name__)
 
 

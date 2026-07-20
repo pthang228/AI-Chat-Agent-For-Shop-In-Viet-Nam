@@ -1,17 +1,11 @@
 // Gọi API auth thật (nằm trong bridge Flask, cổng 5005) — users/token/apps trong SQLite.
 import { HOST } from "./apiConfig.js";
-const AUTH_URL = HOST.bridge;
+// httpClient chung, NHƯNG: auth:false (token được truyền TƯỜNG MINH từng hàm,
+// không tự gắn) + handle401:false (ở đây 401 là kết quả bình thường — sai mật
+// khẩu, mã OTP sai… — auth.js tự xử lý, không được đá về /login).
+import { makeClient } from "./api/http.js";
 
-async function j(path, opts = {}) {
-  try {
-    const r = await fetch(AUTH_URL + path, opts);
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };  // server 5005 chưa chạy → offline
-  }
-}
+const j = makeClient(HOST.bridge, { auth: false, handle401: false });
 
 const json = (body, token) => ({
   method: "POST",

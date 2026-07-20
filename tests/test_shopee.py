@@ -23,7 +23,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -46,8 +50,9 @@ def check(cond, name, detail=""):
 cm = ConversationManager(account="sp-test")
 cm._sessions.clear()
 
-store = ShopeeStore(path=Path("test_sp_store_tmp.json"))
-store._shops.clear()
+# Backend giờ là SQLite — clear() dọn dữ liệu kênh sót từ lần chạy trước
+store = ShopeeStore(path=Path(str(_TMPDIR / "test_sp_store_tmp.json")))
+store.clear()
 
 print("\n── A. ShopeeChannel ──")
 ch = ShopeeChannel(store=store, access_token="", shop_id="",
@@ -268,9 +273,9 @@ check(r.status_code == 200 and store.get_owner_buyer_id("S9") == "U55", "D11 set
 r = api.get("/shopee/stats")
 check(r.status_code == 200 and "total_conv" in r.get_json(), "D12 stats")
 
-# Dọn file tạm
-store._shops.clear(); store.save()
-Path("test_sp_store_tmp.json").unlink(missing_ok=True)
+# Dọn dữ liệu store (SQLite) + file tạm legacy nếu có
+store.clear()
+Path(str(_TMPDIR / "test_sp_store_tmp.json")).unlink(missing_ok=True)
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

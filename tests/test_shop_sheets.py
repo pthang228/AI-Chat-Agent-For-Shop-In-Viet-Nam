@@ -22,13 +22,17 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_shop_sheets_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_shop_sheets_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '1'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
 
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_shop_sheets_tmp.sqlite{suf}").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_shop_sheets_tmp.sqlite{suf}")).unlink(missing_ok=True)
 
 from flask import Flask
 from app.web_api.auth_api import register_auth_routes
@@ -117,7 +121,7 @@ try:
 except Exception:
     pass
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_shop_sheets_tmp.sqlite{suf}").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_shop_sheets_tmp.sqlite{suf}")).unlink(missing_ok=True)
 
 print(f"\nKẾT QUẢ: {PASS} pass, {FAIL} fail")
 sys.exit(1 if FAIL else 0)

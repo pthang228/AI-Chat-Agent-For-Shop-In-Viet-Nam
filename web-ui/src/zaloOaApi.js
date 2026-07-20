@@ -1,18 +1,9 @@
 // Gọi API kênh Zalo OA (Flask cổng 5010).
-import { withAuth } from "./apiAuth.js";
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401 + offline → status 0.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const URL = HOST.zalooa;
 
-async function j(path, opts) {
-  try {
-    const r = await fetch(URL + path, withAuth(opts));
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };   // server 5010 chưa chạy → offline
-  }
-}
+const j = makeClient(HOST.zalooa);
 
 export const zalooa = {
   config: () => j("/zalooa/config"),

@@ -23,7 +23,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_chattools_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_chattools_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
@@ -60,7 +64,7 @@ check(ch.send_file("U1", "/tmp/x.mp4", "", "video") is False, "A2 no_url_false")
 # Telegram override: upload thật (patch requests.post)
 from app.channels.telegram import TelegramChannel
 tch = TelegramChannel(store=None, token="TOK", conv_manager=None)
-tmp = Path("test_media_tmp.mp4"); tmp.write_bytes(b"\x00\x00fakevideo")
+tmp = Path(str(_TMPDIR / "test_media_tmp.mp4")); tmp.write_bytes(b"\x00\x00fakevideo")
 with patch.object(__import__('app.channels.telegram', fromlist=['requests']), 'requests') as mreq:
     calls = []
     def fake_post(url, data=None, files=None, timeout=None):
@@ -74,7 +78,7 @@ with patch.object(__import__('app.channels.telegram', fromlist=['requests']), 'r
     def fake_post2(url, data=None, files=None, timeout=None):
         calls.append(url); m = MagicMock(); m.status_code = 200; return m
     mreq.post.side_effect = fake_post2
-    img = Path("test_img_tmp.png"); img.write_bytes(b"\x89PNG\x00")
+    img = Path(str(_TMPDIR / "test_img_tmp.png")); img.write_bytes(b"\x89PNG\x00")
     ok = tch.send_file("tg:U9", img, "", "image", "cap")   # url rỗng vẫn gửi được (upload path)
     img.unlink(missing_ok=True)
 check(ok and any("sendPhoto" in u for u in calls), "A3b tg_upload_photo", f"{calls}")
@@ -163,6 +167,6 @@ r = api.delete(f"/canned/{cid}")
 check(r.status_code == 200 and not any(c["id"] == cid for c in api.get("/canned").get_json()),
       "B7 canned_del")
 
-Path("test_media_tmp.mp4").unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_media_tmp.mp4")).unlink(missing_ok=True)
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

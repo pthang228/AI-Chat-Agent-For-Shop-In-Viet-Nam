@@ -4,6 +4,14 @@
 # Kiến trúc: 7 dịch vụ Flask (chung 1 ảnh Python) + Zalo Node + Caddy (TLS + static
 # + reverse proxy). Tất cả chung mạng nội bộ; chỉ Caddy mở cổng 80/443 ra internet.
 
+x-logging: &logrotate
+  # Chặn json-file log của Docker phình vô hạn (9 container 24/7 → disk đầy →
+  # SQLite hết chỗ ghi WAL = sập cả stack). 10MB × 5 file / container.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 x-app: &app
   image: novachat-app:latest
   build:
@@ -11,42 +19,78 @@ x-app: &app
     dockerfile: deploy/Dockerfile.py
   env_file: .env.production
   restart: unless-stopped
+  logging: *logrotate
   volumes:
     - dbdata:/app/data      # SQLite dùng chung (WAL, đa tiến trình)
     - media:/app/media      # ảnh/file dùng chung
   networks: [nova]
+  # HEALTHCHECK: gọi /health của chính service (mỗi service 1 cổng qua HEALTH_PORT).
+  # Docker tự đánh dấu unhealthy nếu tiến trình treo → dễ giám sát + restart đúng.
+  healthcheck:
+    test: ["CMD", "python", "-c", "import os,urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('HEALTH_PORT','5005')+'/health', timeout=5).status==200 else sys.exit(1)"]
+    interval: 30s
+    timeout: 6s
+    retries: 3
+    start_period: 25s
 
 services:
   bridge:                    # 5005 — não bộ Zalo + API dashboard
     <<: *app
     command: python -m app.main_node
+    # BRIDGE_SECRET + NODE_API_KEY tự vào qua env_file (.env.production) —
+    # bridge kiểm X-Bridge-Secret ở /incoming + gửi X-Node-Key khi gọi Node.
     environment:
       BRIDGE_HOST: "0.0.0.0"
       ZALO_NODE_URL: "http://zalo-node:4000"
+      HEALTH_PORT: "5005"
 
   meta:                      # 5006 — Messenger + Instagram + webhook + payhook
     <<: *app
     command: python -m app.main_meta
+    environment:
+      HEALTH_PORT: "5006"
 
   telegram:                  # 5007
     <<: *app
     command: python -m app.main_telegram
+    environment:
+      HEALTH_PORT: "5007"
 
   tiktok:                    # 5008
     <<: *app
     command: python -m app.main_tiktok
+    environment:
+      HEALTH_PORT: "5008"
 
   shopee:                    # 5009
     <<: *app
     command: python -m app.main_shopee
+    environment:
+      HEALTH_PORT: "5009"
 
   zalooa:                    # 5010 — Zalo OA
     <<: *app
     command: python -m app.main_zalo_oa
+    environment:
+      HEALTH_PORT: "5010"
 
   webchat:                   # 5011 — widget website
     <<: *app
     command: python -m app.main_webchat
+    environment:
+      HEALTH_PORT: "5011"
+
+  backup:                    # sao lưu SQLite hằng đêm sang volume RIÊNG (offsite-ready)
+    <<: *app
+    command: python scripts/backup_loop.py
+    # KHÔNG dùng healthcheck của x-app (service này không mở cổng web)
+    healthcheck:
+      disable: true
+    # Volume ghi đè x-app: đọc DB từ dbdata, GHI BẢN SAO sang volume backups —
+    # mất/xoá nhầm dbdata (docker compose down -v) vẫn còn backup.
+    volumes:
+      - dbdata:/app/data
+      - backups:/backups
 
   zalo-node:                 # 4000 — zca-js (đăng nhập QR Zalo cá nhân)
     image: novachat-node:latest
@@ -54,16 +98,30 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.node
     env_file: .env.production
+    # BRIDGE_SECRET (gửi kèm khi forward /incoming) + NODE_API_KEY (yêu cầu
+    # X-Node-Key mọi request) tự vào qua env_file (.env.production).
     environment:
       PY_BRIDGE_URL: "http://bridge:5005/incoming"
       ZALO_NODE_PORT: "4000"
+      # Trong Docker, Python gọi Node qua mạng nội bộ compose (không phải
+      # localhost của container) → phải bind mọi interface. Cổng 4000 KHÔNG
+      # publish ra host nên vẫn kín; thêm NODE_API_KEY làm lớp khoá thứ 2.
+      NODE_BIND: "0.0.0.0"
       ZALO_SESSION_FILE: "/data/zalo-session.json"      # phiên acc default
       ZALO_SESSIONS_DIR: "/data/zalo-sessions"          # phiên acc từng shop (multi-account)
       ZALO_NODE_CONFIG: "/data/node-config.json"        # nhóm nhận thông báo per acc
     restart: unless-stopped
+    logging: *logrotate
     volumes:
       - zalosession:/data
     networks: [nova]
+    # Node 20 có fetch toàn cục — /health trả 503 khi listener Zalo rớt phiên
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
 
   web:                       # 80/443 — Caddy: TLS + dashboard tĩnh + reverse proxy
     image: novachat-web:latest
@@ -77,6 +135,7 @@ services:
       - "80:80"
       - "443:443"
     restart: unless-stopped
+    logging: *logrotate
     depends_on: [bridge, meta, telegram, tiktok, shopee, zalooa, webchat, zalo-node]
     volumes:
       - caddydata:/data      # chứng chỉ TLS Let's Encrypt (giữ qua restart)
@@ -89,6 +148,7 @@ volumes:
   zalosession:
   caddydata:
   caddyconfig:
+  backups:      # bản sao DB — TÁCH khỏi dbdata, sống sót khi dbdata mất
 
 networks:
   nova:

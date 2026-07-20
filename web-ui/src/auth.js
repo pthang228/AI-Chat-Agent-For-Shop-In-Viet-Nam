@@ -5,29 +5,20 @@
 // ở lần đăng nhập đầu tiên.
 
 import { authApi, OFFLINE_MSG } from "./authApi.js";
+// Token/phiên gom về 1 chỗ trong api/http.js (httpClient chung) — auth.js chỉ
+// re-export getToken để các nơi import cũ (chatToolsApi, pages…) không phải sửa.
+import { getToken, clearSession, TOKEN_KEY, USER_KEY } from "./api/http.js";
 
-const TOKEN_KEY = "hb_token";
-const USER_KEY = "hb_user";
+export { getToken };
+
 const LEGACY_USERS_KEY = "hb_users";
 const LEGACY_APPS_KEY = "hb_apps";
-
-function clearSession() {
-  for (const s of [localStorage, sessionStorage]) {
-    s.removeItem(TOKEN_KEY);
-    s.removeItem(USER_KEY);
-    s.removeItem("hb_session");   // phiên kiểu cũ
-  }
-}
 
 function setSession(token, user, remember) {
   clearSession();
   const s = remember ? localStorage : sessionStorage;
   s.setItem(TOKEN_KEY, token);
   s.setItem(USER_KEY, JSON.stringify(user));
-}
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
 }
 
 export function currentUser() {

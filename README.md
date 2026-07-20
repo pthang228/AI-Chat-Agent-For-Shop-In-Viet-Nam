@@ -77,16 +77,18 @@ Mở `http://localhost:5173` → đăng ký tài khoản → thêm app → kết
 
 ## Test
 
-44 file test tự chạy trong `tests/` (auth, tenant, billing, broadcast, từng kênh, sheets, security...):
+45 file test tự chạy trong `tests/` (auth, tenant, billing, broadcast, từng kênh, sheets, security...):
 
 ```bash
-python tests/test_auth.py       # 45/45
-python tests/test_broadcast.py  # 43/43
-python tests/test_meta.py       # 50/50
+python tests/test_auth.py       # 46/46
+python tests/test_broadcast.py  # 52/52
+python tests/test_meta.py       # 63/63
 ```
 
 ## Trạng thái & giới hạn đã biết
 
 - Kênh chạy thật end-to-end: Zalo cá nhân, Messenger + Instagram, Telegram, Web widget, Zalo OA. TikTok/Shopee mới ở mức scaffold (mock, chờ duyệt API).
 - Messenger/Instagram cho khách lạ cần Meta App Review (`pages_messaging`, `instagram_manage_messages`) — dev mode chạy đủ cho admin/tester.
-- Nút bật/tắt bot đang là cờ toàn cục (chưa tách theo shop); session Telethon của acc gọi cần mã hoá trước khi bán thật.
+- Bật/tắt bot đã tách per-bot/per-account từng kênh (riêng Meta chưa có công tắc per-Page); secret kênh + session Telethon mã hoá at-rest (Fernet), production public **bắt buộc** `NOVACHAT_SECRET_KEY` (thiếu là từ chối khởi động).
+- Chống double-booking bằng hold giữ chỗ 30′ + đọc tươi Sheets trước khi chốt — nhưng bot **không ghi ngược** vào Sheet, chủ vẫn là người xác nhận cuối.
+- Kênh Zalo cá nhân dùng thư viện unofficial (zca-js) — có rủi ro khoá tài khoản theo chính sách Zalo; khuyến nghị shop bán thật ưu tiên Zalo OA.

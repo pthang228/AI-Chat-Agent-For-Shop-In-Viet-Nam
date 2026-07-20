@@ -26,14 +26,18 @@ sys.modules.update({
     'dotenv': MagicMock(),
 })
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tenant_tmp.sqlite'   # DB test riêng
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tenant_tmp.sqlite')   # DB test riêng
 os.environ['API_AUTH_GUARD'] = '1'    # BẬT — cách ly tenant cần auth thật
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
 
 for suf in ("", "-wal", "-shm"):
-    Path(f"test_db_tenant_tmp.sqlite{suf}").unlink(missing_ok=True)
-Path("test_tenant_store_tmp.json").unlink(missing_ok=True)
+    Path(str(_TMPDIR / f"test_db_tenant_tmp.sqlite{suf}")).unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_tenant_store_tmp.json")).unlink(missing_ok=True)
 
 from flask import Flask
 from app.core.conversation import ConversationManager
@@ -106,7 +110,7 @@ check(tenant.visible("shopb@x.vn", None), "B5 không workspace (test) → thấy
 # ── C+D. API hội thoại telegram thật ────────────────────────────────
 print("C. API hội thoại cách ly")
 from app.web_api.telegram_api import create_telegram_api
-store = TelegramStore(path=Path("test_tenant_store_tmp.json"))
+store = TelegramStore(path=Path(str(_TMPDIR / "test_tenant_store_tmp.json")))
 tg_app = create_telegram_api(FakeBrain(), cm, FakeChannel(), store)
 tc = tg_app.test_client()
 
@@ -206,9 +210,9 @@ print("J. Persona prompt per-shop")
 from app.core import prompt_builder, claude_ai
 # Patch file não default + backup sang file TẠM (house style test_prompt) —
 # tuyệt đối không đụng data/custom_prompt.txt THẬT của máy dev
-prompt_builder.CUSTOM_FILE = Path("test_tenant_custom_tmp.txt")
-prompt_builder.BACKUP_DIR = Path("test_tenant_backups_tmp")
-Path("test_tenant_custom_tmp.txt").unlink(missing_ok=True)
+prompt_builder.CUSTOM_FILE = Path(str(_TMPDIR / "test_tenant_custom_tmp.txt"))
+prompt_builder.BACKUP_DIR = Path(str(_TMPDIR / "test_tenant_backups_tmp"))
+Path(str(_TMPDIR / "test_tenant_custom_tmp.txt")).unlink(missing_ok=True)
 PERSONA_B = "#PERSONA-B " + "Shop B chuyên bán trà sữa, xưng em ngọt ngào. " * 6
 prompt_builder.apply(PERSONA_B, shop="shopb@x.vn")
 check(claude_ai._load_system_prompt("shopb@x.vn").startswith("#PERSONA-B"),
@@ -337,8 +341,8 @@ try:
     import shutil
     claude_ai._custom_prompt_file("shopb@x.vn").unlink(missing_ok=True)
     pl.delete_set(s_a["slug"]); pl.delete_set(s_b["slug"])
-    Path("test_tenant_custom_tmp.txt").unlink(missing_ok=True)
-    shutil.rmtree("test_tenant_backups_tmp", ignore_errors=True)
+    Path(str(_TMPDIR / "test_tenant_custom_tmp.txt")).unlink(missing_ok=True)
+    shutil.rmtree(str(_TMPDIR / "test_tenant_backups_tmp"), ignore_errors=True)
 except Exception:
     pass
 

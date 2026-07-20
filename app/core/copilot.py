@@ -104,10 +104,29 @@ def _t_overview(username, args):
     }
 
 
-def _t_stats(username, args):
-    """Tổng hội thoại/tin nhắn toàn kênh (đọc thẳng bảng sessions)."""
+def _workspace_of(username):
+    """Workspace (shop) của người đang chat copilot: staff → chủ, chủ → chính mình."""
+    if not username:
+        return None
     from app.core.db import get_db
-    rows = get_db().query("SELECT messages FROM sessions")
+    rows = get_db().query("SELECT role, owner_username FROM users WHERE username=?", (username,))
+    if rows and rows[0]["role"] == "staff" and rows[0]["owner_username"]:
+        return rows[0]["owner_username"]
+    return username
+
+
+def _t_stats(username, args):
+    """Tổng hội thoại/tin nhắn CỦA SHOP này (multi-tenant: KHÔNG đọc sessions của
+    shop khác — trước đây SELECT * FROM sessions lộ số liệu toàn nền tảng)."""
+    from app.core.db import get_db
+    from app.core import tenant as _t
+    ws = _workspace_of(username)
+    if ws and ws == _t.default_owner():
+        # Chủ nền tảng (shop gốc) sở hữu cả dữ liệu mồ côi tenant=''
+        rows = get_db().query(
+            "SELECT messages FROM sessions WHERE tenant=? OR tenant=''", (ws,))
+    else:
+        rows = get_db().query("SELECT messages FROM sessions WHERE tenant=?", (ws or "",))
     conv = len(rows)
     msg = 0
     for r in rows:
@@ -152,16 +171,34 @@ READ_TOOLS = {
 # ── TOOLS GHI (an toàn, cần chủ XÁC NHẬN mới chạy) ───────────────────
 
 def _a_toggle_bot(username, args):
-    from app.web_api.bridge import _load_bot_state, _save_bot_state, _norm_channel
+    from app.web_api.bridge import (_load_bot_state, _save_bot_state, _norm_channel,
+                                    resolve_perbot_owner)
+    from app.core import tenant as _t
     ch = _norm_channel(str((args or {}).get("channel") or "").strip())
     enabled = bool((args or {}).get("enabled", True))
-    state = _load_bot_state()
-    if not ch or ch in ("all", ""):
-        state["enabled"] = enabled
-        for c in list(state.get("channels", {})):
-            state["channels"][c] = enabled
-        target = "tất cả kênh"
+    is_admin = _t.is_platform_admin(username)
+    ws = _workspace_of(username)
+    # Cờ GLOBAL / kênh cha trần (không có ":<id>") ảnh hưởng MỌI shop → chỉ quản trị
+    # nền tảng. Trước đây copilot cho MỌI shop tắt bot toàn hệ thống — lỗ nghiêm trọng.
+    if ":" not in ch:
+        if not is_admin:
+            raise ValueError(
+                "Bật/tắt bot toàn cục chỉ dành cho quản trị nền tảng. Anh/chị vào "
+                "mục Chatbot để bật/tắt từng kênh của shop mình nhé.")
+        state = _load_bot_state()
+        if not ch or ch in ("all", ""):
+            state["enabled"] = enabled
+            for c in list(state.get("channels", {})):
+                state["channels"][c] = enabled
+            target = "tất cả kênh"
+        else:
+            state.setdefault("channels", {})[ch] = enabled
+            target = ch
     else:
+        # Key per-bot 'kênh:<id>' → phải ĐÚNG chủ của bot đó (hoặc admin)
+        if not is_admin and resolve_perbot_owner(ch) != ws:
+            raise ValueError("Bot này không thuộc shop của anh/chị nên em không tắt/bật giúp được ạ.")
+        state = _load_bot_state()
         state.setdefault("channels", {})[ch] = enabled
         target = ch
     _save_bot_state(state)

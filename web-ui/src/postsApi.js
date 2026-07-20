@@ -1,18 +1,9 @@
 // API "Bài viết & bình luận" Facebook (meta_webhook Flask, cổng 5006) — kèm Bearer.
-import { withAuth } from "./apiAuth.js";
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401 + offline → status 0.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const URL = HOST.meta;
 
-async function j(path, opts) {
-  try {
-    const r = await fetch(URL + path, withAuth(opts));
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };   // server 5006 chưa chạy → offline
-  }
-}
+const j = makeClient(HOST.meta);
 
 const json = (body) => ({
   method: "POST",

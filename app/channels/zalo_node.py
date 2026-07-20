@@ -13,7 +13,7 @@ from pathlib import Path
 import requests
 
 from app.core.config import Config
-from app.core.channel import Channel
+from app.core.channel import Channel, LEGACY_ROOM_SETS
 from app.core.http_util import post_with_retry
 from app.core import owner_call
 
@@ -57,8 +57,14 @@ class ZaloNodeChannel(Channel):
     # ── Gọi Node ──────────────────────────────────────────────────
 
     def _post(self, path: str, payload: dict):
+        # BẢO MẬT: Node :4000 có thể khoá bằng NODE_API_KEY → gửi kèm header
+        # X-Node-Key. Không đặt key → KHÔNG truyền kwarg headers (giữ nguyên
+        # chữ ký gọi cũ cho dev/test đang mock requests.post).
+        kw = {}
+        if Config.ZALO_NODE_API_KEY:
+            kw["headers"] = {"X-Node-Key": Config.ZALO_NODE_API_KEY}
         r = post_with_retry(f"{self.node_url}{path}", json=payload, timeout=60,
-                            retries=Config.SEND_RETRIES, log_tag=f"Node {path}")
+                            retries=Config.SEND_RETRIES, log_tag=f"Node {path}", **kw)
         if r is None:
             return None
         if r.status_code >= 400:
@@ -176,7 +182,7 @@ class ZaloNodeChannel(Channel):
     def send_price_photos(self, user_id: str) -> None:
         base = Path(Config.PRICE_PHOTOS_DIR)
         sent = False
-        for folder_name, label in [("haru", "Haru Staycation"), ("mochi", "Mochi Home")]:
+        for folder_name, label in LEGACY_ROOM_SETS:
             if self._send_dir(user_id, base / folder_name, f"📋 Bảng giá {label}:"):
                 sent = True
         if not sent:

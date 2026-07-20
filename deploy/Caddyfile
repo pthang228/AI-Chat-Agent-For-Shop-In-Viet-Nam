@@ -50,9 +50,12 @@
 		reverse_proxy webchat:5011
 	}
 
-	# ── Zalo Node (đăng nhập QR) dưới tiền tố /zalo-node (strip khi chuyển tiếp) ──
-	handle_path /zalo-node/* {
-		reverse_proxy zalo-node:4000
+	# ── Zalo Node (đăng nhập QR): đi QUA BRIDGE (proxy /zalo-node/* có Bearer +
+	# ép acc theo shop + whitelist endpoint) — KHÔNG proxy thẳng zalo-node:4000
+	# nữa: route cũ phơi toàn bộ API Node (kể cả /send, /logout) ra internet
+	# không auth. Giữ nguyên prefix (bridge route là /zalo-node/<sub>). ──
+	handle /zalo-node/* {
+		reverse_proxy bridge:5005
 	}
 
 	# ── API dashboard (bridge sở hữu namespace gốc) ──

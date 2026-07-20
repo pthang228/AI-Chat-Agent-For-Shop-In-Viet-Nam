@@ -29,7 +29,7 @@ from app.core.config import Config
 from app.core import comments
 from app.core.comment_store import CommentStore
 from app.channels import meta_graph
-from app.web_api.bridge import _load_bot_state, _channel_enabled, _conv_summary, _tenant_visible  # dùng chung helper
+from app.web_api.bridge import _load_bot_state, _channel_enabled  # dùng chung helper
 from app.web_api.stats_util import compute_stats
 from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
@@ -169,7 +169,9 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
 
     @app.route("/health")
     def health():
-        return {"ok": True}
+        # health SÂU dùng chung: chạm DB + kiểm disk, 503 khi hỏng (api_guard)
+        from app.web_api.api_guard import health_payload
+        return health_payload()
 
     # ── Data Deletion + Deauthorize (BẮT BUỘC cho App Review Meta) ──────
     # App Review đòi 2 callback này để duyệt khách LẠ dùng được (pages_messaging /
@@ -260,15 +262,21 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
             })
         return {"ok": True, "pages": result}
 
+    # MULTI-TENANT: guard sở hữu dùng chung (api_guard) — chống shop A xem/xoá
+    # Page của shop B, và chặn stats/fetch-names gộp dữ liệu chéo tenant.
+    from app.web_api.api_guard import own_account_or_404, filter_owned, tenant_ctx
+
     @app.route("/meta/pages")
     def meta_pages():
-        return jsonify(store.list_pages() if store else [])
+        return jsonify(filter_owned(store, store.list_pages(), "page_id") if store else [])
 
     @app.route("/meta/stats")
     def meta_stats():
+        ws, is_admin = tenant_ctx()
         return jsonify(compute_stats(
             conv_manager, request.args.get("from"), request.args.get("to"),
-            uid_filter=lambda u: u.startswith(("fb:", "ig:"))))
+            uid_filter=lambda u: u.startswith(("fb:", "ig:")),
+            tenant_ws=None if (is_admin or ws is None) else ws))
 
     @app.route("/meta/fetch-names", methods=["POST"])
     def meta_fetch_names():
@@ -276,9 +284,11 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
         # list() BẮT BUỘC: thread webhook có thể thêm session mới (get()) trong lúc
         # lặp → RuntimeError "dict changed size during iteration" (crash 500 đúng lúc
         # nhiều tin đến — chính lúc admin hay bấm fetch tên).
+        from app.web_api.bridge import _tenant_visible
         missing = [
             uid for uid, conv in list(conv_manager._sessions.items())
             if uid.startswith(("fb:", "ig:")) and not conv.name
+            and _tenant_visible(conv)   # multi-tenant: chỉ khách của shop mình
         ]
         results = {}
         for uid in missing:
@@ -310,6 +320,9 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
 
     @app.route("/meta/pages/<page_id>", methods=["DELETE"])
     def meta_remove(page_id):
+        deny = own_account_or_404(store, page_id)
+        if deny:
+            return deny
         if store:
             store.remove(page_id)
         return {"ok": True}
@@ -317,83 +330,20 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
     # ── Hội thoại khách, TÁCH RIÊNG theo từng Page ──────────────────────
     # user_id = "<platform>:<page_id>:<sender>" → lọc theo page_id để mỗi
     # Page (mỗi homestay) có danh sách khách riêng.
-
-    @app.route("/meta/conversations")
-    def meta_conversations():
-        page_id = request.args.get("page_id", "")
-        # Mặc định 200 khách mới nhất (giữ shape mảng cho UI). ?limit=&offset=.
-        try:
-            limit = min(max(int(request.args.get("limit", 200)), 1), 1000)
-            offset = max(int(request.args.get("offset", 0)), 0)
-        except ValueError:
-            limit, offset = 200, 0
-        rows = []
-        for uid, conv in list(conv_manager._sessions.items()):
-            uid_parts = uid.split(":")
-            uid_page = uid_parts[1] if len(uid_parts) >= 3 else ""
-            if page_id and uid_page != page_id:
-                continue
-            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
-                continue
-            rows.append(_conv_summary(uid, conv))
-        rows.sort(key=lambda r: r["last_updated"], reverse=True)
-        return jsonify(rows[offset:offset + limit])
-
-    @app.route("/meta/conversations/<user_id>")
-    def meta_conversation(user_id):
-        conv = conv_manager._sessions.get(user_id)
-        if not conv or not _tenant_visible(conv):
-            return {"error": "not found"}, 404
-        msgs = [
-            {"role": m.get("role"), "content": m.get("content", "")}
-            for m in conv.messages
-            if not m.get("content", "").startswith("[HỆ THỐNG]")
-        ]
-        return jsonify({
-            "user_id": user_id,
-            "name": getattr(conv, "name", ""),
-            "avatar": getattr(conv, "avatar", "") or "",
-            "owner_active": conv.is_owner_active(),
-            "stage": conv.stage,
-            "assigned_to": getattr(conv, "assigned_to", "") or "",
-            "checkin": conv.checkin,
-            "checkout": conv.checkout,
-            "messages": msgs,
-        })
-
-    @app.route("/meta/conversations/<user_id>/toggle-bot", methods=["POST"])
-    def meta_toggle_bot(user_id):
-        data = request.get_json(force=True, silent=True) or {}
-        bot_on = bool(data.get("bot_on", True))
-        conv = conv_manager.get(user_id)
-        conv.set_owner_active(not bot_on)
-        conv_manager.save()
-        return {"ok": True, "bot_on": bot_on, "owner_active": conv.is_owner_active()}
-
-    @app.route("/meta/conversations/<user_id>/send", methods=["POST"])
-    def meta_send_message(user_id):
-        data = request.get_json(force=True, silent=True) or {}
-        text = (data.get("text") or "").strip()
-        if not text:
-            return {"ok": False, "error": "tin trống"}, 400
-        try:
-            brain.channel.send_text(user_id, text)
-        except Exception as e:
-            log.error(f"[meta send] lỗi gửi {user_id}: {e}")
-            return {"ok": False, "error": str(e)}, 500
-        conv = conv_manager.get(user_id)
-        conv.add_assistant_message(text)
-        conv.set_owner_active(True)
-        conv_manager.save()
-        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
-        from app.core import knowledge_learn
-        submit(knowledge_learn.suggest_from_reply, user_id, "meta", list(conv.messages), text)
-        return {"ok": True}
-
-    @app.route("/meta/conversations/<user_id>", methods=["DELETE"])
-    def meta_reset_conversation(user_id):
-        conv_manager.reset(user_id)
-        return {"ok": True}
+    # Dùng route factory chung (conv_routes) với phần đặc thù Meta:
+    #  - list_style="array": UI cũ đọc MẢNG trần (không bọc {total,items})
+    #  - uid_prefix=None: uid có cả fb:/ig: → lọc theo page_id (phần tử [1]) là đủ
+    #  - detail kèm checkin/checkout (dashboard Meta hiển thị lịch đặt)
+    #  - send qua brain.channel (không set_ctx — token chọn theo page trong uid)
+    #  - with_stats=False: /meta/stats riêng ở trên (lọc fb:/ig:, không query param)
+    from app.web_api.conv_routes import register_conversation_routes
+    register_conversation_routes(
+        app, "/meta", conv_manager, None,
+        channel_name="meta", uid_prefix=None, id_param="page_id",
+        list_style="array", detail_extra=("checkin", "checkout"),
+        send_fn=lambda user_id, text: brain.channel.send_text(user_id, text),
+        with_stats=False,
+    )
 
     # Ảnh phòng/bảng giá — Messenger/IG tải qua URL công khai
     @app.route("/media/<path:filename>")
@@ -500,8 +450,30 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
             log.info(f"[Meta] bỏ qua tin trùng mid={mid}")
             return
         text = (msg.get("text") or "").strip()
-        if not text:
-            return  # scaffold: chỉ xử lý text (sticker/ảnh/postback để sau)
+
+        # Postback (khách bấm nút/menu): payload chính là "câu khách nói" →
+        # đưa vào brain như text bình thường (title là fallback cho nút cũ
+        # không khai payload). Dedup riêng theo mid postback nếu Meta gửi kèm.
+        postback = ev.get("postback") or {}
+        if not text and postback:
+            pb_mid = str(postback.get("mid") or "")
+            if pb_mid and _dedup.seen(pb_mid):
+                return
+            text = str(postback.get("payload") or postback.get("title") or "").strip()
+
+        # Đính kèm (ảnh/sticker/video...) — Meta để trong message.attachments.
+        # Sticker nhận diện qua payload.sticker_id (nút Like 👍 cũng là sticker).
+        attachments = msg.get("attachments") or []
+        is_sticker = bool(msg.get("sticker_id")) or any(
+            (a.get("payload") or {}).get("sticker_id") for a in attachments)
+        image_urls = [
+            str((a.get("payload") or {}).get("url") or "")
+            for a in attachments
+            if a.get("type") == "image" and not (a.get("payload") or {}).get("sticker_id")
+        ] if not is_sticker else []
+
+        if not text and not attachments:
+            return  # sự kiện không có gì xử lý (delivery/read...) → bỏ
 
         # user_id đa Page: platform:page_id:recipient → trả lời đúng token Page
         user_id = f"{platform}:{page_id}:{sender}"
@@ -522,15 +494,62 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
             log.info(f"[Meta] owner_active {user_id} → im lặng")
             return
 
-        # Gói/quota AI của CHỦ Page (ghi 1 lượt khi cho qua); chưa gắn chủ → gate toàn cục
-        from app.core import billing
         owner = store.get_owner_username(page_id) if (store and page_id) else None
+        from app.core import tenant
+
+        # ── Đường MEDIA (ảnh/sticker, KHÔNG có text) — trả lời CỐ ĐỊNH, không
+        # gọi AI → KHÔNG đi qua billing.channel_gate (gate ghi 1 lượt AI khi cho
+        # qua; trừ quota cho câu trả lời mẫu là trừ oan chủ shop — cùng nguyên
+        # tắc gate-last của đường text bên dưới).
+        if not text and attachments:
+            # MULTI-TENANT: vẫn đóng dấu shop sở hữu (assign miễn phí, không tốn lượt)
+            tenant.assign(conv_manager, user_id, owner)
+
+            if is_sticker:
+                # Sticker/Like: khách MỚI (chưa có hội thoại) → route như tin rỗng
+                # (brain gửi greeting cố định); khách CŨ → im lặng như trước NHƯNG
+                # lưu marker để chủ xem inbox thấy đầy đủ diễn biến.
+                if len(conv.messages) == 0:
+                    log.info(f"[Meta] sticker từ khách mới {user_id} → greeting")
+                    submit(brain.handle, user_id, "")   # brain: text rỗng = greeting cố định
+                else:
+                    conv.add_user_message("[Sticker]")
+                    conv_manager.save()
+                    log.info(f"[Meta] sticker từ khách cũ {user_id} → lưu marker, im lặng")
+                return
+
+            # Ảnh (hoặc file/video — chưa có vision pipeline nên KHÔNG đưa vào AI):
+            # (a) lưu marker + URL vào hội thoại để chủ mở inbox thấy ngay ảnh,
+            # (b) trả khách 1 câu lịch sự cố định, (c) báo chủ kèm link ảnh.
+            marker = "[Khách gửi ảnh]" + ("".join(f" {u}" for u in image_urls if u) or "")
+            conv.add_user_message(marker)
+            reply = ("Mình đã nhận được ảnh của anh/chị ạ 🙏 Anh/chị mô tả thêm "
+                     "bằng chữ giúp mình nhé, hoặc chủ shop sẽ xem ảnh và trả lời ngay ạ!")
+            ch = getattr(brain, "channel", None)
+            if ch:
+                try:
+                    ch.send_text(user_id, reply)
+                    conv.add_assistant_message(reply)
+                except Exception as e:
+                    log.error(f"[Meta] lỗi gửi reply ảnh {user_id}: {e}")
+                try:
+                    ch.notify_owner(
+                        f"📷 Khách {conv.name or sender} (Meta) gửi ảnh: "
+                        + (", ".join(u for u in image_urls if u) or "(không lấy được URL)"))
+                except Exception as e:
+                    log.warning(f"[Meta] lỗi notify chủ về ảnh {user_id}: {e}")
+            conv_manager.save()
+            return
+
+        # Gói/quota AI của CHỦ Page (ghi 1 lượt khi cho qua); chưa gắn chủ → gate
+        # toàn cục. GATE-LAST: phải đứng SAU mọi đường return sớm ở trên để tin
+        # bị drop không trừ quota oan.
+        from app.core import billing
         if not billing.channel_gate(owner):
             log.info(f"[Meta] gói/quota chủ ({owner}) không cho phép → bỏ qua {user_id}")
             return
 
         # MULTI-TENANT: đóng dấu shop sở hữu hội thoại (chủ Page này)
-        from app.core import tenant
         tenant.assign(conv_manager, user_id, owner)
 
         log.info(f"[Meta][{platform}] page={page_id} {sender} | {text[:80]!r}")

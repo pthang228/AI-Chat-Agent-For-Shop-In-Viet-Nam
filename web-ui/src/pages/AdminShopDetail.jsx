@@ -3,19 +3,27 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { currentUser, getToken } from "../auth.js";
 import { HOST } from "../apiConfig.js";
 import LogoMark from "../components/LogoMark.jsx";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * 🛠 CHI TIẾT 1 SHOP — khu quản trị nền tảng (/admin/shop/:username).
  * READ-ONLY số liệu bán hàng: doanh thu, đơn, hoạt động, kênh — KHÔNG xem
  * nội dung chat của khách (tôn trọng riêng tư shop). Backend chốt quyền
  * ở /admin/shops/<username> (403 nếu không phải quản trị nền tảng).
+ * Chuỗi hiển thị qua i18n (fragment src/i18n/admin.js, prefix "adm.").
  */
 
-const TIER_LABEL = { trial: "Dùng thử", starter: "Starter", pro: "Pro", business: "Business" };
-const STATUS_LABEL = {
-  draft: "Nháp", awaiting_payment: "Chờ thanh toán", paid: "Đã thanh toán",
-  fulfilled: "Đã giao", done: "Hoàn tất", cancelled: "Đã huỷ",
-};
+// Starter/Pro/Business là tên riêng — chỉ "trial" cần dịch
+function tierLabel(tier, t) {
+  const FIXED = { starter: "Starter", pro: "Pro", business: "Business" };
+  if (tier === "trial") return t("adm.tier_trial");
+  return FIXED[tier] || tier || "—";
+}
+// Trạng thái đơn — key i18n "adm.os_<status>", fallback chính status lạ
+function statusLabel(st, t) {
+  const KNOWN = ["draft", "awaiting_payment", "paid", "fulfilled", "done", "cancelled"];
+  return KNOWN.includes(st) ? t("adm.os_" + st) : st;
+}
 const CH_LABEL = {
   "1": "Zalo", // sessions.account của kênh Zalo cá nhân (bridge) là "1"
   zalo: "Zalo", meta: "Messenger", instagram: "Instagram", telegram: "Telegram",
@@ -39,9 +47,9 @@ function Kpi({ label, value, accent, icon }) {
 }
 
 /** Biểu đồ cột thuần CSS — không kéo thêm thư viện chart cho 1 trang admin. */
-function Bars({ data, valueKey, labelFmt, color = "#7C3AED" }) {
+function Bars({ data, valueKey, labelFmt, color = "#7C3AED", emptyText }) {
   const max = Math.max(1, ...data.map((d) => d[valueKey] || 0));
-  if (!data.length) return <p className="hint">Chưa có dữ liệu trong khoảng này.</p>;
+  if (!data.length) return <p className="hint">{emptyText}</p>;
   return (
     <div className="adm-bars">
       {data.map((d) => (
@@ -59,6 +67,7 @@ function Bars({ data, valueKey, labelFmt, color = "#7C3AED" }) {
 
 export default function AdminShopDetail() {
   const nav = useNavigate();
+  const { t } = useI18n();
   const { username } = useParams();
   const user = currentUser();
   const [data, setData] = useState(null); // null=tải | object | "denied" | "offline" | "notfound"
@@ -96,14 +105,12 @@ export default function AdminShopDetail() {
       body: JSON.stringify(body),
     });
     const b = await r.json().catch(() => ({}));
-    if (!r.ok || !b.ok) throw new Error(b.error || `Lỗi ${r.status}`);
+    if (!r.ok || !b.ok) throw new Error(b.error || t("adm.err_status", { n: r.status }));
     return b;
   }
 
   async function doBlock(blocked) {
-    const q = blocked
-      ? `CHẶN shop này? Shop + nhân viên bị đăng xuất ngay, không đăng nhập được và bot ngừng trả lời khách.`
-      : `Bỏ chặn shop này? Shop đăng nhập và dùng lại bình thường.`;
+    const q = blocked ? t("adm.block_confirm") : t("adm.unblock_confirm");
     if (!window.confirm(q)) return;
     setBusy("block"); setMsg("");
     try { await post("block", { blocked }); await load(); }
@@ -112,13 +119,12 @@ export default function AdminShopDetail() {
   }
 
   async function doPlan(action) {
-    if (action === "revoke" &&
-        !window.confirm("THU HỒI gói của shop? Gói hết hạn ngay lập tức, bot ngừng trả lời.")) return;
+    if (action === "revoke" && !window.confirm(t("adm.revoke_confirm"))) return;
     setBusy("plan"); setMsg("");
     try {
       await post("plan", action === "grant" ? { action, tier, duration } : { action });
       await load();
-      setMsg(action === "grant" ? "✅ Đã cấp gói." : "✅ Đã thu hồi gói.");
+      setMsg(action === "grant" ? t("adm.granted") : t("adm.revoked"));
     } catch (e) { setMsg("⚠️ " + e.message); }
     finally { setBusy(""); }
   }
@@ -139,18 +145,18 @@ export default function AdminShopDetail() {
         <div className="adm-brand">
           <LogoMark size={30} />
           <span>Nova<b>Chat</b></span>
-          <span className="adm-badge">🛠 Quản trị nền tảng</span>
+          <span className="adm-badge">{t("adm.badge")}</span>
         </div>
         <div className="adm-top-right">
           <span className="adm-user">{user?.homestay || user?.username}</span>
-          <Link to="/admin" className="btn-ghost adm-back">← Danh sách shop</Link>
+          <Link to="/admin" className="btn-ghost adm-back">{t("adm.back_list")}</Link>
         </div>
       </header>
 
       <main className="adm-body">
-        {data === null && <p className="hint">Đang tải…</p>}
-        {data === "offline" && <p className="hint">⚠️ Chưa kết nối máy chủ (5005) — hoặc server cần restart bản mới.</p>}
-        {data === "notfound" && <p className="hint">Không tìm thấy shop này. <Link to="/admin">← Quay lại</Link></p>}
+        {data === null && <p className="hint">{t("adm.loading")}</p>}
+        {data === "offline" && <p className="hint">{t("adm.offline")}</p>}
+        {data === "notfound" && <p className="hint">{t("adm.notfound")} <Link to="/admin">{t("adm.back")}</Link></p>}
 
         {d && (
           <>
@@ -158,63 +164,63 @@ export default function AdminShopDetail() {
             <div className="adm-shop-head">
               <div>
                 <h2 style={{ margin: 0 }}>{d.shop.shop_name}{d.shop.is_platform_admin ? " ⭐" : ""}</h2>
-                <div className="hint">{d.shop.username} · đăng ký {fmtDate(d.shop.created_at)}</div>
+                <div className="hint">{d.shop.username} · {t("adm.registered", { d: fmtDate(d.shop.created_at) })}</div>
               </div>
               <div className="adm-shop-plan">
-                {d.shop.blocked && <span className="adm-st blk">⛔ Bị chặn</span>}
+                {d.shop.blocked && <span className="adm-st blk">{t("adm.st_blocked")}</span>}
                 {active
-                  ? <span className="adm-st ok">● Hoạt động</span>
-                  : <span className="adm-st off">● Hết hạn</span>}
+                  ? <span className="adm-st ok">{t("adm.st_active")}</span>
+                  : <span className="adm-st off">{t("adm.st_expired")}</span>}
                 <span className="adm-plan-tag">
-                  {TIER_LABEL[d.billing?.tier] || d.billing?.tier || "—"}
-                  {d.billing?.lifetime ? " · Vĩnh viễn" : d.billing?.expires_at ? ` · hết ${fmtDate(d.billing.expires_at)}` : ""}
+                  {tierLabel(d.billing?.tier, t)}
+                  {d.billing?.lifetime ? ` · ${t("adm.lifetime")}` : d.billing?.expires_at ? ` · ${t("adm.expires_short", { d: fmtDate(d.billing.expires_at) })}` : ""}
                 </span>
               </div>
             </div>
 
             {/* KPI shop */}
             <div className="kpi-row">
-              <Kpi label="Doanh thu (đơn đã trả)" value={vnd(d.orders.revenue)} accent="#23a065" icon="💰" />
-              <Kpi label="Tổng đơn hàng" value={d.orders.total} accent="#7C3AED" icon="🧾" />
-              <Kpi label="Hội thoại" value={d.conversations.total} accent="#4C6EF5" icon="💬" />
-              <Kpi label="Lượt AI kỳ này" value={d.billing?.ai_used || 0} accent="#cf9536" icon="🤖" />
+              <Kpi label={t("adm.kpi_revenue")} value={vnd(d.orders.revenue)} accent="#23a065" icon="💰" />
+              <Kpi label={t("adm.kpi_orders")} value={d.orders.total} accent="#7C3AED" icon="🧾" />
+              <Kpi label={t("adm.kpi_conv")} value={d.conversations.total} accent="#4C6EF5" icon="💬" />
+              <Kpi label={t("adm.kpi_ai")} value={d.billing?.ai_used || 0} accent="#cf9536" icon="🤖" />
             </div>
 
             {/* Hành động quản trị: cấp/thu hồi gói + chặn shop */}
             {!d.shop.is_platform_admin && (
               <div className="panel adm-panel adm-actions">
-                <h3 style={{ marginTop: 0 }}>Quản trị shop</h3>
+                <h3 style={{ marginTop: 0 }}>{t("adm.manage_title")}</h3>
                 <div className="adm-act-row">
-                  <label>Cấp gói (không trừ ví):</label>
+                  <label>{t("adm.grant_label")}</label>
                   <select value={tier} onChange={(e) => setTier(e.target.value)}>
-                    <option value="starter">Khởi đầu</option>
+                    <option value="starter">{t("adm.opt_starter")}</option>
                     <option value="pro">Pro</option>
-                    <option value="business">Chuỗi</option>
+                    <option value="business">{t("adm.opt_business")}</option>
                   </select>
                   <select value={duration} onChange={(e) => setDuration(e.target.value)}>
-                    <option value="month">1 tháng</option>
-                    <option value="quarter">1 quý</option>
-                    <option value="year">1 năm</option>
-                    <option value="lifetime">Vĩnh viễn</option>
+                    <option value="month">{t("adm.dur_month")}</option>
+                    <option value="quarter">{t("adm.dur_quarter")}</option>
+                    <option value="year">{t("adm.dur_year")}</option>
+                    <option value="lifetime">{t("adm.lifetime")}</option>
                   </select>
                   <button className="btn-mini" disabled={busy === "plan"}
                           onClick={() => doPlan("grant")}>
-                    {busy === "plan" ? "Đang xử lý…" : "🎁 Cấp gói"}
+                    {busy === "plan" ? t("adm.busy") : t("adm.grant_btn")}
                   </button>
                   <button className="btn-mini adm-danger" disabled={busy === "plan"}
                           onClick={() => doPlan("revoke")}>
-                    ✂️ Thu hồi gói
+                    {t("adm.revoke_btn")}
                   </button>
                   <span style={{ flex: 1 }} />
                   {d.shop.blocked ? (
                     <button className="btn-mini" disabled={busy === "block"}
                             onClick={() => doBlock(false)}>
-                      {busy === "block" ? "Đang xử lý…" : "✅ Bỏ chặn shop"}
+                      {busy === "block" ? t("adm.busy") : t("adm.unblock_btn")}
                     </button>
                   ) : (
                     <button className="btn-mini adm-danger" disabled={busy === "block"}
                             onClick={() => doBlock(true)}>
-                      {busy === "block" ? "Đang xử lý…" : "⛔ Chặn shop"}
+                      {busy === "block" ? t("adm.busy") : t("adm.block_btn")}
                     </button>
                   )}
                 </div>
@@ -225,21 +231,23 @@ export default function AdminShopDetail() {
             {/* Doanh thu 30 ngày + hoạt động 14 ngày */}
             <div className="adm-2col">
               <div className="panel adm-panel">
-                <h3 style={{ marginTop: 0 }}>Doanh thu 30 ngày</h3>
-                <Bars data={d.orders.by_day} valueKey="revenue" labelFmt={vnd} color="#23a065" />
+                <h3 style={{ marginTop: 0 }}>{t("adm.rev30")}</h3>
+                <Bars data={d.orders.by_day} valueKey="revenue" labelFmt={vnd} color="#23a065"
+                      emptyText={t("adm.bars_empty")} />
               </div>
               <div className="panel adm-panel">
-                <h3 style={{ marginTop: 0 }}>Hội thoại có hoạt động (14 ngày)</h3>
+                <h3 style={{ marginTop: 0 }}>{t("adm.act14")}</h3>
                 <Bars data={d.conversations.by_day} valueKey="conv"
-                      labelFmt={(v) => `${v} hội thoại`} color="#4C6EF5" />
+                      labelFmt={(v) => t("adm.bars_conv", { n: v })} color="#4C6EF5"
+                      emptyText={t("adm.bars_empty")} />
               </div>
             </div>
 
             {/* Kênh + trạng thái đơn + nhân viên */}
             <div className="adm-2col">
               <div className="panel adm-panel">
-                <h3 style={{ marginTop: 0 }}>Kênh đã nối ({d.channels.length})</h3>
-                {d.channels.length === 0 && <p className="hint">Shop chưa nối kênh nào.</p>}
+                <h3 style={{ marginTop: 0 }}>{t("adm.channels", { n: d.channels.length })}</h3>
+                {d.channels.length === 0 && <p className="hint">{t("adm.no_channels")}</p>}
                 <div className="adm-chips">
                   {d.channels.map((c, i) => (
                     <span key={i} className="adm-chip">
@@ -250,26 +258,26 @@ export default function AdminShopDetail() {
                 </div>
                 {Object.keys(d.conversations.by_channel).length > 0 && (
                   <div className="hint" style={{ marginTop: 10 }}>
-                    Hội thoại theo kênh:{" "}
+                    {t("adm.conv_by_channel")}{" "}
                     {Object.entries(d.conversations.by_channel)
                       .map(([k, v]) => `${CH_LABEL[k] || k}: ${v}`).join(" · ")}
                   </div>
                 )}
                 <div className="hint" style={{ marginTop: 6 }}>
-                  Hoạt động cuối: {fmtTime(d.conversations.last_activity)}
+                  {t("adm.last_activity")} {fmtTime(d.conversations.last_activity)}
                 </div>
               </div>
               <div className="panel adm-panel">
-                <h3 style={{ marginTop: 0 }}>Đơn theo trạng thái · Ví {vnd(d.billing?.balance)}</h3>
+                <h3 style={{ marginTop: 0 }}>{t("adm.orders_by_status", { v: vnd(d.billing?.balance) })}</h3>
                 <div className="adm-chips">
                   {Object.entries(d.orders.by_status).map(([st, n]) => (
-                    <span key={st} className="adm-chip"><em>{STATUS_LABEL[st] || st}</em>{n}</span>
+                    <span key={st} className="adm-chip"><em>{statusLabel(st, t)}</em>{n}</span>
                   ))}
-                  {d.orders.total === 0 && <p className="hint">Chưa có đơn nào.</p>}
+                  {d.orders.total === 0 && <p className="hint">{t("adm.no_orders")}</p>}
                 </div>
                 {d.staff.length > 0 && (
                   <div className="hint" style={{ marginTop: 10 }}>
-                    Nhân viên ({d.staff.length}): {d.staff.map((s) => s.name || s.username).join(", ")}
+                    {t("adm.staff", { n: d.staff.length })} {d.staff.map((s) => s.name || s.username).join(", ")}
                   </div>
                 )}
               </div>
@@ -277,13 +285,13 @@ export default function AdminShopDetail() {
 
             {/* Đơn gần nhất */}
             <div className="panel adm-panel">
-              <h3 style={{ marginTop: 0 }}>Đơn gần nhất ({d.orders.recent.length})</h3>
+              <h3 style={{ marginTop: 0 }}>{t("adm.recent_orders", { n: d.orders.recent.length })}</h3>
               <div style={{ overflowX: "auto" }}>
                 <table className="ad-table">
                   <thead>
                     <tr>
-                      <th>Mã</th><th>Khách</th><th>Kênh</th><th>Loại</th>
-                      <th>Tổng tiền</th><th>Trạng thái</th><th>Tạo lúc</th><th>Tới hạn</th>
+                      <th>{t("adm.o_code")}</th><th>{t("adm.o_cust")}</th><th>{t("adm.o_channel")}</th><th>{t("adm.o_type")}</th>
+                      <th>{t("adm.o_total")}</th><th>{t("adm.o_status")}</th><th>{t("adm.o_created")}</th><th>{t("adm.o_due")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -292,16 +300,16 @@ export default function AdminShopDetail() {
                         <td><b>{o.code}</b></td>
                         <td>{o.customer_name || "—"}</td>
                         <td>{CH_LABEL[o.channel] || o.channel || "—"}</td>
-                        <td>{o.order_type === "goods" ? "Bán hàng" : "Đặt chỗ"}</td>
+                        <td>{o.order_type === "goods" ? t("adm.o_goods") : t("adm.o_booking")}</td>
                         <td>{vnd(o.total)}</td>
-                        <td>{STATUS_LABEL[o.status] || o.status}</td>
+                        <td>{statusLabel(o.status, t)}</td>
                         <td>{fmtTime(o.created_at)}</td>
                         <td>{fmtDate(o.due_at)}</td>
                       </tr>
                     ))}
                     {d.orders.recent.length === 0 && (
                       <tr><td colSpan={8} className="hint" style={{ textAlign: "center", padding: 20 }}>
-                        Shop chưa có đơn hàng nào.
+                        {t("adm.no_orders_row")}
                       </td></tr>
                     )}
                   </tbody>
@@ -314,29 +322,31 @@ export default function AdminShopDetail() {
               <>
                 <div className="panel adm-panel">
                   <h3 style={{ marginTop: 0 }}>
-                    🧠 Prompt train{" "}
+                    {t("adm.brain_prompt")}{" "}
                     <span className="hint" style={{ fontWeight: 400 }}>
                       {brain.prompt?.source === "custom"
-                        ? `— shop tự train (${brain.prompt.mode === "hybrid" ? "chế độ lai" : "bản đầy đủ"}`
-                          + (brain.prompt.updated_at ? `, sửa ${fmtTime(brain.prompt.updated_at)})` : ")")
-                        : "— dùng prompt mặc định của hệ thống"}
+                        ? t("adm.brain_custom", {
+                            mode: t(brain.prompt.mode === "hybrid" ? "adm.brain_hybrid" : "adm.brain_full"),
+                            edited: brain.prompt.updated_at ? t("adm.brain_edited", { d: fmtTime(brain.prompt.updated_at) }) : "",
+                          })
+                        : t("adm.brain_default")}
                     </span>
                   </h3>
                   {brain.prompt?.prompt ? (
                     <details className="adm-fold">
-                      <summary>Xem nội dung ({(brain.prompt.prompt.length || 0).toLocaleString("vi-VN")} ký tự)</summary>
+                      <summary>{t("adm.brain_view", { n: (brain.prompt.prompt.length || 0).toLocaleString("vi-VN") })}</summary>
                       <pre className="adm-pre">{brain.prompt.prompt}</pre>
                     </details>
-                  ) : <p className="hint">Shop chưa train prompt nào.</p>}
+                  ) : <p className="hint">{t("adm.brain_none")}</p>}
                 </div>
 
                 <div className="panel adm-panel">
-                  <h3 style={{ marginTop: 0 }}>📚 Dữ liệu đã dạy ({brain.knowledge.length} mẩu)</h3>
-                  {brain.knowledge.length === 0 && <p className="hint">Shop chưa dạy dữ liệu nào (kho tri thức trống).</p>}
+                  <h3 style={{ marginTop: 0 }}>{t("adm.kb_title", { n: brain.knowledge.length })}</h3>
+                  {brain.knowledge.length === 0 && <p className="hint">{t("adm.kb_empty")}</p>}
                   {brain.knowledge.map((c) => (
                     <details key={c.id} className="adm-fold">
                       <summary>
-                        {c.pinned ? "📌 " : ""}{c.title || "(không tiêu đề)"}
+                        {c.pinned ? "📌 " : ""}{c.title || t("adm.kb_untitled")}
                         {c.keywords.length > 0 && (
                           <span className="hint"> — {c.keywords.slice(0, 5).join(", ")}</span>
                         )}
@@ -347,14 +357,14 @@ export default function AdminShopDetail() {
                 </div>
 
                 <div className="panel adm-panel">
-                  <h3 style={{ marginTop: 0 }}>🖼 Thư viện ảnh shop ({brain.photos.length} bộ)</h3>
-                  {brain.photos.length === 0 && <p className="hint">Shop chưa tạo bộ ảnh nào.</p>}
+                  <h3 style={{ marginTop: 0 }}>{t("adm.photos_title", { n: brain.photos.length })}</h3>
+                  {brain.photos.length === 0 && <p className="hint">{t("adm.photos_empty")}</p>}
                   {brain.photos.map((s) => (
                     <div key={s.slug} className="adm-photoset">
                       <div className="adm-photoset-head">
                         <b>{s.name}</b>
                         <span className="hint">
-                          {s.files.length} ảnh{s.keywords.length > 0 ? ` · từ khoá: ${s.keywords.join(", ")}` : ""}
+                          {t("adm.photos_count", { n: s.files.length })}{s.keywords.length > 0 ? t("adm.photos_kw", { kw: s.keywords.join(", ") }) : ""}
                         </span>
                       </div>
                       <div className="adm-photo-grid">
@@ -366,7 +376,7 @@ export default function AdminShopDetail() {
                           </a>
                         ))}
                         {s.files.length > 12 && (
-                          <span className="hint">…và {s.files.length - 12} ảnh nữa</span>
+                          <span className="hint">{t("adm.photos_more", { n: s.files.length - 12 })}</span>
                         )}
                       </div>
                     </div>

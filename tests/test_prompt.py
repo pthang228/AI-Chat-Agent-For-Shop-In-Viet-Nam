@@ -21,7 +21,11 @@ sys.modules.update({
     'openai': MagicMock(), 'groq': MagicMock(), 'winsound': MagicMock(),
     'dotenv': MagicMock(),
 })
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')
 sys.path.insert(0, '.')
 
 from pathlib import Path
@@ -38,8 +42,8 @@ def check(cond, name, detail=""):
     else: FAIL += 1; print(f"  ✗ FAIL {name}: {detail}")
 
 # Cô lập file prompt custom vào file test
-pb.CUSTOM_FILE = Path("test_custom_prompt_tmp.txt")
-pb.BACKUP_DIR = Path("test_prompt_backups_tmp")
+pb.CUSTOM_FILE = Path(str(_TMPDIR / "test_custom_prompt_tmp.txt"))
+pb.BACKUP_DIR = Path(str(_TMPDIR / "test_prompt_backups_tmp"))
 if pb.CUSTOM_FILE.exists(): pb.CUSTOM_FILE.unlink()
 
 print("\n── A. fetch_link ──")
@@ -258,6 +262,24 @@ check(r.status_code == 200 and r.get_json()["source"] == "custom", "D5 api_apply
 
 r = api.post("/prompt/restore-default", headers=H)
 check(r.status_code == 200 and r.get_json()["source"] == "default", "D6 api_restore")
+
+print("\n── E. /prompt/health cooldown (60s / user) ──")
+# Mỗi lượt health đốt ~11 call AI → mock não + giám khảo, chỉ kiểm rate-limit
+import app.core.claude_ai as cai
+prompt_mod._health_last.clear()   # cô lập trạng thái cooldown (module-level)
+with patch.object(cai, "analyze_with_debug", return_value={"reply": "Dạ giá 500k ạ"}), \
+     patch.object(cai, "_call_ai", return_value='[{"i": 1, "ok": true, "note": ""}]'):
+    r1 = api.post("/prompt/health", headers=H)
+    check(r1.status_code == 200 and r1.get_json()["ok"], "E1 lần đầu chấm được (200)",
+          f"{r1.status_code} {r1.get_json()}")
+    r2 = api.post("/prompt/health", headers=H)
+    check(r2.status_code == 429 and "chờ" in (r2.get_json() or {}).get("error", ""),
+          "E2 gọi lại trong 60s → 429 + báo chờ", f"{r2.status_code} {r2.get_json()}")
+    # hết cooldown (giả lập bằng lùi mốc thời gian) → chấm lại được
+    prompt_mod._health_last["p@x.vn"] -= prompt_mod.HEALTH_COOLDOWN_SECONDS + 1
+    r3 = api.post("/prompt/health", headers=H)
+    check(r3.status_code == 200, "E3 quá 60s → chấm lại được", r3.status_code)
+prompt_mod._health_last.clear()
 
 # Dọn file tạm
 import shutil

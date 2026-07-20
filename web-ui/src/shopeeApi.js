@@ -1,18 +1,9 @@
 // Gọi API kênh Shopee (Flask cổng 5009).
-import { withAuth } from "./apiAuth.js";
+// j = httpClient chung (api/http.js): tự gắn Bearer + bắt 401 + offline → status 0.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const URL = HOST.shopee;
 
-async function j(path, opts) {
-  try {
-    const r = await fetch(URL + path, withAuth(opts));
-    let body = null;
-    try { body = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body };
-  } catch {
-    return { ok: false, status: 0, body: null };   // server 5009 chưa chạy → offline
-  }
-}
+const j = makeClient(HOST.shopee);
 
 export const shopee = {
   config: () => j("/shopee/config"),

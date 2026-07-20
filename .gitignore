@@ -35,8 +35,18 @@ __pycache__/
 data/prompt_backups/
 
 test_db_*.sqlite*
+# Rác test gom về 1 chỗ (các file test trỏ DB/json tạm vào đây)
+tests/.tmp/
+data/logs/
+# requirements.lock PHẢI commit (pin cứng version cho Docker build) — KHÔNG ignore
 media/outbox/
 docs/*.mp4
 # Du lieu runtime per-shop (prompt da day + anh thu vien shop upload)
 data/prompts/
 media/photo_library/
+eval_report.json
+
+# secrets production — TUYỆT ĐỐI không commit
+deploy/.env.production
+.env.bak*
+*.env.bak*

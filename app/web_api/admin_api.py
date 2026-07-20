@@ -98,6 +98,17 @@ def register_admin_routes(app):
             })
         return jsonify({"ok": True, "total": len(out), "shops": out})
 
+    @app.route("/admin/ai-costs")
+    def admin_ai_costs():
+        """GIÁ VỐN LLM theo shop (?month=YYYY-MM, mặc định tháng này) — soi shop
+        nào đốt AI vượt giá gói (cost_vnd > plan_month_vnd = đang lỗ shop đó)."""
+        u, err = _platform_admin_or_403()
+        if err:
+            return err
+        from app.core import billing
+        month = (request.args.get("month") or "").strip() or None
+        return jsonify({"ok": True, "month": month or "", "shops": billing.ai_costs_by_shop(month)})
+
     @app.route("/admin/shops/<username>")
     def admin_shop_detail(username):
         """Chi tiết 1 shop cho admin — CHỈ số liệu bán hàng (đơn, doanh thu,

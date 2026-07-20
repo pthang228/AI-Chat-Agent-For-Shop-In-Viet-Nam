@@ -44,11 +44,23 @@ sys.modules.update({
 })
 
 os.environ.setdefault('REPLY_DELAY', '0')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 sys.path.insert(0, '.')
 
-from app.channels.zalo_cookie import bot as bot_module
-from app.channels.zalo_cookie.bot import ZaloChannel, conv_manager
+try:
+    from app.channels.zalo_cookie import bot as bot_module
+    from app.channels.zalo_cookie.bot import ZaloChannel, conv_manager
+except ImportError:
+    # Kênh zalo_cookie (zlapi legacy) đã gỡ khỏi dự án (commit "xoa module
+    # zalo_cookie legacy"). Test này kiểm kênh không còn tồn tại → BỎ QUA sạch
+    # (exit 0) thay vì crash. Logic brain/intent/date đã được phủ bởi test_intent
+    # (546 case), test_meta, test_telegram.
+    print("[test_flow] SKIP: kênh zalo_cookie legacy đã gỡ — không còn gì để test ở đây.")
+    sys.exit(0)
 from app.core.brain import Brain, FIRST_MESSAGE_GREETING, _infer_date_from_text
 from app.core.channel import Channel
 from app.core.conversation import ConversationManager

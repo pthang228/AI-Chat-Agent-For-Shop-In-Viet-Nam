@@ -5,8 +5,9 @@ Gắn vào bridge (cổng 5005, tiến trình "não bộ" luôn chạy) qua regi
   POST /auth/register {username,password,homestay}      → {token, user}
   POST /auth/login    {username,password}               → {token, user}
   POST /auth/google   {credential}  (id_token từ GIS)   → {token, user}
-       — token được XÁC THỰC PHÍA SERVER qua Google tokeninfo (không tin client);
-         nếu đặt GOOGLE_CLIENT_ID trong .env thì kiểm luôn aud đúng app của mình.
+       — token được XÁC THỰC PHÍA SERVER qua Google tokeninfo (không tin client)
+         + kiểm aud khớp GOOGLE_CLIENT_ID; CHƯA cấu hình GOOGLE_CLIENT_ID →
+         từ chối hẳn Google login (400) thay vì chấp nhận không kiểm aud.
   POST /auth/forgot   {username}     → gửi mã OTP 6 số về email (hạn 15 phút)
   POST /auth/reset    {username,code,new_password} → đặt mật khẩu mới, huỷ mọi phiên cũ
   GET  /auth/me                    (Bearer)             → {user}
@@ -309,6 +310,14 @@ def register_auth_routes(app):
         credential = (data.get("credential") or "").strip()
         if not credential:
             return {"ok": False, "error": "Thiếu credential Google"}, 400
+        # BẢO MẬT: chưa cấu hình GOOGLE_CLIENT_ID → TỪ CHỐI hẳn (trước đây bỏ
+        # kiểm aud → id_token hợp lệ của BẤT KỲ app Google nào cũng đăng nhập
+        # được = chiếm tài khoản theo email). Muốn dùng Google login thì bắt
+        # buộc đặt GOOGLE_CLIENT_ID trong .env (cùng giá trị VITE_ bên web).
+        if not Config.GOOGLE_CLIENT_ID:
+            return {"ok": False, "error":
+                    "Máy chủ chưa cấu hình Google login (GOOGLE_CLIENT_ID) — "
+                    "đăng nhập bằng email/mật khẩu hoặc liên hệ quản trị."}, 400
         try:
             r = requests.get(GOOGLE_TOKENINFO, params={"id_token": credential}, timeout=10)
         except Exception as e:
@@ -316,9 +325,9 @@ def register_auth_routes(app):
         if r.status_code != 200:
             return {"ok": False, "error": "Google từ chối token đăng nhập"}, 401
         info = r.json()
-        # Chặn id_token của APP KHÁC (vẫn là token Google hợp lệ nhưng aud lạ) —
-        # chỉ kiểm khi đã cấu hình GOOGLE_CLIENT_ID trong .env.
-        if Config.GOOGLE_CLIENT_ID and info.get("aud") != Config.GOOGLE_CLIENT_ID:
+        # Chặn id_token của APP KHÁC (vẫn là token Google hợp lệ nhưng aud lạ).
+        # GOOGLE_CLIENT_ID chắc chắn đã đặt (check 400 phía trên).
+        if info.get("aud") != Config.GOOGLE_CLIENT_ID:
             return {"ok": False, "error": "Token Google không thuộc ứng dụng này"}, 401
         email = (info.get("email") or "").strip().lower()
         if not email or info.get("email_verified") not in ("true", True):
@@ -558,10 +567,17 @@ def register_auth_routes(app):
             return {"ok": False, "error": "Nhân viên không được đổi model"}, 403
         from app.core import ai_models
         key = ((request.get_json(force=True, silent=True) or {}).get("model") or "").strip()
-        if key and key not in ai_models.CATALOG:
+        if key and key not in ai_models.public_catalog():
             return {"ok": False, "error": "Mô hình không hợp lệ"}, 400
         if key and key not in ai_models.available_keys():
             return {"ok": False, "error": "Mô hình này máy chủ chưa cấu hình API key"}, 400
+        # TRẦN MODEL THEO HẠNG GÓI (như /billing/ai-model — chống lách qua per-app)
+        if key:
+            from app.core import billing as _billing
+            if not ai_models.allowed_for_tier(key, _billing.tier_of(u["username"])):
+                need = ai_models.min_tier_for(key)
+                return {"ok": False, "error": f"Mô hình này cần hạng gói "
+                        f"{_billing.TIERS.get(need, {}).get('label', need)} trở lên"}, 400
         # Chỉ chủ workspace sửa app CỦA MÌNH (giống DELETE bên dưới)
         if not db.query("SELECT 1 FROM user_apps WHERE username=? AND id=?",
                         (u["username"], app_id)):

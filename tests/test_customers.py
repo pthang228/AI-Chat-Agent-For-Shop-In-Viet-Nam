@@ -26,7 +26,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_customers_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_customers_tmp.sqlite')
 os.environ['API_AUTH_GUARD'] = '0'
 os.environ['WORKER_SYNC'] = '1'
 sys.path.insert(0, '.')
@@ -149,7 +153,7 @@ class FakeChannel(Channel):
     def notify_owner(self, t): pass
     def call_owner(self): pass
 
-bridge_mod.BOT_STATE_FILE = Path("test_bot_state_cu_tmp.json")
+bridge_mod.BOT_STATE_FILE = Path(str(_TMPDIR / "test_bot_state_cu_tmp.json"))
 api = bridge_mod.create_bridge(Brain(channel=FakeChannel(), conv_manager=cm_zalo), cm_zalo).test_client()
 
 r = api.get("/customers")
@@ -173,6 +177,6 @@ mid = r.get_json()["memory"]["id"]
 check(r.status_code == 200 and mid, "F8 memory_add")
 check(api.delete(f"/customers/memory/{mid}").status_code == 200, "F9 memory_del")
 
-Path("test_bot_state_cu_tmp.json").unlink(missing_ok=True)
+Path(str(_TMPDIR / "test_bot_state_cu_tmp.json")).unlink(missing_ok=True)
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

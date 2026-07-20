@@ -8,6 +8,10 @@ ném lỗi → store coi như rỗng → MẤT TOÀN BỘ token kênh đó (khá
 Cách chuẩn (giống bot_state ở bridge): ghi ra file tạm cùng thư mục rồi
 `os.replace` (đổi tên atomic trên cùng volume) — người đọc luôn thấy hoặc bản cũ
 nguyên vẹn, hoặc bản mới nguyên vẹn, không bao giờ thấy bản cụt.
+
+LƯU Ý: 7 store danh bạ kênh (telegram/meta/zalo_oa/webchat/tiktok/shopee/
+zalo_node) đã chuyển sang SQLite (app/core/channel_store.py) — không dùng hàm
+này nữa. Vẫn giữ vì các chỗ khác còn dùng (comment_store, bot_state...).
 """
 
 import json

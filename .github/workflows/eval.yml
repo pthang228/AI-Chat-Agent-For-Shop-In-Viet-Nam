@@ -1,0 +1,38 @@
+# EVAL LLM THẬT — chạy NIGHTLY (không nằm trong CI chính vì tốn tiền API + chậm).
+# Chấm analyze_message trên đường production với DeepSeek thật (golden 50 câu
+# tiếng Việt, tests/golden/eval_golden.jsonl) — bắt drift khi sửa system_prompt/
+# tech_rules hoặc nhà cung cấp đổi model. Cần secret DEEPSEEK_API_KEY.
+name: Eval LLM (nightly)
+
+on:
+  schedule:
+    - cron: "0 19 * * *"   # 19:00 UTC = 2h sáng VN
+  workflow_dispatch: {}     # cho chạy tay khi vừa sửa prompt
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Không có secret (fork/PR) → job vẫn xanh: script tự exit 0 khi thiếu key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Chạy eval LLM thật
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          EVAL_REPORT: eval_report.json
+        run: python scripts/eval_llm_real.py --min-intent 0.70
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval_report.json
+          if-no-files-found: ignore

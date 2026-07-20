@@ -24,7 +24,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -46,8 +50,10 @@ def check(cond, name, detail=""):
 cm = ConversationManager(account="oa-test")
 cm._sessions.clear()
 
-store = ZaloOAStore(path=Path("test_oa_store_tmp.json"))
-store._oas.clear()
+# Backend giờ là SQLite (bảng channel_accounts trong HOMESTAY_DB_PATH) —
+# clear() xoá dữ liệu kênh còn sót từ lần chạy trước (DB test không tự xoá)
+store = ZaloOAStore(path=Path(str(_TMPDIR / "test_oa_store_tmp.json")))
+store.clear()
 
 print("\n── A. ZaloOAChannel ──")
 ch = ZaloOAChannel(store=store, access_token="", oa_id="",
@@ -356,9 +362,9 @@ check(api.get("/zalooa/accounts",
               headers={"Authorization": "Bearer rac"}).status_code == 401, "E4 bad_token_401")
 os.environ['API_AUTH_GUARD'] = '0'   # tắt lại cho lần chạy sau
 
-# Dọn file tạm
-store._oas.clear(); store.save()
-Path("test_oa_store_tmp.json").unlink(missing_ok=True)
+# Dọn dữ liệu store (SQLite) + file tạm legacy nếu có
+store.clear()
+Path(str(_TMPDIR / "test_oa_store_tmp.json")).unlink(missing_ok=True)
 
 print(f"\n{'='*40}\nKẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
 sys.exit(1 if FAIL else 0)

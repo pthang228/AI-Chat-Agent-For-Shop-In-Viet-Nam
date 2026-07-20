@@ -25,11 +25,8 @@ from app.core.shopee_store import ShopeeStore
 from app.channels.shopee import ShopeeChannel
 from app.web_api.shopee_api import create_shopee_api
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("bot_shopee.log", encoding="utf-8")],
-)
+from app.core.logging_setup import setup_logging
+setup_logging("bot_shopee.log")
 log = logging.getLogger(__name__)
 
 

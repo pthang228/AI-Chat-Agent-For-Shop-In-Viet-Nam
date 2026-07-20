@@ -41,6 +41,9 @@ class Config:
     GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
     # Timeout gọi AI (giây) — tránh 1 request treo giữ mãi 1 thread/1 khách chờ.
     AI_TIMEOUT       = int(os.getenv("AI_TIMEOUT", "60"))        # trả lời khách
+    # Lượt PHÂN TÍCH intent (analyze_message) ngắn hơn hẳn: khách đang chờ từng
+    # giây — treo 60s mới fallback là khách bỏ đi. 25s đủ cho reply thường.
+    AI_ANALYZE_TIMEOUT = int(os.getenv("AI_ANALYZE_TIMEOUT", "25"))
     AI_LONG_TIMEOUT  = int(os.getenv("AI_LONG_TIMEOUT", "300"))  # sinh prompt/dạy AI (8k token output mất 2-4 phút)
 
     # Google Sheets
@@ -155,6 +158,16 @@ class Config:
         "http://localhost:5173,http://localhost:5174,http://localhost:5183,http://localhost:5186,"
         "http://127.0.0.1:5173,http://127.0.0.1:5174"
     ).split(",") if o.strip()]
+    # BẢO MẬT BIÊN nội bộ (bridge ↔ Node service).
+    # - BRIDGE_SECRET: Node phải gửi kèm header X-Bridge-Secret khớp khi POST
+    #   /incoming — chặn kẻ cùng mạng POST giả {isSelf:true, ownerTyped:true}
+    #   để tắt bot 48h cho khách bất kỳ (route /incoming là public, không Bearer).
+    # - NODE_API_KEY: Python gửi header X-Node-Key khi gọi Node :4000 (send/
+    #   send-image/notify-owner/avatar…) — Node từ chối request thiếu khoá.
+    # Rỗng = tắt kiểm tra (dev/test); PRODUCTION BẮT BUỘC đặt cả 2 (chuỗi random dài).
+    BRIDGE_SECRET     = os.getenv("BRIDGE_SECRET", "")
+    ZALO_NODE_API_KEY = os.getenv("NODE_API_KEY", "")
+
     # Bảo mật mạng (security.py). FORCE_HTTPS: bật header HSTS (chỉ khi ĐÃ chạy
     # HTTPS thật — production sau reverse proxy). TRUST_PROXY: tin X-Forwarded-For
     # để rate-limit đúng IP client khi có nginx/cloudflare đứng trước.

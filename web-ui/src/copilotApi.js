@@ -1,23 +1,11 @@
 // API Copilot quản trị (bridge 5005) — kèm Bearer token.
-import { getToken } from "./auth.js";
-
+// Dùng httpClient chung (api/http.js). handle401:false vì AdminCopilot tự hiện
+// lời nhắn "phiên hết hạn" trong khung chat (UX cũ) thay vì bị đá về /login giữa chừng.
+import { makeClient } from "./api/http.js";
 import { HOST } from "./apiConfig.js";
-const URL = HOST.bridge;
 
-async function j(path, body) {
-  try {
-    const r = await fetch(URL + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify(body),
-    });
-    let b = null;
-    try { b = await r.json(); } catch { /* ignore */ }
-    return { ok: r.ok, status: r.status, body: b };
-  } catch {
-    return { ok: false, status: 0, body: null };
-  }
-}
+const post = makeClient(HOST.bridge, { handle401: false });
+const j = (path, body) => post(path, { method: "POST", json: body });
 
 export const copilotApi = {
   chat: (message, history = []) => j("/copilot/chat", { message, history }),

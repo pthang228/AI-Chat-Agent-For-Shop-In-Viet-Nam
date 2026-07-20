@@ -57,6 +57,32 @@ def _owner_username() -> str | None:
     return rows[0]["username"] if rows else None
 
 
+def deliver_to_owner(tenant: str, subject: str, text: str, notify_fn=None) -> bool:
+    """Đưa 1 thông báo VẬN HÀNH (nhắc đơn/nhắc việc...) tới ĐÚNG chủ shop.
+
+    Multi-tenant: notify_fn (notify_owner của kênh) trỏ về nhóm/số của CHỦ NỀN
+    TẢNG — bắn dữ liệu shop thuê qua đó là lộ PII chéo tenant (đã dính thật với
+    thread nhắc đơn). Luật:
+      - shop gốc (tenant rỗng / default_owner) → notify_fn như cũ
+      - shop thuê → EMAIL chủ shop (username là email, SMTP dùng chung với OTP)
+    Trả True = đã đưa (hoặc best-effort xong: SMTP chưa cấu hình chỉ log —
+    KHÔNG trả False để caller khỏi retry vô hạn mỗi vòng quét).
+    Raise/False chỉ khi kênh CÓ cấu hình mà gửi thất bại (caller thử lại)."""
+    from app.core import tenant as _tenant
+    t = (tenant or "").strip()
+    if not t or t == _tenant.default_owner():
+        if notify_fn is None:
+            return True
+        notify_fn(text)          # lỗi → raise cho caller giữ semantics retry cũ
+        return True
+    from app.core import mailer
+    if not mailer.configured():
+        log.warning(f"[notify] SMTP chưa cấu hình → không gửi được nhắc việc cho "
+                    f"shop {t} (subject: {subject[:60]})")
+        return True              # config state, không phải lỗi — đừng retry mãi
+    return mailer.send_mail(t, subject, text)
+
+
 def get_config(username: str = None) -> dict:
     """Cấu hình của chủ (mặc định chủ chính). LUÔN trả dict đầy đủ (kể cả chưa
     lưu bao giờ) để code gọi khỏi phải kiểm None."""

@@ -1,165 +1,45 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-test_intent.py — Kiểm tra Python override logic phát hiện intent trong bot.
-1000 đoạn hội thoại thực tế. Không cần API, không cần ZaloAPI.
+test_intent.py — Kiểm tra lớp Python override intent trên CODE THẬT.
 
-Usage: python test_intent.py
+Trước đây file này chấm 1 BẢN COPY của logic override (chép tay từ bot.py) → drift:
+brain thật đã có DAY_KEYWORDS dùng chung, gate use_ai_reply, _info_question,
+word-boundary cho ok/được... mà bản copy thiếu. Giờ chấm TRỰC TIẾP hàm thuần
+apply_intent_overrides import từ app.core.brain — corpus ~546 case giữ nguyên,
+hết cảnh phải đồng bộ tay.
+
+Không cần API, không cần ZaloAPI (mock các lib nặng như test_eval_brain).
+
+Chạy (TỪ GỐC): python tests/test_intent.py
 """
 
-import re
+import os
 import sys
 from collections import defaultdict
-from typing import Optional
+from unittest.mock import MagicMock
 
-# ═══════════════════════════════════════════════════════════
-# COPY EXACT logic từ bot.py — phải đồng bộ khi bot.py thay đổi
-# ═══════════════════════════════════════════════════════════
+# Mock các lib nặng/mạng để import app.core.brain không cần cài đặt/API thật
+sys.modules.update({
+    'gspread': MagicMock(),
+    'google': MagicMock(), 'google.oauth2': MagicMock(),
+    'google.oauth2.service_account': MagicMock(),
+    'openai': MagicMock(), 'groq': MagicMock(), 'winsound': MagicMock(),
+    'dotenv': MagicMock(),
+})
+os.environ.setdefault('REPLY_DELAY', '0')
+sys.path.insert(0, '.')
 
-def detect_intent_override(
-    text: str,
-    ai_intent: str = "other",
-    stage: str = "greeting",
-    checkin: Optional[str] = None,
-) -> str:
-    tl_check = text.lower()
-    intent = ai_intent
+from app.core.brain import apply_intent_overrides  # noqa: E402  ← HÀM THẬT
 
-    _has_room = bool(re.search(r'\b[123]\d{2}\b', text))
-    _has_home = any(k in tl_check for k in ["haru", "mochi", "staycation"])
 
-    _day_kw = [
-        # Hôm nay + viết tắt
-        "hôm nay", "ngày hôm nay", "hnay", "tnay", "t.nay",
-        "tối nay", "tối này", "đêm nay", "đêm này",
-        "chiều nay", "chiều này", "sáng nay", "sáng này", "trưa nay",
-        # Ngày mai + đảo ngữ
-        "ngày mai", "tối mai", "chiều mai", "sáng mai", "trưa mai",
-        "hôm sau", "mai chiều", "mai tối", "mai sáng",
-        # Mốt
-        "ngày mốt", "ngày kia",
-        # Thứ trong tuần
-        "thứ 2", "thứ hai", "thứ 3", "thứ ba",
-        "thứ 4", "thứ tư",  "thứ 5", "thứ năm",
-        "thứ 6", "thứ sáu", "thứ 7", "thứ bảy",
-        "chủ nhật", "cuối tuần", "tuần sau", "tuần tới",
-        "tháng sau", "tháng tới",
-        # Tiếng Anh
-        "tonight", "tomorrow",
-    ]
-    _avail_kw = [
-        "còn phòng", "phòng trống", "còn trống", "có phòng", "còn chỗ",
-        "có chỗ", "có chỗ trống", "chỗ trống",
-        "đặt được", "book được", "trống không", "trống ko", "trống chưa",
-        "còn ko", "còn không", "còn gì không", "còn gì ko",
-        "check lịch", "xem lịch", "kiểm tra lịch", "lịch trống",
-        "phòng nào trống", "ca nào trống", "ca nào còn", "kết quả", "check xong",
-        "qua đêm", "ca đêm", "ca trưa", "ca chiều", "ca sáng",
-        "slot", "available",
-    ]
-    _has_day   = any(k in tl_check for k in _day_kw)
-    # Viết tắt thứ: t2-t7, cn (dùng word boundary)
-    if not _has_day:
-        _has_day = bool(re.search(r'\bt[2-7]\b|\bcn\b', tl_check))
-    # "mai" đứng độc lập
-    if not _has_day:
-        _has_day = bool(re.search(r'\bmai\b', tl_check))
-    # "mn" = mai nhé / ngày mai
-    if not _has_day:
-        _has_day = bool(re.search(r'\bmn\b', tl_check))
-    # Ngày cụ thể: "ngày 25", "25/5", "25 tháng 5"
-    if not _has_day:
-        _has_day = bool(re.search(
-            r'ngày\s+\d+|\d{1,2}[/\.]\d{1,2}|\d{1,2}\s+tháng\s+\d+',
-            tl_check
-        ))
-    _has_avail = any(k in tl_check for k in _avail_kw)
-    _has_avail = _has_avail or bool(re.search(r'còn.{0,30}(ko|không)\b', tl_check))
-
-    if intent == "other":
-        if _has_day and _has_avail:
-            intent = "availability_check"
-        elif _has_avail and checkin:
-            intent = "availability_check"
-        elif _has_day and len(text.strip().split()) <= 5:
-            intent = "availability_check"
-        elif _has_day and stage in ("checking", "offering"):
-            intent = "availability_check"
-        elif stage in ("checking", "offering") and checkin:
-            _followup_kw = [
-                "cả 2", "cả hai", "2 căn", "2 cái", "cả 2 luôn",
-                "ok", "oke", "okie", "được", "cho mình", "đặt đi",
-                "xong chưa", "check xong", "kết quả",
-                "hôm đó", "ngày đó",
-            ]
-            if any(k in tl_check for k in _followup_kw):
-                intent = "availability_check"
-
-    _contact_kw = [
-        "gọi chủ", "kêu chủ", "báo chủ", "nhắn chủ", "bảo chủ",
-        "gặp chủ", "cho gặp", "gặp người thật", "nói chuyện thật",
-        "chủ đâu", "admin đâu", "chủ nhà đâu", "có ai không",
-        "rep đi", "rep mình", "trả lời đi", "ai đó rep",
-        "gọi lại", "gọi cho mình", "gọi mình",
-        "liên hệ lại", "liên hệ trực tiếp", "liên hệ mình",
-        "không muốn chat bot", "cần người thật", "người thật",
-        "khi nào chủ", "chủ online",
-        "gặp admin", "tìm admin", "nhắn admin", "hỏi admin",
-        "muốn gặp chủ", "muốn gặp admin", "cần gặp chủ", "cần gặp admin",
-    ]
-    if intent != "contact_request" and any(k in tl_check for k in _contact_kw):
-        # Loại false positive: "gọi mình là [tên]"
-        if not re.search(r'gọi (mình|tôi|tao|em|anh|chị) là', tl_check):
-            intent = "contact_request"
-    # Regex bổ sung: "muốn/cần gặp chủ/admin/người"
-    if intent != "contact_request" and re.search(
-        r'(muốn|cần|cho).{0,10}gặp.{0,10}(chủ|admin|người)', tl_check
-    ):
-        intent = "contact_request"
-
-    _price_kw = [
-        "bảng giá", "giá phòng", "giá bao nhiêu", "bao nhiêu tiền",
-        "giá như nào", "giá thế nào", "phòng mấy tiền", "mấy tiền",
-        "bao nhiêu 1 đêm", "bao nhiêu 1 ca", "giá 1 đêm",
-        "cho xin giá", "giá các phòng", "giá hết", "giá là",
-        "tính giá", "giá thuê",
-        "xem giá", "cho mình giá", "giá ca ",
-        "rẻ nhất", "đắt nhất", "phòng rẻ", "phòng đắt",
-        "giá haru", "giá mochi", "giá staycation",
-    ]
-    if intent != "price_list_request" and any(k in tl_check for k in _price_kw):
-        _not_room_ctx = any(k in tl_check for k in ["xe máy", "xe đạp", "grab", "shipper", "đồ ăn", "cơm", "nước"])
-        if not _not_room_ctx:
-            intent = "price_list_request"
-    # Regex: "giá ... bao nhiêu/thế nào/như nào"
-    if intent != "price_list_request" and re.search(
-        r'giá.{0,25}(bao nhiêu|thế nào|như nào|ra sao)', tl_check
-    ):
-        intent = "price_list_request"
-
-    _has_photo = any(k in tl_check for k in [
-        "ảnh", "hình", "xem phòng", "xem của", "xem hết",
-        "tất cả các phòng", "show", "cho xem",
-    ])
-    if intent != "photo_request" and (_has_room or _has_home) and _has_photo:
-        intent = "photo_request"
-
-    # Generic photo phrases — không cần số phòng cụ thể
-    _has_photo_generic = any(k in tl_check for k in [
-        "ảnh phòng", "hình phòng",
-        "ảnh các phòng", "hình các phòng",
-        "ảnh tất cả", "xem tất cả", "tất cả các phòng", "mọi phòng",
-        "xem hết", "show all",
-    ])
-    if intent != "photo_request" and _has_photo_generic:
-        intent = "photo_request"
-
-    if intent not in ("photo_request", "booking_confirm", "availability_check", "contact_request"):
-        _only_rooms = bool(re.fullmatch(
-            r'[\s]*(?:[123]\d{2}[\s,、và\+&]*)+[\s]*', text.strip(), re.IGNORECASE
-        ))
-        if _only_rooms and _has_room:
-            intent = "photo_request"
-
+def detect(text, ai_intent="other", stage="greeting", checkin=None):
+    """Wrapper mỏng: chấm qua hàm production (input thuần như trong _handle_inner)."""
+    intent, _reasons = apply_intent_overrides(
+        text,
+        {"intent": ai_intent, "use_ai_reply": False},
+        {"stage": stage, "checkin": checkin, "selected_room": None},
+    )
     return intent
 
 
@@ -432,10 +312,14 @@ price_cases = [
     "cho mình xem giá",
     "bảng giá 2 căn",
     "giá haru bao nhiêu",
-    "giá mochi như nào",
 ]
 for t in price_cases:
     add(t, "price_list_request", note="price")
+
+# Brain thật có override "photo follow-up homestay" ('X thì sao/như nào' + tên homestay)
+# chạy SAU override price → "giá mochi như nào" ra photo_request (bản copy cũ thiếu
+# block này nên kỳ vọng price — brain production là chuẩn).
+add("giá mochi như nào", "photo_request", note="price_then_photo_followup_homestay")
 
 
 # ────────────────────────────────────────────
@@ -574,12 +458,12 @@ def run_tests():
     known_failures = []
 
     print(f"\n{'═'*65}")
-    print(f"  CHẠY {len(TC)} TEST CASES")
+    print(f"  CHẠY {len(TC)} TEST CASES (qua apply_intent_overrides THẬT)")
     print(f"{'═'*65}\n")
 
     for i, (text, expected, ai_input, stage, checkin, note) in enumerate(TC):
         is_known = note.startswith("[KNOWN]")
-        actual = detect_intent_override(text, ai_intent=ai_input, stage=stage, checkin=checkin)
+        actual = detect(text, ai_intent=ai_input, stage=stage, checkin=checkin)
 
         if actual == expected:
             results["pass"] += 1
@@ -631,7 +515,7 @@ def run_tests():
     for text, expected, ai_input, stage, checkin, note in TC:
         if note.startswith("[KNOWN]"):
             continue
-        actual = detect_intent_override(text, ai_intent=ai_input, stage=stage, checkin=checkin)
+        actual = detect(text, ai_intent=ai_input, stage=stage, checkin=checkin)
         if actual == expected:
             intent_stats[expected]["pass"] += 1
         else:

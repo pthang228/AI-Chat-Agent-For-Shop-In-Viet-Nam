@@ -4,14 +4,21 @@ import { currentUser } from "../auth.js";
 import { HOST } from "../apiConfig.js";
 import { getToken } from "../auth.js";
 import LogoMark from "../components/LogoMark.jsx";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * 🛠 DASHBOARD QUẢN TRỊ NỀN TẢNG — trang RIÊNG cho chủ nền tảng (route /admin),
  * tách khỏi dashboard shop. Xem toàn bộ shop: gói, hạn, mức dùng, hoạt động.
  * Backend chốt quyền thật ở /admin/shops (403 nếu không phải chủ nền tảng).
+ * Chuỗi hiển thị qua i18n (fragment src/i18n/admin.js, prefix "adm.").
  */
 
-const TIER_LABEL = { trial: "Dùng thử", starter: "Starter", pro: "Pro", business: "Business" };
+// Starter/Pro/Business là tên riêng — chỉ "trial" cần dịch
+function tierLabel(tier, t) {
+  const FIXED = { starter: "Starter", pro: "Pro", business: "Business" };
+  if (tier === "trial") return t("adm.tier_trial");
+  return FIXED[tier] || tier || "—";
+}
 const vnd = (n) => (n || 0).toLocaleString("vi-VN") + "đ";
 
 function fmtDate(iso) { return iso ? iso.slice(0, 10) : "—"; }
@@ -31,6 +38,7 @@ function Kpi({ label, value, accent, icon }) {
 
 export default function AdminDashboard() {
   const nav = useNavigate();
+  const { t } = useI18n();
   const user = currentUser();
   const [data, setData] = useState(null);   // null=tải | {shops} | "denied" | "offline"
   const [q, setQ] = useState("");
@@ -76,38 +84,38 @@ export default function AdminDashboard() {
         <div className="adm-brand">
           <LogoMark size={30} />
           <span>Nova<b>Chat</b></span>
-          <span className="adm-badge">🛠 Quản trị nền tảng</span>
+          <span className="adm-badge">{t("adm.badge")}</span>
         </div>
         <div className="adm-top-right">
           <span className="adm-user">{user?.homestay || user?.username}</span>
-          <Link to="/" className="btn-ghost adm-back">← Về dashboard shop</Link>
+          <Link to="/" className="btn-ghost adm-back">{t("adm.back_dash")}</Link>
         </div>
       </header>
 
       <main className="adm-body">
-        {data === null && <p className="hint">Đang tải…</p>}
+        {data === null && <p className="hint">{t("adm.loading")}</p>}
         {data === "offline" && (
-          <p className="hint">⚠️ Chưa kết nối máy chủ (5005) — hoặc server cần restart bản mới.</p>
+          <p className="hint">{t("adm.offline")}</p>
         )}
 
         {Array.isArray(shops) && data && typeof data === "object" && (
           <>
             {/* KPI nền tảng */}
             <div className="kpi-row">
-              <Kpi label="Tổng shop"        value={kpi.total}  accent="#7C3AED" icon="🏬" />
-              <Kpi label="Gói còn hiệu lực" value={kpi.active} accent="#23a065" icon="✅" />
-              <Kpi label="Tổng hội thoại"   value={kpi.convs}  accent="#4C6EF5" icon="💬" />
-              <Kpi label="Lượt AI kỳ này"   value={kpi.ai}     accent="#cf9536" icon="🤖" />
+              <Kpi label={t("adm.kpi_shops")}  value={kpi.total}  accent="#7C3AED" icon="🏬" />
+              <Kpi label={t("adm.kpi_active")} value={kpi.active} accent="#23a065" icon="✅" />
+              <Kpi label={t("adm.kpi_convs")}  value={kpi.convs}  accent="#4C6EF5" icon="💬" />
+              <Kpi label={t("adm.kpi_ai")}     value={kpi.ai}     accent="#cf9536" icon="🤖" />
             </div>
 
             {/* Bảng shop */}
             <div className="panel adm-panel">
               <div className="adm-toolbar">
-                <h3>Danh sách shop ({shown.length})</h3>
-                <input className="adm-search" placeholder="🔍 Tìm tên shop / email…"
+                <h3>{t("adm.list_title", { n: shown.length })}</h3>
+                <input className="adm-search" placeholder={t("adm.search_ph")}
                        value={q} onChange={(e) => setQ(e.target.value)} />
                 <button className="btn-mini" onClick={load} disabled={loading}>
-                  {loading ? "Đang tải…" : "↻ Làm mới"}
+                  {loading ? t("adm.loading") : t("adm.refresh")}
                 </button>
               </div>
 
@@ -115,29 +123,29 @@ export default function AdminDashboard() {
                 <table className="ad-table">
                   <thead>
                     <tr>
-                      <th>Shop</th><th>Gói</th><th>Trạng thái</th><th>Hết hạn</th>
-                      <th>Ví</th><th>Lượt AI</th><th>Hội thoại</th><th>Đơn</th>
-                      <th>NV</th><th>Hoạt động cuối</th><th>Đăng ký</th>
+                      <th>{t("adm.th_shop")}</th><th>{t("adm.th_tier")}</th><th>{t("adm.th_status")}</th><th>{t("adm.th_expires")}</th>
+                      <th>{t("adm.th_wallet")}</th><th>{t("adm.th_ai")}</th><th>{t("adm.th_conv")}</th><th>{t("adm.th_orders")}</th>
+                      <th>{t("adm.th_staff")}</th><th>{t("adm.th_last")}</th><th>{t("adm.th_created")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {shown.map((s) => (
                       <tr key={s.username} className="adm-row"
-                          title="Xem chi tiết shop"
+                          title={t("adm.row_view")}
                           onClick={() => nav(`/admin/shop/${encodeURIComponent(s.username)}`)}>
                         <td>
                           <b>{s.shop_name}</b>{s.is_platform_admin ? " ⭐" : ""}
                           <div className="hint" style={{ fontSize: 12 }}>{s.username}</div>
                         </td>
-                        <td>{TIER_LABEL[s.tier] || s.tier || "—"}</td>
+                        <td>{tierLabel(s.tier, t)}</td>
                         <td>
                           {s.blocked
-                            ? <span className="adm-st blk">⛔ Bị chặn</span>
+                            ? <span className="adm-st blk">{t("adm.st_blocked")}</span>
                             : s.active
-                              ? <span className="adm-st ok">● Hoạt động</span>
-                              : <span className="adm-st off">● Hết hạn</span>}
+                              ? <span className="adm-st ok">{t("adm.st_active")}</span>
+                              : <span className="adm-st off">{t("adm.st_expired")}</span>}
                         </td>
-                        <td>{s.lifetime ? "Vĩnh viễn" : fmtDate(s.expires_at)}</td>
+                        <td>{s.lifetime ? t("adm.lifetime") : fmtDate(s.expires_at)}</td>
                         <td>{vnd(s.balance)}</td>
                         <td>{s.ai_used}</td>
                         <td>{s.conversations}</td>
@@ -149,7 +157,7 @@ export default function AdminDashboard() {
                     ))}
                     {shown.length === 0 && (
                       <tr><td colSpan={11} className="hint" style={{ textAlign: "center", padding: 20 }}>
-                        Không có shop nào khớp tìm kiếm.
+                        {t("adm.no_match")}
                       </td></tr>
                     )}
                   </tbody>

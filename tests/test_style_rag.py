@@ -22,7 +22,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 # DB test riêng — XOÁ trước khi dùng (DB tồn đọng từ lần chạy trước gây fail giả)
-_DB = 'test_db_style_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+_DB = str(_TMPDIR / 'test_db_style_tmp.sqlite')
 for _f in (_DB, _DB + '-shm', _DB + '-wal'):
     try: os.remove(_f)
     except OSError: pass

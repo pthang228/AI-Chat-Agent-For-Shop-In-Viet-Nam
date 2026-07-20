@@ -23,7 +23,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -46,8 +50,9 @@ def check(cond, name, detail=""):
 cm = ConversationManager(account="tt-test")
 cm._sessions.clear()
 
-store = TikTokStore(path=Path("test_tt_store_tmp.json"))
-store._accounts.clear()
+# Backend giờ là SQLite — clear() dọn dữ liệu kênh sót từ lần chạy trước
+store = TikTokStore(path=Path(str(_TMPDIR / "test_tt_store_tmp.json")))
+store.clear()
 
 print("\n── A. TikTokChannel ──")
 ch = TikTokChannel(store=store, access_token="", business_id="", conv_manager=cm)
@@ -272,7 +277,7 @@ s = compute_stats(cm2, from_s=frm, to_s=to, uid_filter=lambda u: u.startswith("t
 check(s["total_conv"] == 1 and s["confirmed"] == 0, "E3 date_filter", f"{s}")
 
 # Dọn file tạm
-for f in ["test_tt_store_tmp.json"]:
+for f in [str(_TMPDIR / "test_tt_store_tmp.json")]:
     try: Path(f).unlink()
     except FileNotFoundError: pass
 

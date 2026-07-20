@@ -85,13 +85,9 @@ def get_by_code(code) -> dict | None:
 
 
 def _tenant_where(tenant_ws):
-    """Mảnh WHERE multi-tenant: chủ nền tảng thấy cả đơn cũ chưa gắn tenant."""
+    """Mảnh WHERE multi-tenant (nguồn chung: tenant.tenant_where)."""
     from app.core import tenant as _t
-    if not tenant_ws:
-        return None, []
-    if tenant_ws == _t.default_owner():
-        return "(tenant=? OR tenant='')", [tenant_ws]
-    return "tenant=?", [tenant_ws]
+    return _t.tenant_where(tenant_ws)
 
 
 def list_orders(status="", channel="", q="", limit=100, offset=0, tenant_ws=None) -> dict:
@@ -308,13 +304,19 @@ def _remind_text(o: dict) -> str:
 
 
 def check_and_notify(notify_fn) -> int:
-    """Quét 1 lượt đơn tới hạn → gọi notify_fn(text) từng đơn. Trả số đơn đã nhắc."""
+    """Quét 1 lượt đơn tới hạn → nhắc ĐÚNG chủ shop từng đơn. Trả số đơn đã nhắc.
+    MULTI-TENANT: route qua notify.deliver_to_owner — đơn shop thuê đi EMAIL chủ
+    shop đó, KHÔNG bắn notify_fn (nhóm Zalo chủ nền tảng) như trước (lộ PII)."""
+    from app.core import notify as _notify
     n = 0
     for o in due_orders():
         try:
-            notify_fn(_remind_text(o))
-            mark_reminded(o["id"])
-            n += 1
+            ok = _notify.deliver_to_owner(
+                o.get("tenant") or "", f"[NovaChat] ⏰ Đơn {o['code']} sắp tới hạn",
+                _remind_text(o), notify_fn)
+            if ok:
+                mark_reminded(o["id"])
+                n += 1
         except Exception as e:
             log.error(f"[Orders] nhắc {o['code']} lỗi: {e}")
     return n

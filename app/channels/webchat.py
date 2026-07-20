@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from app.core.config import Config
-from app.core.channel import Channel
+from app.core.channel import Channel, LEGACY_ROOM_SETS
 from app.core import owner_call
 
 log = logging.getLogger(__name__)
@@ -164,7 +164,7 @@ class WebChatChannel(Channel):
     def send_price_photos(self, user_id: str) -> None:
         base = Path(Config.PRICE_PHOTOS_DIR)
         sent = False
-        for folder_name, label in [("haru", "Haru Staycation"), ("mochi", "Mochi Home")]:
+        for folder_name, label in LEGACY_ROOM_SETS:
             if self._send_dir(user_id, base / folder_name, f"📋 Bảng giá {label}:"):
                 sent = True
         if not sent:

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { copilotApi } from "../copilotApi.js";
+import { useI18n } from "../i18n.jsx";
 
 /*
  * Trợ lý QUẢN TRỊ (copilot) — bong bóng nổi cho CHỦ SHOP đã đăng nhập.
@@ -9,15 +10,11 @@ import { copilotApi } from "../copilotApi.js";
  */
 
 const STORE_KEY = "hb_copilot_chat";
-const HELLO = {
-  role: "assistant",
-  content: "Chào anh/chị! 🤖 Em là Trợ lý NovaChat.\nEm giúp anh/chị cài đặt & vận hành: kết nối kênh, bật/tắt bot, dạy AI, xem tình hình shop… Anh/chị cần gì ạ?",
-};
-const SUGGESTS = ["Tình hình shop thế nào?", "Kết nối Zalo sao?", "Tắt bot Telegram giúp em", "Dạy AI ở đâu?"];
 
-function loadMsgs() {
-  try { return JSON.parse(sessionStorage.getItem(STORE_KEY)) || [HELLO]; }
-  catch { return [HELLO]; }
+// Câu chào + gợi ý dịch theo ngôn ngữ UI (i18n key "co.*" — fragment i18n/admin.js)
+function loadMsgs(hello) {
+  try { return JSON.parse(sessionStorage.getItem(STORE_KEY)) || [hello]; }
+  catch { return [hello]; }
 }
 
 const BotIcon = (p) => (
@@ -28,10 +25,12 @@ const BotIcon = (p) => (
 );
 
 export default function AdminCopilot() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   // Hạng trợ lý do BACKEND quyết theo gói: "basic" (chưa đăng ký) / "premium" (có gói)
   const [mode, setMode] = useState(() => sessionStorage.getItem("hb_copilot_mode") || "");
-  const [msgs, setMsgs] = useState(loadMsgs);   // {role, content, navigate?, pending?}
+  const [msgs, setMsgs] = useState(() => loadMsgs({ role: "assistant", content: t("co.hello") }));   // {role, content, navigate?, pending?}
+  const SUGGESTS = [t("co.sug1"), t("co.sug2"), t("co.sug3"), t("co.sug4")];
   const [text, setText] = useState("");
   const [typing, setTyping] = useState(false);
   const bodyRef = useRef(null);
@@ -61,8 +60,7 @@ export default function AdminCopilot() {
       }]);
     } else {
       setMsgs((m) => [...m, { role: "assistant",
-        content: r.status === 401 ? "Phiên đăng nhập hết hạn — anh/chị đăng nhập lại giúp em nhé."
-          : "Dạ em đang quá tải chút 🙏 anh/chị thử lại sau giây lát ạ." }]);
+        content: r.status === 401 ? t("co.err_401") : t("co.err_busy") }]);
     }
   }
 
@@ -73,7 +71,7 @@ export default function AdminCopilot() {
     // gỡ pending khỏi tin đó + thêm kết quả
     setMsgs((m) => m.map((x, i) => i === mi ? { ...x, pending: null, done: true } : x)
                     .concat([{ role: "assistant",
-                               content: (r.body?.ok ? "✅ " : "⚠️ ") + (r.body?.message || "Đã xử lý.") }]));
+                               content: (r.body?.ok ? "✅ " : "⚠️ ") + (r.body?.message || t("co.done")) }]));
   }
   function cancel(mi) {
     setMsgs((m) => m.map((x, i) => i === mi ? { ...x, pending: null } : x));
@@ -86,12 +84,12 @@ export default function AdminCopilot() {
         <div className="cw-head co-head">
           <div className="cw-avatar co-avatar"><BotIcon /></div>
           <div className="cw-head-txt">
-            <div className="cw-title">Trợ lý NovaChat{mode === "premium" ? " ✦" : ""}</div>
+            <div className="cw-title">{t("co.title")}{mode === "premium" ? " ✦" : ""}</div>
             <div className="cw-sub"><span className="cw-dot" /> {mode === "basic"
-              ? "Bản cơ bản — đăng ký gói để mở trợ lý chuyên sâu"
-              : "Giúp anh/chị cài đặt & quản lý"}</div>
+              ? t("co.sub_basic")
+              : t("co.sub")}</div>
           </div>
-          <button className="cw-close" onClick={() => setOpen(false)} aria-label="Đóng">✕</button>
+          <button className="cw-close" onClick={() => setOpen(false)} aria-label={t("co.close")}>✕</button>
         </div>
 
         <div className="cw-body" ref={bodyRef}>
@@ -110,7 +108,7 @@ export default function AdminCopilot() {
                 {m.pending && (
                   <div className="co-action">
                     <button className="co-confirm" onClick={() => confirm(i, m.pending)}>✅ {m.pending.label}</button>
-                    <button className="co-cancel" onClick={() => cancel(i)}>Huỷ</button>
+                    <button className="co-cancel" onClick={() => cancel(i)}>{t("co.cancel")}</button>
                   </div>
                 )}
               </div>
@@ -130,10 +128,10 @@ export default function AdminCopilot() {
         </div>
 
         <div className="cw-foot">
-          <input ref={inputRef} className="cw-input" placeholder="Hỏi hoặc nhờ em làm gì đó…"
+          <input ref={inputRef} className="cw-input" placeholder={t("co.input_ph")}
                  value={text} onChange={(e) => setText(e.target.value)}
                  onKeyDown={(e) => e.key === "Enter" && send()} disabled={typing} />
-          <button className="cw-send co-send" onClick={() => send()} disabled={typing || !text.trim()} aria-label="Gửi">
+          <button className="cw-send co-send" onClick={() => send()} disabled={typing || !text.trim()} aria-label={t("co.send")}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
             </svg>
@@ -143,7 +141,7 @@ export default function AdminCopilot() {
 
       <div className={"cw-fab-wrap" + (open ? " open" : "")}>
         <button className={"cw-fab co-fab" + (open ? " open" : "")} onClick={() => setOpen((v) => !v)}
-                title="Trợ lý quản trị" aria-label="Trợ lý quản trị">
+                title={t("co.fab")} aria-label={t("co.fab")}>
           {open
             ? <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></svg>
             : <BotIcon width={26} height={26} />}

@@ -21,7 +21,11 @@ sys.modules.update({
 })
 os.environ.setdefault('REPLY_DELAY', '0')
 os.environ.setdefault('OWNER_ZALO_ID', 'OWNER123')
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'   # DB test riêng, không đụng DB thật
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')   # DB test riêng, không đụng DB thật
 os.environ['API_AUTH_GUARD'] = '0'   # tắt auth-guard trong test (test_client không có token)
 os.environ['WORKER_SYNC'] = '1'      # submit chạy đồng bộ → kiểm tra kết quả ngay
 sys.path.insert(0, '.')
@@ -43,9 +47,10 @@ def check(cond, name, detail=""):
 cm = ConversationManager(account="meta-test")
 cm._sessions.clear()
 
-# Store cô lập, nạp sẵn 1 Page có token để test gửi đúng token
-store = MetaStore(path=Path("test_meta_store_tmp.json"))
-store._pages.clear()
+# Store nạp sẵn 1 Page có token để test gửi đúng token — backend giờ là SQLite,
+# clear() dọn dữ liệu kênh 'meta' sót từ lần chạy trước
+store = MetaStore(path=Path(str(_TMPDIR / "test_meta_store_tmp.json")))
+store.clear()
 store.upsert("PAGE1", name="Haru Page", access_token="TOK_PAGE1", ig_id="IG1", ig_username="haru.ig")
 
 print("\n── A. MetaChannel (multi-tenant) ──")
@@ -192,13 +197,88 @@ with patch.object(meta_mod, 'threading') as mth, \
         {"id": "PAGE1", "messaging": [{"sender": {"id": "PSIDX"}, "message": {"text": "hello"}}]}]})
     check(fb2.handled == [], "B7 bot_disabled_skipped")
 
+print("\n── B8. Media inbound: postback / ảnh / sticker ──")
+import app.core.billing as billing_mod
+
+class FakeChannel:
+    """Kênh giả ghi lại send_text + notify_owner (đường media không qua AI)."""
+    def __init__(self): self.sent = []; self.notified = []
+    def send_text(self, uid, text): self.sent.append((uid, text))
+    def notify_owner(self, text): self.notified.append(text)
+
+with patch.object(meta_mod, '_load_bot_state', return_value={"enabled": True}), \
+     patch.object(billing_mod, 'channel_gate') as mgate:
+    mgate.return_value = True
+    fb3 = FakeBrain(); fb3.channel = FakeChannel()
+    client3 = meta_mod.create_meta_webhook(fb3, cm, store).test_client()
+
+    # B8a: postback (khách bấm nút) → brain nhận payload như TEXT thường,
+    # và CÓ đi qua channel_gate (đường AI bình thường)
+    fb3.handled.clear(); mgate.reset_mock()
+    client3.post("/fb/webhook", json={"object": "page", "entry": [
+        {"id": "PAGE1", "messaging": [{"sender": {"id": "PB_USER"},
+            "postback": {"title": "Xem giá phòng", "payload": "XEM_GIA", "mid": "pb1"}}]}]})
+    check(fb3.handled == [("fb:PAGE1:PB_USER", "XEM_GIA")], "B8a postback_to_brain", f"h={fb3.handled}")
+    check(mgate.called, "B8a postback_qua_gate")
+
+    # B8b: postback không payload → fallback title
+    fb3.handled.clear()
+    client3.post("/fb/webhook", json={"object": "page", "entry": [
+        {"id": "PAGE1", "messaging": [{"sender": {"id": "PB_USER"},
+            "postback": {"title": "Đặt phòng", "mid": "pb2"}}]}]})
+    check(fb3.handled == [("fb:PAGE1:PB_USER", "Đặt phòng")], "B8b postback_title_fallback", f"h={fb3.handled}")
+
+    # B8c: khách gửi ẢNH → reply cố định + marker trong conv + notify chủ kèm link,
+    # KHÔNG gọi brain (chưa có vision) và KHÔNG qua channel_gate (không trừ ai_used)
+    fb3.handled.clear(); fb3.channel.sent.clear(); fb3.channel.notified.clear(); mgate.reset_mock()
+    client3.post("/fb/webhook", json={"object": "page", "entry": [
+        {"id": "PAGE1", "messaging": [{"sender": {"id": "IMG_USER"}, "message": {
+            "mid": "img1", "attachments": [
+                {"type": "image", "payload": {"url": "https://cdn.fb/anh1.jpg"}}]}}]}]})
+    check(fb3.handled == [], "B8c image_khong_goi_brain", f"h={fb3.handled}")
+    check(not mgate.called, "B8c image_khong_tru_quota (gate không được gọi)")
+    _imsgs = cm.get("fb:PAGE1:IMG_USER").messages
+    check(any(m["role"] == "user" and m["content"] == "[Khách gửi ảnh] https://cdn.fb/anh1.jpg"
+              for m in _imsgs), "B8c image_marker_trong_conv", f"msgs={_imsgs}")
+    check(fb3.channel.sent and fb3.channel.sent[0][0] == "fb:PAGE1:IMG_USER"
+          and "nhận được ảnh" in fb3.channel.sent[0][1],
+          "B8c image_reply_co_dinh", f"sent={fb3.channel.sent}")
+    check(fb3.channel.notified and "https://cdn.fb/anh1.jpg" in fb3.channel.notified[0],
+          "B8c image_notify_chu_kem_link", f"n={fb3.channel.notified}")
+
+    # B8d: sticker từ khách CŨ → im lặng (không reply, không brain) NHƯNG lưu
+    # marker "[Sticker]" cho inbox đầy đủ; cũng không qua gate
+    cm.get("fb:PAGE1:ST_OLD").add_user_message("hôm trước hỏi giá")   # khách cũ
+    fb3.handled.clear(); fb3.channel.sent.clear(); mgate.reset_mock()
+    client3.post("/fb/webhook", json={"object": "page", "entry": [
+        {"id": "PAGE1", "messaging": [{"sender": {"id": "ST_OLD"}, "message": {
+            "mid": "st1", "attachments": [
+                {"type": "image", "payload": {"sticker_id": 369239263222822,
+                                              "url": "https://cdn.fb/like.png"}}]}}]}]})
+    check(fb3.handled == [] and fb3.channel.sent == [], "B8d sticker_khach_cu_im_lang")
+    check(not mgate.called, "B8d sticker_khong_tru_quota")
+    _smsgs = cm.get("fb:PAGE1:ST_OLD").messages
+    check(_smsgs[-1] == {"role": "user", "content": "[Sticker]"},
+          "B8d sticker_marker_trong_conv", f"msgs={_smsgs}")
+
+    # B8e: sticker từ khách MỚI → route như tin rỗng (brain.handle với text ""
+    # → greeting cố định trong brain), vẫn không qua gate (greeting không tốn AI)
+    fb3.handled.clear(); mgate.reset_mock()
+    client3.post("/fb/webhook", json={"object": "page", "entry": [
+        {"id": "PAGE1", "messaging": [{"sender": {"id": "ST_NEW"}, "message": {
+            "mid": "st2", "attachments": [
+                {"type": "image", "payload": {"sticker_id": 123, "url": "https://cdn.fb/s.png"}}]}}]}]})
+    check(fb3.handled == [("fb:PAGE1:ST_NEW", "")], "B8e sticker_khach_moi_greeting", f"h={fb3.handled}")
+    check(not mgate.called, "B8e sticker_moi_khong_tru_quota")
+
 print("\n── C. Luồng 'Kết nối Facebook' (OAuth) ──")
 with patch.object(meta_mod.meta_graph, 'exchange_long_lived_user_token', return_value="LONG_TOKEN") as mex, \
      patch.object(meta_mod.meta_graph, 'list_pages', return_value=[
         {"id": "PAGE_NEW", "name": "Mochi Page", "access_token": "TOK_NEW",
          "instagram_business_account": {"id": "IG_NEW", "username": "mochi.ig"}}]) as mlp, \
      patch.object(meta_mod.meta_graph, 'subscribe_page', return_value=True) as msub:
-    store2 = MetaStore(path=Path("test_meta_store2_tmp.json")); store2._pages.clear()
+    # clear() xoá cả PAGE1 phần A (chung bảng SQLite) — phần dưới không dùng lại PAGE1
+    store2 = MetaStore(path=Path(str(_TMPDIR / "test_meta_store2_tmp.json"))); store2.clear()
     client = meta_mod.create_meta_webhook(FakeBrain(), cm, store2).test_client()
 
     # C1: config (kèm cờ enable_ig cho frontend xin quyền IG)
@@ -294,7 +374,7 @@ with patch.object(meta_mod.Config, "FB_APP_SECRET", SECRET), \
     check(r.status_code == 200 and r.get_json().get("ok"), "E13 deauthorize_ok")
 
 print(f"\n{'='*40}\n  KẾT QUẢ: {PASS} pass / {FAIL} fail\n{'='*40}")
-for _f in ("test_meta_tmp.json", "test_meta_store_tmp.json", "test_meta_store2_tmp.json"):
+for _f in (str(_TMPDIR / "test_meta_tmp.json"), str(_TMPDIR / "test_meta_store_tmp.json"), str(_TMPDIR / "test_meta_store2_tmp.json")):
     try: Path(_f).unlink()
     except: pass
 sys.exit(1 if FAIL else 0)

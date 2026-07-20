@@ -26,11 +26,8 @@ from app.core.zalo_oa_store import ZaloOAStore
 from app.channels.zalo_oa import ZaloOAChannel
 from app.web_api.zalo_oa_api import create_zalo_oa_api
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("bot_zalo_oa.log", encoding="utf-8")],
-)
+from app.core.logging_setup import setup_logging
+setup_logging("bot_zalo_oa.log")
 log = logging.getLogger(__name__)
 
 

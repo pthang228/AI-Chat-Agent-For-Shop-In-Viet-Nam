@@ -21,8 +21,7 @@ import requests
 from flask import Flask, request, jsonify
 
 from app.core.config import Config
-from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled, _conv_summary, _tenant_visible
-from app.web_api.stats_util import compute_stats
+from app.web_api.bridge import _load_bot_state, _save_bot_state, _channel_enabled
 from app.web_api.api_guard import install_cors, install_auth_guard, DedupCache, submit
 
 log = logging.getLogger("shopee_api")
@@ -189,7 +188,9 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
 
     @app.route("/health")
     def health():
-        return {"ok": True}
+        # health SÂU dùng chung: chạm DB + kiểm disk, 503 khi hỏng (api_guard)
+        from app.web_api.api_guard import health_payload
+        return health_payload()
 
     @app.route("/shopee/config")
     def sp_config():
@@ -272,9 +273,13 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
             "shop_id": shop_id, "name": name,
         }}
 
+    # MULTI-TENANT: guard sở hữu dùng chung (api_guard) — chống shop A đụng
+    # shop Shopee của shop B (IDOR từng chỉ được vá ở telegram_api).
+    from app.web_api.api_guard import own_account_or_404, filter_owned
+
     @app.route("/shopee/shops")
     def sp_shops():
-        shops = store.list_shops() if store else []
+        shops = filter_owned(store, store.list_shops(), "shop_id") if store else []
         state = _load_bot_state()
         for s in shops:
             s["bot_enabled"] = _channel_enabled(state, f"shopee:{s['shop_id']}")
@@ -282,6 +287,9 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
 
     @app.route("/shopee/shops/<shop_id>", methods=["DELETE"])
     def sp_remove(shop_id):
+        deny = own_account_or_404(store, shop_id)
+        if deny:
+            return deny
         if store:
             store.remove(shop_id)
         return {"ok": True}
@@ -289,6 +297,9 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
     @app.route("/shopee/shops/<shop_id>/toggle", methods=["POST"])
     def sp_shop_toggle(shop_id):
         """Bật/tắt riêng 1 shop Shopee. body {enabled: bool}."""
+        deny = own_account_or_404(store, shop_id)
+        if deny:
+            return deny
         data = request.get_json(force=True, silent=True) or {}
         enabled = bool(data.get("enabled", True))
         state = _load_bot_state()
@@ -306,109 +317,18 @@ def create_shopee_api(brain, conv_manager, channel, store=None) -> Flask:
         name = data.get("name") or ""
         parts = uid.split(":")
         if len(parts) >= 3 and store:
+            deny = own_account_or_404(store, parts[1])
+            if deny:
+                return deny
             store.set_owner(parts[1], ":".join(parts[2:]), name)
             return {"ok": True}
         return {"ok": False, "error": "user_id không hợp lệ"}, 400
 
-    # ── Thống kê ───────────────────────────────────────────────────────
-
-    @app.route("/shopee/stats")
-    def sp_stats():
-        shop_id = request.args.get("shop_id", "")
-
-        def _flt(u):
-            if not u.startswith("sp:"):
-                return False
-            if shop_id:
-                parts = u.split(":")
-                return len(parts) >= 3 and parts[1] == shop_id
-            return True
-
-        return jsonify(compute_stats(
-            conv_manager, request.args.get("from"), request.args.get("to"),
-            uid_filter=_flt))
-
-    # ── Hội thoại (lọc theo shop) ──────────────────────────────────────
-
-    @app.route("/shopee/conversations")
-    def sp_conversations():
-        shop_id = request.args.get("shop_id", "")
-        try:
-            limit = min(max(int(request.args.get("limit", 50)), 1), 200)
-            offset = max(int(request.args.get("offset", 0)), 0)
-        except ValueError:
-            limit, offset = 50, 0
-        rows = []
-        for uid, conv in list(conv_manager._sessions.items()):
-            if not uid.startswith("sp:"):
-                continue
-            parts = uid.split(":")
-            uid_shop = parts[1] if len(parts) >= 3 else ""
-            if shop_id and uid_shop != shop_id:
-                continue
-            if not _tenant_visible(conv):   # multi-tenant: chỉ shop của mình
-                continue
-            rows.append(_conv_summary(uid, conv))
-        rows.sort(key=lambda r: r["last_updated"], reverse=True)
-        total = len(rows)
-        return jsonify({"total": total, "offset": offset, "limit": limit,
-                        "items": rows[offset:offset + limit]})
-
-    @app.route("/shopee/conversations/<user_id>")
-    def sp_conversation(user_id):
-        conv = conv_manager._sessions.get(user_id)
-        if not conv or not _tenant_visible(conv):
-            return {"error": "not found"}, 404
-        msgs = [
-            {"role": m.get("role"), "content": m.get("content", "")}
-            for m in conv.messages
-            if not m.get("content", "").startswith("[HỆ THỐNG]")
-        ]
-        return jsonify({
-            "user_id": user_id,
-            "name": getattr(conv, "name", ""),
-            "avatar": getattr(conv, "avatar", "") or "",
-            "owner_active": conv.is_owner_active(),
-            "stage": conv.stage,
-            "assigned_to": getattr(conv, "assigned_to", "") or "",
-            "messages": msgs,
-        })
-
-    @app.route("/shopee/conversations/<user_id>/send", methods=["POST"])
-    def sp_send_message(user_id):
-        data = request.get_json(force=True, silent=True) or {}
-        text = (data.get("text") or "").strip()
-        if not text:
-            return {"ok": False, "error": "tin trống"}, 400
-        parts = user_id.split(":")
-        shop_id = parts[1] if len(parts) >= 3 else None
-        try:
-            channel.set_ctx(shop_id)
-            channel.send_text(user_id, text)
-        except Exception as e:
-            log.error(f"[sp send] lỗi gửi {user_id}: {e}")
-            return {"ok": False, "error": str(e)}, 500
-        conv = conv_manager.get(user_id)
-        conv.add_assistant_message(text)
-        conv.set_owner_active(True)
-        conv_manager.save()
-        # Bot học từ hội thoại: chủ trả lời tay → AI đề xuất mẩu tri thức (nền, chờ duyệt)
-        from app.core import knowledge_learn
-        submit(knowledge_learn.suggest_from_reply, user_id, "shopee", list(conv.messages), text)
-        return {"ok": True}
-
-    @app.route("/shopee/conversations/<user_id>/toggle-bot", methods=["POST"])
-    def sp_toggle_bot(user_id):
-        data = request.get_json(force=True, silent=True) or {}
-        bot_on = bool(data.get("bot_on", True))
-        conv = conv_manager.get(user_id)
-        conv.set_owner_active(not bot_on)
-        conv_manager.save()
-        return {"ok": True, "bot_on": bot_on, "owner_active": conv.is_owner_active()}
-
-    @app.route("/shopee/conversations/<user_id>", methods=["DELETE"])
-    def sp_reset(user_id):
-        conv_manager.reset(user_id)
-        return {"ok": True}
+    # ── Thống kê + hội thoại: nhóm route dùng chung (conv_routes) ──────
+    from app.web_api.conv_routes import register_conversation_routes
+    register_conversation_routes(
+        app, "/shopee", conv_manager, channel,
+        channel_name="shopee", uid_prefix="sp:", id_param="shop_id",
+    )
 
     return app

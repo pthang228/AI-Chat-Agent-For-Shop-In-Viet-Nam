@@ -21,7 +21,11 @@ sys.modules.update({
     'openai': MagicMock(), 'groq': MagicMock(), 'winsound': MagicMock(),
     'dotenv': MagicMock(),
 })
-os.environ['HOMESTAY_DB_PATH'] = 'test_db_tmp.sqlite'
+# Rác test (DB sqlite/json tạm) gom vào tests/.tmp/ — không xả ra gốc repo
+from pathlib import Path as _P
+_TMPDIR = _P(__file__).parent / '.tmp'
+_TMPDIR.mkdir(exist_ok=True)
+os.environ['HOMESTAY_DB_PATH'] = str(_TMPDIR / 'test_db_tmp.sqlite')
 sys.path.insert(0, '.')
 
 from flask import Flask
@@ -107,25 +111,40 @@ r = api.post("/auth/login", json={"username": "chu@homestay.vn", "password": "ma
 check(r.status_code == 200, "C5 login_new_pw")
 
 print("\n── D. Google login (mock tokeninfo) ──")
+# 2026-07-20: GOOGLE_CLIENT_ID rỗng → TỪ CHỐI hẳn (400) thay vì bỏ kiểm aud
+# (trước đây id_token hợp lệ của app Google BẤT KỲ cũng đăng nhập được).
+# → các case login thành công phải chạy với GOOGLE_CLIENT_ID đã cấu hình + aud khớp.
+MYAPP_CID = 'myapp.apps.googleusercontent.com'
+
 def _fake_tokeninfo(url, params=None, timeout=None):
     m = MagicMock(); m.status_code = 200
     m.json.return_value = {"email": "google@user.vn", "email_verified": "true",
-                           "name": "Google User", "picture": "http://pic"}
+                           "name": "Google User", "picture": "http://pic",
+                           "aud": MYAPP_CID}
     return m
 
-with patch.object(auth_mod, 'requests') as mreq:
-    mreq.get.side_effect = _fake_tokeninfo
-    r = api.post("/auth/google", json={"credential": "JWT_GIA"})
-b = r.get_json()
-check(r.status_code == 200 and b["user"]["provider"] == "google" and not b["user"]["has_password"],
-      "D1 google_ok", f"{b}")
-gtok = b["token"]
+# D0: server CHƯA cấu hình GOOGLE_CLIENT_ID → 400, không gọi Google
+with patch.object(auth_mod.Config, 'GOOGLE_CLIENT_ID', ''):
+    with patch.object(auth_mod, 'requests') as mreq:
+        mreq.get.side_effect = _fake_tokeninfo
+        r = api.post("/auth/google", json={"credential": "JWT_GIA"})
+    check(r.status_code == 400 and not mreq.get.called,
+          "D0 no_client_id_rejected_400", f"{r.status_code}")
 
-with patch.object(auth_mod, 'requests') as mreq:
-    bad = MagicMock(); bad.status_code = 400
-    mreq.get.return_value = bad
-    r = api.post("/auth/google", json={"credential": "JWT_SAI"})
-check(r.status_code == 401, "D2 google_rejected")
+with patch.object(auth_mod.Config, 'GOOGLE_CLIENT_ID', MYAPP_CID):
+    with patch.object(auth_mod, 'requests') as mreq:
+        mreq.get.side_effect = _fake_tokeninfo
+        r = api.post("/auth/google", json={"credential": "JWT_GIA"})
+    b = r.get_json()
+    check(r.status_code == 200 and b["user"]["provider"] == "google" and not b["user"]["has_password"],
+          "D1 google_ok", f"{b}")
+    gtok = b["token"]
+
+    with patch.object(auth_mod, 'requests') as mreq:
+        bad = MagicMock(); bad.status_code = 400
+        mreq.get.return_value = bad
+        r = api.post("/auth/google", json={"credential": "JWT_SAI"})
+    check(r.status_code == 401, "D2 google_rejected")
 
 # Acc Google đặt mật khẩu lần đầu (không cần pw cũ)
 r = api.post("/auth/password", json={"old_password": "", "new_password": "pwmoi"}, headers=bearer(gtok))

@@ -131,6 +131,82 @@ def install_auth_guard(app, public_exact=(), public_prefixes=(), staff_deny=()):
         return None
 
 
+# ── Health SÂU (dùng chung 7 server) ────────────────────────────────
+
+def health_payload():
+    """Trả (body, status) cho /health: CHẠM DB thật + kiểm disk còn chỗ.
+    Trước đây trả {"ok": True} tĩnh — disk đầy/DB hỏng thì mọi request nghiệp
+    vụ 500 nhưng healthcheck vẫn xanh, che mất sự cố đúng lúc cần thấy nhất.
+    503 khi hỏng để Docker healthcheck + uptime monitor (UptimeRobot) bắt được."""
+    import shutil
+    from app.core.config import Config
+    from app.core.db import get_db
+    db_ok = True
+    try:
+        get_db().query("SELECT 1")
+    except Exception as e:
+        db_ok = False
+        log.error(f"[health] DB lỗi: {e}")
+    free_mb = None
+    try:
+        free_mb = shutil.disk_usage(str(Config.DATA_DIR)).free // (1024 * 1024)
+    except Exception:
+        pass
+    disk_ok = free_mb is None or free_mb > 200   # <200MB là WAL/backup sắp nghẹt
+    ok = db_ok and disk_ok
+    return {"ok": ok, "db": db_ok, "disk_free_mb": free_mb}, (200 if ok else 503)
+
+
+# ── MULTI-TENANT: quyền sở hữu account kênh (dùng chung mọi *_api) ──
+# Bài học IDOR: guard này từng CHỈ có ở telegram_api (_own_bot_or_404), 5 kênh
+# copy còn lại bị bỏ quên → shop A liệt kê/xoá/tắt được kênh của shop B.
+# Đặt 1 chỗ ở đây cho mọi kênh dùng chung — thêm kênh mới không phải chép tay.
+
+def tenant_ctx():
+    """(workspace đăng nhập — staff quy về chủ, có phải quản trị nền tảng).
+    (None, False) khi không có ngữ cảnh đăng nhập (test / guard tắt)."""
+    try:
+        from app.web_api.auth_api import current_workspace
+        from app.core import tenant as _t
+        ws = current_workspace()
+        return ws, _t.is_platform_admin(ws)
+    except Exception:
+        return None, False
+
+
+def own_account_or_404(store, account_id):
+    """None nếu workspace hiện tại được thao tác account kênh này (chủ sở hữu /
+    quản trị nền tảng / không có ngữ cảnh đăng nhập — như tenant.visible);
+    ngược lại (json, 404) — trả 404 chứ không 403 để khỏi lộ account_id tồn tại.
+    Account KHÔNG có chủ (kết nối cũ) chỉ quản trị nền tảng đụng được."""
+    ws, is_admin = tenant_ctx()
+    if ws is None or is_admin:
+        return None
+    try:
+        owner = store.get_owner_username(account_id) if store else None
+    except Exception:
+        owner = None
+    if owner and owner == ws:
+        return None
+    return {"ok": False, "error": "not found"}, 404
+
+
+def filter_owned(store, rows, id_key):
+    """Lọc danh sách account kênh theo workspace đăng nhập (quản trị nền tảng
+    thấy hết; account không chủ — kết nối cũ — chỉ quản trị thấy)."""
+    ws, is_admin = tenant_ctx()
+    if ws is None or is_admin:
+        return rows
+    out = []
+    for r in rows:
+        try:
+            if store.get_owner_username(r.get(id_key)) == ws:
+                out.append(r)
+        except Exception:
+            pass
+    return out
+
+
 # ── Dedup sự kiện webhook ───────────────────────────────────────────
 
 class DedupCache:

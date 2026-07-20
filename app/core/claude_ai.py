@@ -3,11 +3,53 @@ Xử lý AI — ưu tiên DeepSeek, fallback sang Groq.
 """
 
 import json
+import os
 import re
+import logging
+import threading
+import time as _time
 from pathlib import Path
 from datetime import datetime, timedelta
 from openai import OpenAI
 from app.core.config import Config
+
+log = logging.getLogger(__name__)
+
+# ── Circuit-breaker DeepSeek (per-process) ──────────────────────────
+# DeepSeek sập thì trước đây MỖI tin của MỌI khách vẫn treo đủ timeout ở
+# connect/read rồi mới sang Groq — khách chờ >1 phút/câu, thread pool bị chiếm
+# bởi request treo. Mạch: đủ AI_CB_FAILS lỗi LIÊN TIẾP → MỞ (đi thẳng Groq);
+# sau AI_CB_COOLDOWN giây cho đúng 1 lượt thử lại (half-open) — thành công thì
+# đóng mạch, thất bại thì chờ tiếp cooldown.
+_CB_FAILS = int(os.getenv("AI_CB_FAILS", "3"))
+_CB_COOLDOWN = float(os.getenv("AI_CB_COOLDOWN", "120"))
+_cb = {"fails": 0, "opened_at": 0.0}
+_cb_lock = threading.Lock()
+
+
+def _cb_allow() -> bool:
+    """Được phép thử DeepSeek không (mạch đóng, hoặc tới lượt half-open)."""
+    with _cb_lock:
+        if _cb["fails"] < _CB_FAILS:
+            return True
+        if _time.time() - _cb["opened_at"] >= _CB_COOLDOWN:
+            _cb["opened_at"] = _time.time()   # nhận 1 lượt thử; fail thì chờ tiếp
+            return True
+        return False
+
+
+def _cb_ok():
+    with _cb_lock:
+        _cb["fails"] = 0
+
+
+def _cb_fail():
+    with _cb_lock:
+        _cb["fails"] += 1
+        if _cb["fails"] == _CB_FAILS:
+            _cb["opened_at"] = _time.time()
+            log.warning(f"[AI] MỞ MẠCH DeepSeek sau {_cb['fails']} lỗi liên tiếp "
+                        f"→ đi thẳng Groq, thử lại sau {_CB_COOLDOWN:.0f}s")
 
 _WEEKDAY_VN = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"]
 
@@ -196,8 +238,16 @@ def _compose_system(user_message: str, history: list,
             prev_user = str(m.get("content") or "")
             break
     query = f"{prev_user}\n{user_message}".strip()
+    # Ngân sách KB co theo GIÁ MODEL đang dùng: DeepSeek rẻ → nhồi hết 24k;
+    # GPT đắt → co lại (retrieve top-k) để khỏi đốt tiền input mỗi tin.
+    kb_budget = None
+    try:
+        from app.core import ai_models
+        kb_budget = ai_models.kb_char_budget(ai_models.model_for(_owner_of_shop(shop), account))
+    except Exception:
+        pass
     # Kho nhỏ → nhồi TOÀN BỘ (0 tra trượt); kho lớn → retrieve top-k liên quan.
-    hits, kb_mode = knowledge.context_chunks(query, shop=shop)
+    hits, kb_mode = knowledge.context_chunks(query, shop=shop, budget=kb_budget)
     kb_block = knowledge.format_block(hits)
     # STYLE RAG: 2 mẫu hội thoại khớp tình huống (bonus intent lượt trước)
     style_hits = knowledge.retrieve_style(
@@ -234,15 +284,16 @@ def _build_system_prompt(user_message: str, history: list,
 
 
 def _call_ai(messages: list, owner: str | None = None, account: str | None = None,
-             model_key: str | None = None) -> str:
+             model_key: str | None = None, timeout: float | None = None) -> str:
+    timeout = timeout or Config.AI_TIMEOUT
     # Model CHỈ ĐỊNH (vd trang Test bot chọn model) → gọi thẳng model đó, lỗi mới fallback.
     if model_key:
         try:
             from app.core import ai_models
             return ai_models.chat(messages, owner=owner, model_key=model_key,
-                                  timeout=Config.AI_TIMEOUT)
+                                  timeout=timeout)
         except Exception as e:
-            print(f"[AI] Model chỉ định {model_key} lỗi ({e}) → dùng mặc định")
+            log.warning(f"[AI] Model chỉ định {model_key} lỗi ({e}) → dùng mặc định")
 
     # MULTI-MODEL: shop chọn model (billing.ai_model) hoặc PER-APP theo kênh
     # (user_apps.ai_model — tra qua account) → gọi qua ai_models (tự ghi token
@@ -253,43 +304,42 @@ def _call_ai(messages: list, owner: str | None = None, account: str | None = Non
             from app.core import ai_models
             if ai_models.model_for(owner, account) != ai_models.DEFAULT_MODEL:
                 return ai_models.chat(messages, owner=owner, account=account,
-                                      timeout=Config.AI_TIMEOUT)
+                                      timeout=timeout)
         except Exception as e:
-            print(f"[AI] Model shop lỗi ({e}) → dùng mặc định")
+            log.warning(f"[AI] Model shop lỗi ({e}) → dùng mặc định")
 
     # Thử DeepSeek (mặc định — ghi token nếu biết owner). Lỗi → Groq ngay,
-    # KHÔNG gọi lại DeepSeek lần 2 (trước đây retry y hệt làm khách chờ gấp đôi)
-    if Config.DEEPSEEK_API_KEY:
+    # KHÔNG gọi lại DeepSeek lần 2 (trước đây retry y hệt làm khách chờ gấp đôi).
+    # Mạch MỞ (DeepSeek đang chết) → bỏ qua luôn, khỏi bắt khách chờ timeout.
+    if Config.DEEPSEEK_API_KEY and _cb_allow():
         try:
             from app.core import ai_models
-            return ai_models.chat(messages, owner=owner,
-                                  model_key=ai_models.DEFAULT_MODEL,
-                                  timeout=Config.AI_TIMEOUT)
+            out = ai_models.chat(messages, owner=owner,
+                                 model_key=ai_models.DEFAULT_MODEL,
+                                 timeout=timeout)
+            _cb_ok()
+            return out
         except Exception as e:
-            print(f"[AI] DeepSeek lỗi ({e}), chuyển sang Groq...")
+            _cb_fail()
+            log.warning(f"[AI] DeepSeek lỗi ({e}), chuyển sang Groq...")
 
-    # Fallback: Groq — API TƯƠNG THÍCH OpenAI nên dùng luôn openai SDK, KHÔNG cần
-    # package 'groq' (giống prompt_builder). Thiếu key → báo lỗi tiếng Việt rõ ràng.
+    # Fallback: Groq — ĐI QUA ai_models.chat để GHI USAGE + TRỪ VÍ đúng như model
+    # chính (trước đây gọi OpenAI SDK thẳng nên lượt Groq NGOÀI SỔ: DeepSeek sập là
+    # toàn bộ traffic chạy miễn phí, billing thành số liệu giả đúng lúc tải cao).
+    # Model Groq là "internal" trong CATALOG → không cho shop chọn nhưng vẫn tính giá.
     if not Config.GROQ_API_KEY:
         raise RuntimeError(
             "Không gọi được AI: model mặc định (DeepSeek) lỗi hoặc thiếu API key, và "
             "chưa có key dự phòng. Kiểm tra DEEPSEEK_API_KEY / OPENAI_API_KEY / "
             "GROQ_API_KEY trong .env (key có thể đã hết hạn/hết tiền).")
-    models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"]
+    from app.core import ai_models
     last_error = None
-    for model in models:
+    for gk in ai_models.GROQ_FALLBACK_KEYS:
         try:
-            client = OpenAI(api_key=Config.GROQ_API_KEY,
-                            base_url="https://api.groq.com/openai/v1",
-                            timeout=Config.AI_TIMEOUT)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=1024,
-                temperature=0.7,
-            )
-            print(f"[AI] Groq fallback — model: {model}")
-            return response.choices[0].message.content or ""
+            out = ai_models.chat(messages, owner=owner, model_key=gk,
+                                 timeout=timeout)
+            log.info(f"[AI] Groq fallback — model: {gk}")
+            return out
         except Exception as e:
             if "429" in str(e) or "rate_limit" in str(e).lower():
                 last_error = e
@@ -336,7 +386,10 @@ def analyze_message(user_message: str, history: list[dict],
     messages += list(history)
     messages.append({"role": "user", "content": user_message})
     owner = _owner_of_shop(_resolve_shop(user_id, account))
-    return _parse_ai_output(_call_ai(messages, owner=owner, account=account))
+    # Lượt phân tích dùng timeout NGẮN riêng — khách đang chờ, treo 60s mới
+    # fallback là mất khách; circuit-breaker lo phần sập kéo dài.
+    return _parse_ai_output(_call_ai(messages, owner=owner, account=account,
+                                     timeout=Config.AI_ANALYZE_TIMEOUT))
 
 
 # ── Tóm tắt cuộn hội thoại ───────────────────────────────────────────
@@ -375,7 +428,7 @@ def summarize_history(old_summary: str, msgs: list[dict],
         out = (out or "").strip()[:1500]
         return out or (old_summary or "")
     except Exception as e:
-        print(f"[Summary] Lỗi tóm tắt (giữ tóm tắt cũ): {e}")
+        log.warning(f"[Summary] Lỗi tóm tắt (giữ tóm tắt cũ): {e}")
         return old_summary or ""
 
 

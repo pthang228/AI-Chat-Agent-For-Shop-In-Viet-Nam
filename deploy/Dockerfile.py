@@ -8,9 +8,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Cài phụ thuộc trước (tận dụng cache layer khi chỉ đổi code)
-COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Cài phụ thuộc trước (tận dụng cache layer khi chỉ đổi code).
+# Ưu tiên requirements.lock (pin cứng, build tái lập được); fallback requirements.txt.
+# Wildcard requirements.loc[k] để COPY không fail nếu lock chưa tồn tại.
+COPY requirements.txt requirements.loc[k] ./
+RUN pip install --upgrade pip && \
+    if [ -f requirements.lock ]; then pip install -r requirements.lock; \
+    else pip install -r requirements.txt; fi
 
 # Copy mã nguồn (data/ media/ bị .dockerignore loại — dùng volume lúc chạy)
 COPY app/ ./app/

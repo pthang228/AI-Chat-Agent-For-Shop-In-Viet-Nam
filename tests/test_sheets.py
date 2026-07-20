@@ -33,7 +33,28 @@ from app.core.sheets import (
     _dates_in_range,
     get_available_slots,
     format_availability_for_ai,
+    clear_cache,
 )
+
+# ĐỒNG HỒ CỐ ĐỊNH (12:00 hôm nay) — E7/F4 lọc ca "hôm nay" theo giờ thực; chạy gần
+# nửa đêm thì now±2h nhảy ngày làm test flaky. Ghim giờ trưa để tất định (subclass
+# datetime/date nên strptime/so sánh vẫn chạy).
+import app.core.sheets as _sheets_mod
+_TODAY_FIX = date.today()
+_NOON_FIX = datetime.combine(_TODAY_FIX, dtime(12, 0))
+
+class _FixedDT(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return _NOON_FIX
+
+class _FixedDate(date):
+    @classmethod
+    def today(cls):
+        return _TODAY_FIX
+
+_sheets_mod.datetime = _FixedDT
+_sheets_mod.date = _FixedDate
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 PASS = FAIL = 0
@@ -245,6 +266,9 @@ def _run_query(rows_data, dates=None, homestay="TestHome", sheet_id="fake_id"):
         dates = [TODAY]
     sheet_rows = _build_full_rows(rows_data)
     mock_client = _mock_gspread_client(sheet_rows)
+    # Xoá cache TTL — các test dùng lại cùng sheet_id/tháng với data KHÁC nhau,
+    # không xoá thì test sau ăn cache của test trước
+    clear_cache()
     with patch('app.core.sheets._get_client', return_value=mock_client):
         dates_found = set()
         result = _query_sheet(sheet_id, homestay, dates, dates_found)
@@ -304,11 +328,11 @@ check(any(s["ca"] in ("12h-16h","16h30-20h30","21h-10h30") for s in slots_E6),
       "E6_trang_thai_variants", "'trong' và 'free' phải được coi là trống")
 
 # ── E7: Hôm nay — lọc ca đã qua ──────────────────────────────
-# Tạo ca kết thúc 1 giờ trước (đã xong)
-now_minus_2h = datetime.now() - timedelta(hours=2)
+# Dựng ca từ ĐỒNG HỒ CỐ ĐỊNH (12:00) — khớp giờ mà sheets.py dùng để lọc:
+# ca đã xong (10h-11h, kết thúc trước 12:00) phải bị lọc; ca sắp tới (14h-16h) phải hiện.
+now_minus_2h = _NOON_FIX - timedelta(hours=2)
 past_slot    = f"{now_minus_2h.hour}h-{(now_minus_2h + timedelta(hours=1)).hour}h"
-# Tạo ca bắt đầu 2 giờ nữa (chưa tới)
-now_plus_2h  = datetime.now() + timedelta(hours=2)
+now_plus_2h  = _NOON_FIX + timedelta(hours=2)
 future_slot  = f"{now_plus_2h.hour}h-{(now_plus_2h + timedelta(hours=2)).hour}h"
 
 # Build custom sheet với ca đã qua và ca sắp tới
@@ -321,6 +345,7 @@ ss_today = _make_spreadsheet([ws_today])
 mock_cl_today = MagicMock()
 mock_cl_today.open_by_key.return_value = ss_today
 
+clear_cache()
 with patch('app.core.sheets._get_client', return_value=mock_cl_today):
     df_today = set()
     slots_today = _query_sheet("fake", "TestHome", [TODAY], df_today)
@@ -343,6 +368,7 @@ def _run_format(rows_data, checkin=None, checkout=None):
     checkout = checkout or TODAY_STR
     sheet_rows = _build_full_rows(rows_data)
     mock_client = _mock_gspread_client(sheet_rows)
+    clear_cache()   # tránh ăn cache của test trước (cùng sheet_id "fake")
     with patch('app.core.sheets._get_client', return_value=mock_client), \
          patch('app.core.sheets.HOMESTAYS', [{"name": "TestHome", "sheet_id": "fake"}]):
         return format_availability_for_ai(checkin, checkout)
@@ -387,6 +413,7 @@ check("16h30-20h30" in result_F4 or "còn ca" in result_F4.lower() or "✅" in r
 # ── F5: Ngày tương lai xa (chưa có tab) → [CHUA_CO_LICH] ───────
 future_far = (date.today() + timedelta(days=90)).strftime("%d/%m/%Y")
 # Sheet chỉ có tab hiện tháng, không có tab tháng xa
+clear_cache()
 with patch('app.core.sheets._get_client', return_value=MagicMock()) as mc, \
      patch('app.core.sheets.HOMESTAYS', [{"name": "TestHome", "sheet_id": "fake"}]):
     mock_client_far = MagicMock()
@@ -429,6 +456,7 @@ def _run_multi_format(rows_haru, rows_mochi, checkin=None, checkout=None):
         call_counter[0] += 1
         return [make_ss_for(rows_haru), make_ss_for(rows_mochi)][i]
 
+    clear_cache()
     with patch('app.core.sheets._get_client', side_effect=get_client_side_effect), \
          patch('app.core.sheets.HOMESTAYS', [
              {"name": "Haru Staycation", "sheet_id": "haru_id"},
@@ -460,6 +488,53 @@ check("[CHUA_CO_LICH]" in r_G3, "G3_both_empty", "Cả 2 sheet rỗng → [CHUA_
 
 
 # ════════════════════════════════════════════════════════════════
+# H. Cache TTL + stale-while-error (429)
+# ════════════════════════════════════════════════════════════════
+section("H. Cache TTL 45s + backoff 429 (stale-while-error)")
+
+import app.core.sheets as sheets_mod
+
+# ── H1: 2 lần gọi liên tiếp cùng (sheet, tháng) → open_by_key chỉ 1 lần ──
+rows_H1 = _build_full_rows([
+    ("Thứ 6", TODAY_STR, "Trống", "Trống", "Trống", "Trống", "Trống", "Trống", "Trống", "Trống"),
+])
+mock_client_H1 = _mock_gspread_client(rows_H1)
+clear_cache()
+with patch('app.core.sheets._get_client', return_value=mock_client_H1):
+    slots_H1a = _query_sheet("cache_id", "CacheHome", [TODAY], set())
+    slots_H1b = _query_sheet("cache_id", "CacheHome", [TODAY], set())
+check(mock_client_H1.open_by_key.call_count == 1, "H1_open_once",
+      f"cache hit → open_by_key chỉ 1 lần, got {mock_client_H1.open_by_key.call_count}")
+check(len(slots_H1a) > 0 and slots_H1a == slots_H1b, "H1_same_result",
+      "kết quả lần 2 (từ cache) phải giống lần 1")
+
+# ── H2: Cache HẾT HẠN + Google trả 429 → dùng tạm bản cũ, KHÔNG báo lỗi ──
+# Chỉnh timestamp cache về quá khứ để giả lập hết TTL
+with sheets_mod._rows_cache_lock:
+    for k, (ts, title, rows) in list(sheets_mod._rows_cache.items()):
+        sheets_mod._rows_cache[k] = (ts - sheets_mod.SHEETS_CACHE_TTL - 10, title, rows)
+
+mock_client_429 = MagicMock()
+mock_client_429.open_by_key.side_effect = Exception(
+    "429 RESOURCE_EXHAUSTED: Quota exceeded")
+errors_H2: list = []
+with patch('app.core.sheets._get_client', return_value=mock_client_429):
+    slots_H2 = _query_sheet("cache_id", "CacheHome", [TODAY], set(), errors_H2)
+check(len(slots_H2) > 0, "H2_stale_served",
+      "429 + có cache cũ → phải dùng tạm cache cũ thay vì trả rỗng")
+check(errors_H2 == [], "H2_no_error",
+      f"đã cứu bằng cache cũ → không được đánh dấu lỗi, got {errors_H2}")
+
+# ── H3: 429 mà KHÔNG có cache nào → vẫn báo lỗi (fail-closed như cũ) ──
+clear_cache()
+errors_H3: list = []
+with patch('app.core.sheets._get_client', return_value=mock_client_429):
+    slots_H3 = _query_sheet("cache_id", "CacheHome", [TODAY], set(), errors_H3)
+check(len(slots_H3) == 0 and "CacheHome" in errors_H3, "H3_no_cache_fail_closed",
+      f"429 không có cache → rỗng + errors, got slots={len(slots_H3)} errors={errors_H3}")
+
+
+# ════════════════════════════════════════════════════════════════
 # FINAL REPORT
 # ════════════════════════════════════════════════════════════════
 print(f"\n{'═'*65}")
@@ -481,7 +556,7 @@ print(f"\n  Nhóm:\n"
       f"    A. _parse_slot_times     | B. _parse_column_map\n"
       f"    C. _open_tab (typo)      | D. _dates_in_range\n"
       f"    E. _query_sheet          | F. format_availability_for_ai\n"
-      f"    G. Multi-homestay")
+      f"    G. Multi-homestay        | H. Cache TTL + backoff 429")
 print(f"{'═'*65}\n")
 
 sys.exit(0 if FAIL == 0 else 1)
