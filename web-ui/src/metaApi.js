@@ -55,20 +55,27 @@ const FB_SCOPE_BASE = [
   "pages_messaging",
   "pages_manage_metadata",
   "business_management",   // cần để lấy Page thuộc Business Portfolio (/me/businesses)
-  // Bài viết & bình luận: đọc bài/bình luận + ẩn/trả lời bình luận.
-  // Quyền Facebook Login chuẩn (không cần setup product như IG nên không sợ Invalid Scopes).
-  "pages_read_user_content",
-  "pages_manage_engagement",
 ];
 const IG_SCOPE = [
   "instagram_basic",
   "instagram_manage_messages",
   "pages_read_engagement",
 ];
+// Bài viết & bình luận: đọc bình luận + ẩn/trả lời. KHÔNG hợp lệ tới khi app Meta
+// được cấu hình (use case/Advanced Access) → xin sớm báo "Invalid Scopes" và hỏng
+// luôn login. Chỉ thêm khi backend báo enable_comments=true (cờ FB_ENABLE_COMMENTS).
+const COMMENT_SCOPE = [
+  "pages_read_user_content",
+  "pages_manage_engagement",
+];
 
-// Ghép scope theo cờ enable_ig của backend.
-export function buildScope(enableIg) {
-  return (enableIg ? [...FB_SCOPE_BASE, ...IG_SCOPE] : FB_SCOPE_BASE).join(",");
+// Ghép scope theo cờ enable_ig / enable_comments của backend.
+export function buildScope(enableIg, enableComments) {
+  return [
+    ...FB_SCOPE_BASE,
+    ...(enableIg ? IG_SCOPE : []),
+    ...(enableComments ? COMMENT_SCOPE : []),
+  ].join(",");
 }
 
 // Tương thích ngược (chỉ Messenger).
@@ -104,6 +111,6 @@ export function fbLogin(FB, scope = FB_SCOPE) {
       } else {
         reject(new Error("Bạn đã huỷ hoặc chưa cấp quyền"));
       }
-    }, { scope, return_scopes: true });
+    }, { scope, return_scopes: true, auth_type: "rerequest" });
   });
 }

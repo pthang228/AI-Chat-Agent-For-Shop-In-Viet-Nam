@@ -91,21 +91,17 @@ class Config:
     # có IG Professional liên kết Page. Bật sớm khi chưa setup → FB Login báo
     # "Invalid Scopes" → HỎNG luôn đăng nhập Messenger. Mặc định TẮT cho an toàn.
     FB_ENABLE_IG         = os.getenv("FB_ENABLE_IG", "false").strip().lower() in ("1", "true", "yes", "on")
+    # Bật quyền BÌNH LUẬN (pages_read_user_content + pages_manage_engagement) khi
+    # đăng nhập Facebook. Giống IG: 2 quyền này KHÔNG hợp lệ cho tới khi app Meta
+    # được cấu hình (use case/Advanced Access) → xin sớm báo "Invalid Scopes" →
+    # HỎNG luôn đăng nhập Messenger. Mặc định TẮT; bật sau khi setup phía Meta.
+    FB_ENABLE_COMMENTS   = os.getenv("FB_ENABLE_COMMENTS", "false").strip().lower() in ("1", "true", "yes", "on")
     # Instagram qua nhánh "Instagram Login" (graph.instagram.com): gửi DM bằng
     # token IG riêng (lấy từ "Tạo mã" trong use case Instagram), KHÁC token Page
     # của Messenger. Single-tenant: 1 token cho 1 tài khoản IG (đủ cho 1 homestay).
     IG_ACCESS_TOKEN      = os.getenv("IG_ACCESS_TOKEN", "")
     IG_GRAPH_VERSION     = os.getenv("IG_GRAPH_VERSION", "v21.0")
 
-    # TikTok (Business Messaging API) — kênh TikTok DM.
-    # LƯU Ý: API nhắn tin TikTok chỉ cấp cho TikTok Business Account + app developer
-    # được duyệt (business-api.tiktok.com). Chưa có token → channel chạy MOCK
-    # (log thay vì gọi mạng) — giao diện quản lý/hội thoại/thống kê vẫn dùng được.
-    TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")   # token 1 tài khoản (.env, single-tenant/test)
-    TIKTOK_BUSINESS_ID  = os.getenv("TIKTOK_BUSINESS_ID", "")    # business_id của tài khoản .env
-    TIKTOK_API_BASE     = os.getenv("TIKTOK_API_BASE", "https://business-api.tiktok.com/open_api/v1.3")
-    TIKTOK_VERIFY_TOKEN = os.getenv("TIKTOK_VERIFY_TOKEN", "novachat_tiktok_verify")  # khớp khi khai webhook
-    TIKTOK_API_PORT     = int(os.getenv("TIKTOK_API_PORT", "5008"))
 
     # Shopee Open Platform (open.shopee.com) — app của VENDOR (partner) dùng chung,
     # mỗi shop khách chỉ cần uỷ quyền → shop_id + access_token

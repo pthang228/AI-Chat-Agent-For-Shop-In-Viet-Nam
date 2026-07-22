@@ -965,7 +965,9 @@ class Brain:
             # → không tự chốt/gửi QR, đẩy chủ xác nhận thứ tự.
             from app.core import booking_holds
             _tenant_key = getattr(conv, "tenant", "") or ""
-            others = booking_holds.conflicting_holds(
+            # ATOMIC: kiểm tranh chấp + đặt hold trong 1 transaction (đóng TOCTOU
+            # 2 tiến trình cùng chốt 1 ca — cái sau chờ cái trước commit mới đọc).
+            others = booking_holds.try_place_hold(
                 _tenant_key, user_id, effective_checkin, effective_checkout,
                 room=conv.selected_room)
             if others:
@@ -982,8 +984,7 @@ class Brain:
                     cfg=_notify_cfg(conv))
                 self.conv_manager.save()
                 return
-            booking_holds.place_hold(_tenant_key, user_id, effective_checkin,
-                                     effective_checkout, room=conv.selected_room)
+            # (hold đã được try_place_hold đặt ATOMIC ở trên khi không tranh chấp)
 
             # Còn phòng → dùng reply cố định, tránh AI bịa "chưa có dữ liệu"
             reply = (

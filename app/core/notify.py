@@ -77,8 +77,12 @@ def deliver_to_owner(tenant: str, subject: str, text: str, notify_fn=None) -> bo
         return True
     from app.core import mailer
     if not mailer.configured():
-        log.warning(f"[notify] SMTP chưa cấu hình → không gửi được nhắc việc cho "
-                    f"shop {t} (subject: {subject[:60]})")
+        # log.error → nổi lên alert vận hành (TelegramAlertHandler) để ops biết mà
+        # cấu hình SMTP; KHÔNG kèm subject/nội dung (tránh lộ PII khách shop thuê
+        # qua kênh alert nền tảng). Vẫn trả True (không retry vô hạn — hợp đồng đã
+        # test), nhưng KHÔNG còn rơi IM LẶNG.
+        log.error(f"[notify] SMTP chưa cấu hình → KHÔNG gửi được thông báo vận hành "
+                  f"cho shop thuê {t}; hãy cấu hình SMTP để shop thuê nhận nhắc đơn/hết hạn.")
         return True              # config state, không phải lỗi — đừng retry mãi
     return mailer.send_mail(t, subject, text)
 

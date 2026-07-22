@@ -24,6 +24,8 @@ x-app: &app
     - dbdata:/app/data      # SQLite dùng chung (WAL, đa tiến trình)
     - media:/app/media      # ảnh/file dùng chung
   networks: [nova]
+  labels:
+    autoheal: "true"     # service autoheal TỰ RESTART khi container unhealthy
   # HEALTHCHECK: gọi /health của chính service (mỗi service 1 cổng qua HEALTH_PORT).
   # Docker tự đánh dấu unhealthy nếu tiến trình treo → dễ giám sát + restart đúng.
   healthcheck:
@@ -56,12 +58,6 @@ services:
     environment:
       HEALTH_PORT: "5007"
 
-  tiktok:                    # 5008
-    <<: *app
-    command: python -m app.main_tiktok
-    environment:
-      HEALTH_PORT: "5008"
-
   shopee:                    # 5009
     <<: *app
     command: python -m app.main_shopee
@@ -80,17 +76,25 @@ services:
     environment:
       HEALTH_PORT: "5011"
 
-  backup:                    # sao lưu SQLite hằng đêm sang volume RIÊNG (offsite-ready)
+  backup:                    # sao lưu SQLite hằng đêm sang volume RIÊNG + offsite
     <<: *app
     command: python scripts/backup_loop.py
-    # KHÔNG dùng healthcheck của x-app (service này không mở cổng web)
+    # Offsite: đặt BACKUP_RCLONE_REMOTE trong .env.production (vd "r2:novachat-bk")
+    # + cấu hình rclone vào volume rcloneconfig (rclone config trong container).
+    # Healthcheck THẬT (ghi đè x-app): FAIL nếu quá 2 chu kỳ không có backup thành
+    # công (loop treo/đĩa đầy) → autoheal restart. Heartbeat = /backups/.last_success.
     healthcheck:
-      disable: true
+      test: ["CMD", "python", "-c", "import os,time,sys; f='/backups/.last_success'; sys.exit(0 if os.path.exists(f) and (time.time()-os.path.getmtime(f)) < int(os.environ.get('BACKUP_INTERVAL_SECS','86400'))*2 else 1)"]
+      interval: 300s
+      timeout: 10s
+      retries: 2
+      start_period: 120s
     # Volume ghi đè x-app: đọc DB từ dbdata, GHI BẢN SAO sang volume backups —
     # mất/xoá nhầm dbdata (docker compose down -v) vẫn còn backup.
     volumes:
       - dbdata:/app/data
       - backups:/backups
+      - rcloneconfig:/root/.config/rclone   # đặt rclone.conf ở đây để bật offsite
 
   zalo-node:                 # 4000 — zca-js (đăng nhập QR Zalo cá nhân)
     image: novachat-node:latest
@@ -115,6 +119,8 @@ services:
     volumes:
       - zalosession:/data
     networks: [nova]
+    labels:
+      autoheal: "true"     # rớt phiên Zalo → /health 503 → autoheal restart
     # Node 20 có fetch toàn cục — /health trả 503 khi listener Zalo rớt phiên
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -136,11 +142,25 @@ services:
       - "443:443"
     restart: unless-stopped
     logging: *logrotate
-    depends_on: [bridge, meta, telegram, tiktok, shopee, zalooa, webchat, zalo-node]
+    depends_on: [bridge, meta, telegram, shopee, zalooa, webchat, zalo-node]
     volumes:
       - caddydata:/data      # chứng chỉ TLS Let's Encrypt (giữ qua restart)
       - caddyconfig:/config
     networks: [nova]
+
+  autoheal:                  # TỰ RESTART container unhealthy. Docker CHỈ đánh dấu
+                             # 'unhealthy' khi /health 503 — không tự restart nếu
+                             # tiến trình treo-mà-chưa-thoát (restart:unless-stopped
+                             # chỉ bắt EXIT). autoheal đọc label autoheal=true.
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    logging: *logrotate
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "30"        # quét mỗi 30s
+      AUTOHEAL_START_PERIOD: "60"    # chờ 60s sau khi container khởi động
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # cần để restart container khác
 
 volumes:
   dbdata:
@@ -148,7 +168,8 @@ volumes:
   zalosession:
   caddydata:
   caddyconfig:
-  backups:      # bản sao DB — TÁCH khỏi dbdata, sống sót khi dbdata mất
+  backups:        # bản sao DB — TÁCH khỏi dbdata, sống sót khi dbdata mất
+  rcloneconfig:   # rclone.conf cho offsite (rỗng mặc định → chưa bật offsite)
 
 networks:
   nova:

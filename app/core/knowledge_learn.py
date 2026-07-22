@@ -223,11 +223,18 @@ def count_pending(shop: str = knowledge.DEFAULT_SHOP) -> int:
     return rows[0]["n"] if rows else 0
 
 
-def approve(sid: int, title: str = None, content: str = None, keywords: list = None) -> dict:
+def approve(sid: int, title: str = None, content: str = None, keywords: list = None,
+            shop: str = None) -> dict:
     """Duyệt đề xuất → CỘNG vào kho tri thức. Chủ sửa nội dung trước khi duyệt
-    thì truyền title/content/keywords đè lên bản AI đề xuất."""
+    thì truyền title/content/keywords đè lên bản AI đề xuất.
+    shop: MULTI-TENANT — chỉ duyệt được đề xuất CỦA shop mình (route truyền
+    _shop(u)); shop khác/None (test) → không giới hạn. Chống shop A nhồi nội
+    dung vào kho tri thức bot shop B (IDOR)."""
     db = get_db()
-    rows = db.query("SELECT * FROM knowledge_suggestions WHERE id=?", (sid,))
+    if shop is not None:
+        rows = db.query("SELECT * FROM knowledge_suggestions WHERE id=? AND shop=?", (sid, shop))
+    else:
+        rows = db.query("SELECT * FROM knowledge_suggestions WHERE id=?", (sid,))
     if not rows:
         raise ValueError("Đề xuất không tồn tại")
     s = _row_to_dict(rows[0])
@@ -251,9 +258,12 @@ def approve(sid: int, title: str = None, content: str = None, keywords: list = N
     return {**s, **chunk, "status": "approved"}
 
 
-def reject(sid: int):
+def reject(sid: int, shop: str = None):
     db = get_db()
-    rows = db.query("SELECT status FROM knowledge_suggestions WHERE id=?", (sid,))
+    if shop is not None:
+        rows = db.query("SELECT status FROM knowledge_suggestions WHERE id=? AND shop=?", (sid, shop))
+    else:
+        rows = db.query("SELECT status FROM knowledge_suggestions WHERE id=?", (sid,))
     if not rows:
         raise ValueError("Đề xuất không tồn tại")
     db.execute("UPDATE knowledge_suggestions SET status='rejected' WHERE id=?", (sid,))

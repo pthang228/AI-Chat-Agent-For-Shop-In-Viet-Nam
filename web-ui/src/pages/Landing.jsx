@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { IcHome, IcArrow } from "../components/icons.jsx";
 import LogoMark from "../components/LogoMark.jsx";
-import { IcZalo, IcMessenger, IcInstagram, IcTelegram, IcTikTok, IcAI, IcCalendar, IcPhone, IcImage } from "../components/brandIcons.jsx";
+import { IcZalo, IcMessenger, IcInstagram, IcTelegram, IcAI, IcCalendar, IcPhone, IcImage } from "../components/brandIcons.jsx";
 import { useI18n } from "../i18n.jsx";
 
 // Trang chủ BÁN HÀNG — phong cách Marketeam: hero tối full màn hình,
@@ -17,7 +17,6 @@ const SATS = [
   { orbit: 2, deg: 300, r: 250, sz: 58, Icon: IcCalendar,  sq: true,          bg: "linear-gradient(135deg,#34a853,#188038)", glow: "rgba(52,168,83,.55)",   dl: 1.2 },
   { orbit: 3, deg: 130, r: 324, sz: 88, Icon: IcMessenger,                    bg: "linear-gradient(135deg,#00c6ff,#0072ff 52%,#a033ff)", glow: "rgba(0,114,255,.55)", dl: 1.4 },
   { orbit: 4, deg: 30,  r: 398, sz: 58, Icon: IcTelegram,                     bg: "linear-gradient(135deg,#37bbfe,#229ed9)", glow: "rgba(34,158,217,.6)",   dl: 1.6 },
-  { orbit: 4, deg: 95,  r: 398, sz: 88, Icon: IcTikTok,    sq: true, lg: true, bg: "linear-gradient(135deg,#111114,#000)",   glow: "rgba(37,244,238,.5)",   dl: 1.8 },
   { orbit: 4, deg: 220, r: 398, sz: 88, Icon: IcPhone,     sq: true, lg: true, bg: "linear-gradient(135deg,#A068FF,#5b21b6)", glow: "rgba(160,104,255,.5)",  dl: 2.05 },
   { orbit: 4, deg: 320, r: 398, sz: 58, Icon: IcImage,                        bg: "linear-gradient(135deg,#b18cff,#7C3AED)", glow: "rgba(160,104,255,.65)", dl: 2.3 },
 ];
@@ -27,7 +26,6 @@ const TICKER = [
   { Icon: IcMessenger, name: "Messenger", color: "#0072ff" },
   { Icon: IcInstagram, name: "Instagram", color: "#d62976" },
   { Icon: IcTelegram,  name: "Telegram",  color: "#229ed9" },
-  { Icon: IcTikTok,    name: "TikTok",    color: "#111114" },
 ];
 
 // Nội dung động: chỉ giữ key i18n, gọi t() lúc render.
@@ -303,7 +301,7 @@ export default function Landing() {
       <section className="ld-stats">
         <div className="ld-wrap ld-stats-in">
           <div><b>24/7</b><span>{t("land.stat1")}</span></div>
-          <div><b>{t("land.stat2_b")}</b><span>Zalo · Mess · IG · Telegram · TikTok</span></div>
+          <div><b>{t("land.stat2_b")}</b><span>Zalo · Mess · IG · Telegram</span></div>
           <div><b>{t("land.stat3_b")}</b><span>{t("land.stat3")}</span></div>
           <div><b>{t("land.stat4_b")}</b><span>{t("land.stat4")}</span></div>
         </div>

@@ -35,7 +35,6 @@ def _servers():
         "zalo":     (Config.BRIDGE_PORT,      ""),
         "meta":     (Config.META_WEBHOOK_PORT, "/meta"),
         "telegram": (Config.TELEGRAM_API_PORT, "/tg"),
-        "tiktok":   (Config.TIKTOK_API_PORT,   "/tiktok"),
         "shopee":   (Config.SHOPEE_API_PORT,   "/shopee"),
         "zalooa":   (Config.ZALO_OA_API_PORT,  "/zalooa"),
         "webchat":  (Config.WEBCHAT_API_PORT,  "/webchat"),
@@ -45,7 +44,7 @@ CHANNELS = tuple(_servers().keys())
 
 # account trong bảng sessions → key kênh (account số = Zalo cá nhân)
 _ACCOUNT_CHANNEL = {
-    "meta": "meta", "telegram": "telegram", "tiktok": "tiktok",
+    "meta": "meta", "telegram": "telegram",
     "shopee": "shopee", "zalooa": "zalooa", "webchat": "webchat",
 }
 

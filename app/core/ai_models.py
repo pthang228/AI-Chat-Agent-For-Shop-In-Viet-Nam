@@ -38,8 +38,12 @@ PROVIDERS = {
 # runtime bị nuốt im lặng (khách nhắn mới lộ). "internal": model DÙNG NỘI BỘ cho
 # fallback (Groq), KHÔNG cho shop chọn nhưng VẪN ghi usage/tính tiền như model thường.
 CATALOG = {
-    "deepseek-chat":     {"label": "DeepSeek V3.2",   "provider": "deepseek", "model": "deepseek-chat",     "in": 0.26, "out": 0.38},
-    "deepseek-reasoner": {"label": "DeepSeek Reasoner","provider": "deepseek", "model": "deepseek-reasoner", "in": 0.55, "out": 2.19},
+    # DeepSeek: model ID `deepseek-chat`/`deepseek-reasoner` NGỪNG PHỤC VỤ
+    # 2026/07/24 → phải gửi ID mới `deepseek-v4-flash`/`deepseek-v4-pro`. Giữ
+    # KEY catalog cũ (DB shop đã chọn + DEFAULT_MODEL + test tham chiếu theo key),
+    # chỉ đổi "model" (ID gửi provider) + giá thật (api-docs.deepseek.com/pricing).
+    "deepseek-chat":     {"label": "DeepSeek V4-Flash", "provider": "deepseek", "model": "deepseek-v4-flash", "in": 0.14, "out": 0.28},
+    "deepseek-reasoner": {"label": "DeepSeek V4-Pro",   "provider": "deepseek", "model": "deepseek-v4-pro",   "in": 0.435, "out": 0.87},
     "gpt-5-nano":        {"label": "GPT-5 nano",      "provider": "openai",   "model": "gpt-5-nano",       "in": 0.05, "out": 0.40},
     "gpt-5-mini":        {"label": "GPT-5 mini",      "provider": "openai",   "model": "gpt-5-mini",       "in": 0.25, "out": 2.00},
     "gpt-5":             {"label": "GPT-5",           "provider": "openai",   "model": "gpt-5",            "in": 1.25, "out": 10.00},
@@ -168,7 +172,7 @@ def model_for_owner(owner: str | None) -> str:
 # Zalo cá nhân dùng account="1" (số tài khoản) nên map cả "1" lẫn "zalo".
 ACCOUNT_CHANNEL = {
     "1": "zalo", "zalo": "zalo", "meta": "meta", "instagram": "meta",
-    "telegram": "telegram", "tiktok": "tiktok", "shopee": "shopee",
+    "telegram": "telegram", "shopee": "shopee",
     "zalooa": "zalooa", "webchat": "webchat",
 }
 
@@ -201,7 +205,10 @@ def client_for(model_key: str, timeout: float | None = None):
     if not api_key:
         raise RuntimeError(f"Thiếu API key cho provider {m['provider']}")
     base_url, _ = PROVIDERS[m["provider"]]
-    return OpenAI(api_key=api_key, base_url=base_url,
+    # max_retries=0: timeout truyền vào là trần MỖI-LƯỢT; SDK mặc định retry 2 lần
+    # → khách chờ tới 3× timeout khi provider sập (circuit-breaker mới lo phần
+    # sập kéo dài, KHÔNG cần SDK tự retry chồng lên).
+    return OpenAI(api_key=api_key, base_url=base_url, max_retries=0,
                   timeout=timeout or Config.AI_TIMEOUT), m["model"]
 
 

@@ -132,7 +132,8 @@ def register_customers_routes(app):
 
     @app.route("/customers/memory/<int:mid>", methods=["DELETE"])
     def customers_memory_del(mid):
-        customers.delete_memory(mid)
+        if not customers.delete_memory(mid, tenant_ws=_ws()):   # MULTI-TENANT: chỉ shop mình
+            return {"ok": False, "error": "không thấy ghi nhớ"}, 404
         return {"ok": True}
 
     # ── Điểm thưởng (chỉnh tay — đơn done tự cộng qua loyalty) ──────
@@ -170,14 +171,15 @@ def register_customers_routes(app):
 
     @app.route("/followups/<int:fid>/done", methods=["POST"])
     def followups_done(fid):
-        f = followups.mark_done(fid)
+        f = followups.mark_done(fid, tenant_ws=_ws())   # MULTI-TENANT: chỉ shop mình
         if not f:
             return {"ok": False, "error": "không thấy nhắc việc"}, 404
         return {"ok": True, "followup": f}
 
     @app.route("/followups/<int:fid>", methods=["DELETE"])
     def followups_del(fid):
-        followups.remove(fid)
+        if not followups.remove(fid, tenant_ws=_ws()):   # MULTI-TENANT: chỉ shop mình
+            return {"ok": False, "error": "không thấy nhắc việc"}, 404
         return {"ok": True}
 
     def _username() -> str:

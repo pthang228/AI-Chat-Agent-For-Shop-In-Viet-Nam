@@ -27,7 +27,7 @@ function statusLabel(st, t) {
 const CH_LABEL = {
   "1": "Zalo", // sessions.account của kênh Zalo cá nhân (bridge) là "1"
   zalo: "Zalo", meta: "Messenger", instagram: "Instagram", telegram: "Telegram",
-  tiktok: "TikTok", shopee: "Shopee", zalo_oa: "Zalo OA", zalooa: "Zalo OA",
+  shopee: "Shopee", zalo_oa: "Zalo OA", zalooa: "Zalo OA",
   webchat: "Website",
 };
 const vnd = (n) => (n || 0).toLocaleString("vi-VN") + "đ";

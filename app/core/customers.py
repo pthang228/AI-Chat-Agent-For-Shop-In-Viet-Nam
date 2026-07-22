@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 # Nhãn kênh theo account của sessions (main_node dùng account số "1"/"2" cho Zalo)
 ACCOUNT_LABELS = {
-    "meta": "meta", "telegram": "telegram", "tiktok": "tiktok",
+    "meta": "meta", "telegram": "telegram",
     "shopee": "shopee", "zalooa": "zalooa", "webchat": "webchat",
 }
 PROFILE_FIELDS = ("name", "salutation", "phone", "email", "address", "note")
@@ -412,8 +412,21 @@ def add_memory(account: str, user_id: str, content: str, source: str = "manual")
     return {"id": cur.lastrowid, "content": content, "source": source}
 
 
-def delete_memory(mid: int):
-    get_db().execute("DELETE FROM customer_memory WHERE id=?", (mid,))
+def delete_memory(mid: int, tenant_ws: str = None) -> bool:
+    """tenant_ws (route truyền _ws()): chỉ xoá ghi nhớ của khách THUỘC shop mình —
+    chống shop A xoá trí nhớ AI về khách shop B (IDOR). Trả False khi không thấy /
+    không thuộc shop (route trả 404). None (test/nội bộ) → xoá luôn."""
+    db = get_db()
+    if tenant_ws is not None:
+        rows = db.query("SELECT account, user_id FROM customer_memory WHERE id=?", (mid,))
+        if not rows:
+            return False
+        from app.core import tenant as _t
+        conv_tenant = _t.tenant_of_conv(rows[0]["account"], rows[0]["user_id"])
+        if not _t.visible(conv_tenant, tenant_ws):
+            return False
+    db.execute("DELETE FROM customer_memory WHERE id=?", (mid,))
+    return True
 
 
 def memory_block(account: str, user_id: str, limit: int = 10) -> str:

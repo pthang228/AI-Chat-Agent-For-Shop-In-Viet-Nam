@@ -29,8 +29,36 @@ def _keep() -> int:
         return 14
 
 
+def _verify(path: Path) -> None:
+    """Mở LẠI bản sao + PRAGMA quick_check + kiểm còn schema — chống 'backup rỗng/
+    cụt/hỏng' lọt IM LẶNG (service báo 'đã sao lưu' nhưng file 0 byte). Hỏng → XOÁ
+    file rác + raise để caller alert và KHÔNG prune đè lên bản tốt."""
+    ok = False
+    detail = ""
+    try:
+        c = sqlite3.connect(str(path))
+        try:
+            row = c.execute("PRAGMA quick_check").fetchone()
+            ok = bool(row) and str(row[0]).strip().lower() == "ok"
+            detail = str(row)
+            if ok:
+                n = c.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
+                if n == 0:                 # SQLite hợp lệ nhưng RỖNG (không schema) = hỏng
+                    ok, detail = False, "sqlite_master trống (bản rỗng)"
+        finally:
+            c.close()
+    except Exception as e:
+        ok, detail = False, str(e)
+    if not ok:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise RuntimeError(f"Bản sao KHÔNG hợp lệ ({path.name}): {detail}")
+
+
 def backup(dst_dir: Path) -> Path:
-    db_path = Config.DATA_DIR / "homestay.db"
+    db_path = Path(Config.DB_PATH)         # tôn trọng HOMESTAY_DB_PATH (không hardcode)
     if not db_path.exists():
         raise SystemExit(f"Không thấy DB: {db_path}")
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -45,6 +73,7 @@ def backup(dst_dir: Path) -> Path:
     finally:
         dst.close()
         src.close()
+    _verify(out)              # xác minh bản sao mở được + không hỏng (raise nếu hỏng)
     return out
 
 

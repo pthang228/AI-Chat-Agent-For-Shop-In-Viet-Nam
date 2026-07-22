@@ -13,7 +13,7 @@ import { useI18n } from "../i18n.jsx";
  * Label kênh/segment/trạng thái: key i18n "bc.*" (i18n/campaigns.js).
  */
 
-const CHANNELS = ["zalo", "zalooa", "meta", "telegram", "tiktok", "shopee", "webchat"];
+const CHANNELS = ["zalo", "zalooa", "meta", "telegram", "shopee", "webchat"];
 
 const SEGMENTS = ["all", "active", "inactive", "tag", "stage"];
 

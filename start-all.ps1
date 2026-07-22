@@ -19,11 +19,10 @@ Start-Svc $npm     'start'                     (Join-Path $ROOT 'zalo-node') 'za
 Start-Svc 'python' @('-m','app.main_node')     $ROOT                         'main_node'
 Start-Svc 'python' @('scripts\run_meta.py')    $ROOT                         'run_meta'
 Start-Svc 'python' @('-m','app.main_telegram') $ROOT                         'telegram'
-Start-Svc 'python' @('-m','app.main_tiktok')   $ROOT                         'tiktok'
 Start-Svc 'python' @('-m','app.main_shopee')   $ROOT                         'shopee'
 Start-Svc 'python' @('-m','app.main_zalo_oa')  $ROOT                         'zalo_oa'
 Start-Svc 'python' @('-m','app.main_webchat')  $ROOT                         'webchat'
-Start-Svc $npm     @('run','dev')              (Join-Path $ROOT 'web-ui')    'web-ui'
+Start-Svc $npm     @('run','dev:https')        (Join-Path $ROOT 'web-ui')    'web-ui'
 
 Start-Sleep -Seconds 8
-Start-Process 'http://localhost:5173'
+Start-Process 'https://localhost:5173'

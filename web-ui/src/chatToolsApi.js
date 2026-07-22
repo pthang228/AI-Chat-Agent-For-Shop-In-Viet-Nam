@@ -7,7 +7,7 @@ import { CH_HOST, HOST } from "./apiConfig.js";
 const BASE = CH_HOST;
 const PREFIX = {
   zalo: "", meta: "/meta", telegram: "/tg",
-  tiktok: "/tiktok", shopee: "/shopee", zalooa: "/zalooa", webchat: "/webchat",
+  shopee: "/shopee", zalooa: "/zalooa", webchat: "/webchat",
 };
 
 function url(ch, path) { return (BASE[ch] || BASE.zalo) + (PREFIX[ch] ?? "") + path; }

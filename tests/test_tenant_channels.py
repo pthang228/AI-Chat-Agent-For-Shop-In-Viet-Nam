@@ -111,17 +111,6 @@ def run_channel_case(tag, api, store, list_path, item_path, id_key, acc_id, togg
     check(not store.get_owner_username(acc_id), f"{tag} delete_B_removed")
 
 
-print("\n── A. TikTok ──")
-from app.core.tiktok_store import TikTokStore
-import app.web_api.tiktok_api as tt
-tt_store = TikTokStore(path=str(_TMPDIR / "tt_store_tmp.json"))
-tt_store.upsert("BIZB", access_token="t1", name="TikTok B", owner_username="shopb@x.vn")
-fb = FakeBrain()
-cm_tt = ConversationManager(account="tt_test")
-api = tt.create_tiktok_api(fb, cm_tt, fb.channel, tt_store).test_client()
-run_channel_case("A", api, tt_store, "/tiktok/accounts", "/tiktok/accounts/BIZB",
-                 "business_id", "BIZB", set_owner_path="/tiktok/set-owner", uid_prefix="tt")
-
 print("\n── B. Shopee ──")
 from app.core.shopee_store import ShopeeStore
 import app.web_api.shopee_api as sp

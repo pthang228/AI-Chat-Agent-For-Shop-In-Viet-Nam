@@ -68,7 +68,7 @@ NAV_ROUTES = {
     "/?s=posts": "Bài viết & bình luận", "/?s=stats": "Thống kê",
     "/prompt": "Dạy AI", "/billing": "Gói dịch vụ", "/settings": "Cài đặt",
 }
-CHANNELS = ("zalo", "meta", "telegram", "tiktok", "shopee", "zalooa", "webchat")
+CHANNELS = ("zalo", "meta", "telegram", "shopee", "zalooa", "webchat")
 
 
 # ── TOOLS ĐỌC (an toàn, agent tự chạy) ──────────────────────────────
@@ -154,7 +154,6 @@ def _t_channel_guide(username, args):
         "zalooa": "Zalo OA: cần Official Account (oa.zalo.me) → uỷ quyền cho NovaChat → dán Access Token + Refresh Token vào tab Kết nối. Hệ thống tự gia hạn token 25h.",
         "meta": "Messenger + Instagram: bấm 'Đăng nhập Facebook' trong app kênh Mess+IG → chọn Page → xong. 1 lần đăng nhập chạy cả Messenger lẫn IG.",
         "telegram": "Telegram: nhắn @BotFather tạo bot → copy token → dán vào tab Kết nối. Người lạ nhắn được ngay, không cần duyệt.",
-        "tiktok": "TikTok: cần TikTok Business + app được TikTok duyệt (Business Messaging) → dán access token + business id. Chưa duyệt thì chạy thử nghiệm.",
         "shopee": "Shopee: shop uỷ quyền cho app NovaChat trên Shopee Open Platform → dán Shop ID + Access Token. Cần Shopee duyệt app vendor.",
         "webchat": "Website: mở app kênh Website → điền tên web → bấm 'Tạo mã nhúng' → copy 1 dòng <script> dán vào cuối trang web của shop (trước </body>). Không token, không chờ duyệt — dán xong là bong bóng chat hiện ngay.",
     }
@@ -251,7 +250,7 @@ def _plans_text() -> str:
 _BASIC_NAV = {"/", "/billing"}
 
 def _basic_system() -> str:
-    return f"""Bạn là TRỢ LÝ CƠ BẢN của NovaChat — phần mềm trợ lý AI trả lời khách tự động đa kênh (Zalo, Zalo OA, Messenger, Instagram, Telegram, TikTok, Shopee, chat trên website) cho shop dịch vụ Việt Nam. Người đang chat là chủ shop ĐÃ ĐĂNG NHẬP nhưng CHƯA ĐĂNG KÝ GÓI (đang dùng thử hoặc gói đã hết hạn).
+    return f"""Bạn là TRỢ LÝ CƠ BẢN của NovaChat — phần mềm trợ lý AI trả lời khách tự động đa kênh (Zalo, Zalo OA, Messenger, Instagram, Telegram, Shopee, chat trên website) cho shop dịch vụ Việt Nam. Người đang chat là chủ shop ĐÃ ĐĂNG NHẬP nhưng CHƯA ĐĂNG KÝ GÓI (đang dùng thử hoặc gói đã hết hạn).
 
 BẠN CHỈ TRẢ LỜI KIẾN THỨC CƠ BẢN (như tư vấn viên trên trang chủ):
 - NovaChat làm gì: bot AI tự tư vấn & chốt khách 24/7 đa kênh; tự tra dữ liệu shop (Google Sheets: lịch trống, giá, tồn kho...); gửi bảng giá + ảnh; chốt đơn/đặt lịch; khách cần thì nhắn + gọi điện báo chủ.
@@ -274,7 +273,7 @@ QUY TẮC:
 
 
 # Trợ lý CHUYÊN SÂU (đã đăng ký gói) — được dạy TOÀN BỘ cách vận hành app.
-_SYSTEM_PREMIUM = """Bạn là TRỢ LÝ CHUYÊN SÂU của NovaChat — phần mềm trợ lý AI trả lời khách tự động đa kênh (Zalo, Zalo OA, Messenger, Instagram, Telegram, TikTok, Shopee, chat trên website) cho shop dịch vụ Việt Nam. Người đang chat là CHỦ SHOP đã đăng ký gói. Nhiệm vụ: hướng dẫn THUẦN THỤC từng bước mọi thao tác trong app, đọc dữ liệu thật của tài khoản, và làm giúp việc an toàn (có xác nhận).
+_SYSTEM_PREMIUM = """Bạn là TRỢ LÝ CHUYÊN SÂU của NovaChat — phần mềm trợ lý AI trả lời khách tự động đa kênh (Zalo, Zalo OA, Messenger, Instagram, Telegram, Shopee, chat trên website) cho shop dịch vụ Việt Nam. Người đang chat là CHỦ SHOP đã đăng ký gói. Nhiệm vụ: hướng dẫn THUẦN THỤC từng bước mọi thao tác trong app, đọc dữ liệu thật của tài khoản, và làm giúp việc an toàn (có xác nhận).
 
 ═══ GIÁO TRÌNH TOÀN BỘ APP (nguồn sự thật duy nhất — chỉ nói những gì có ở đây) ═══
 
@@ -286,7 +285,7 @@ Tổng quan "/" · Hội thoại "/?s=chat" · Khách hàng "/?s=customers" · C
 - Messenger + Instagram: bấm "Đăng nhập Facebook" → chọn Page → xong (1 lần chạy cả 2). Lỗi thiếu quyền → đăng nhập Facebook lại.
 - Telegram: nhắn @BotFather trên Telegram tạo bot → copy token → dán vào tab Kết nối. Chạy ngay, không cần duyệt.
 - Zalo OA: cần Official Account → dán Access Token + Refresh Token; hệ thống TỰ gia hạn token.
-- TikTok / Shopee: cần tài khoản Business/shop uỷ quyền + chờ nền tảng duyệt app; chưa duyệt thì chạy thử nghiệm.
+- Shopee: cần tài khoản shop uỷ quyền + chờ nền tảng duyệt app; chưa duyệt thì chạy thử nghiệm.
 - Website: tạo site trong app kênh Website → copy MÃ NHÚNG (1 dòng script) → dán vào cuối trang web của shop (WordPress/Haravan/Shopify đều dán được) → bong bóng chat hiện ngay, không cần duyệt. Cần máy chủ có địa chỉ công khai để khách trên internet nhắn được.
 - Bật/tắt bot từng kênh: trong mục Chatbot, hoặc nhờ bạn làm (action toggle_bot). Có nút "🧪 Test bot" để chat thử với bot.
 

@@ -12,14 +12,13 @@ export const CHANNELS = {
   zalo:      { label: "Zalo",            icon: "zalo",      color: "#0068ff" },
   meta:      { label: "Mess + Instagram", icon: "meta",      color: "#7b3fb3" },
   telegram:  { label: "Telegram",        icon: "telegram",  color: "#229ED9" },
-  tiktok:    { label: "TikTok",          icon: "tiktok",    color: "#161823" },
   shopee:    { label: "Shopee",          icon: "shopee",    color: "#EE4D2D" },
   zalooa:    { label: "Zalo OA",         icon: "zalooa",    color: "#005AE0" },
   webchat:   { label: "Website",         icon: "webchat",   color: "#4F46E5" },
   messenger: { label: "Mess + Instagram", icon: "meta",      color: "#7b3fb3" },
   instagram: { label: "Mess + Instagram", icon: "meta",      color: "#7b3fb3" },
 };
-const ADD_CHANNELS = ["zalo", "zalooa", "meta", "telegram", "tiktok", "shopee", "webchat"];
+const ADD_CHANNELS = ["zalo", "zalooa", "meta", "telegram", "shopee", "webchat"];
 
 export function botKey(ch) { return (ch === "messenger" || ch === "instagram") ? "meta" : ch; }
 

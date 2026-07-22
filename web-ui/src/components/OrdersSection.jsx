@@ -15,7 +15,6 @@ const CH_COLOR = {
   zalo:     "#0068ff",
   meta:     "#7b3fb3",
   telegram: "#229ED9",
-  tiktok:   "#161823",
   shopee:   "#EE4D2D",
   zalooa:   "#005AE0",
   webchat:  "#4F46E5",

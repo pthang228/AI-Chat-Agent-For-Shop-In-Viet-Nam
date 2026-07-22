@@ -7,7 +7,7 @@
 //   kênh, override được qua prop color.
 
 import {
-  IcZalo, IcZaloOA, IcMessenger, IcInstagram, IcTelegram, IcTikTok, IcShopee, IcWebChat,
+  IcZalo, IcZaloOA, IcMessenger, IcInstagram, IcTelegram, IcShopee, IcWebChat,
 } from "./brandIcons.jsx";
 
 export const CH_ICONS = {
@@ -17,7 +17,6 @@ export const CH_ICONS = {
   messenger: IcMessenger,
   instagram: IcInstagram,
   telegram: IcTelegram,
-  tiktok: IcTikTok,
   shopee: IcShopee,
   webchat: IcWebChat,
 };
@@ -30,7 +29,6 @@ export const CH_COLORS = {
   messenger: "#7b3fb3",
   instagram: "#7b3fb3",
   telegram: "#229ED9",
-  tiktok: "#161823",
   shopee: "#EE4D2D",
 };
 

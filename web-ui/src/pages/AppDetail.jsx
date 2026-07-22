@@ -13,8 +13,6 @@ import MetaConversations from "../components/MetaConversations.jsx";
 import Conversations from "../components/Conversations.jsx";
 import TelegramConnect from "../components/TelegramConnect.jsx";
 import TelegramConversations from "../components/TelegramConversations.jsx";
-import TikTokConnect from "../components/TikTokConnect.jsx";
-import TikTokConversations from "../components/TikTokConversations.jsx";
 import ShopeeConnect from "../components/ShopeeConnect.jsx";
 import ShopeeConversations from "../components/ShopeeConversations.jsx";
 import ZaloOAConnect from "../components/ZaloOAConnect.jsx";
@@ -26,8 +24,8 @@ import StatsPanel from "../components/StatsPanel.jsx";
 import BackLink from "../components/BackLink.jsx";
 import { useI18n } from "../i18n.jsx";
 
-const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", tiktok: "TikTok", shopee: "Shopee", zalooa: "Zalo OA", webchat: "Website" };
-const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", tiktok: "tiktok", shopee: "shopee", zalooa: "zalooa", webchat: "webchat" };
+const CH_LABEL = { zalo: "Zalo", meta: "Mess + Instagram", messenger: "Mess + Instagram", instagram: "Mess + Instagram", telegram: "Telegram", shopee: "Shopee", zalooa: "Zalo OA", webchat: "Website" };
+const CH_CHIP = { zalo: "zalo", meta: "meta", messenger: "meta", instagram: "meta", telegram: "telegram", shopee: "shopee", zalooa: "zalooa", webchat: "webchat" };
 const isMeta = (ch) => ch === "meta" || ch === "messenger" || ch === "instagram";
 const botKey = (ch) => (ch === "messenger" || ch === "instagram") ? "meta" : ch;
 
@@ -70,21 +68,18 @@ export default function AppDetail() {
 
   const Connect = app.channel === "zalo" ? ZaloConnect
     : isMeta(app.channel) ? MetaConnect
-    : app.channel === "tiktok" ? TikTokConnect
     : app.channel === "shopee" ? ShopeeConnect
     : app.channel === "zalooa" ? ZaloOAConnect
     : app.channel === "webchat" ? WebChatConnect
     : TelegramConnect;
   const Chats = app.channel === "zalo" ? Conversations
     : isMeta(app.channel) ? MetaConversations
-    : app.channel === "tiktok" ? TikTokConversations
     : app.channel === "shopee" ? ShopeeConversations
     : app.channel === "zalooa" ? ZaloOAConversations
     : app.channel === "webchat" ? WebChatConversations
     : TelegramConversations;
   const statsChannel = app.channel === "zalo" ? "zalo"
     : isMeta(app.channel) ? "meta"
-    : app.channel === "tiktok" ? "tiktok"
     : app.channel === "shopee" ? "shopee"
     : app.channel === "zalooa" ? "zalooa"
     : app.channel === "webchat" ? "webchat"

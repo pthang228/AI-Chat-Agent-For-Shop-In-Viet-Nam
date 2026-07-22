@@ -34,9 +34,6 @@
 	handle /tg/* {
 		reverse_proxy telegram:5007
 	}
-	handle /tiktok/* {
-		reverse_proxy tiktok:5008
-	}
 	handle /shopee/* {
 		reverse_proxy shopee:5009
 	}

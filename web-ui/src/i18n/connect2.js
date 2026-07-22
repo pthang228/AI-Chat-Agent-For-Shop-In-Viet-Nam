@@ -44,6 +44,9 @@ export default {
     "cn2.tiktok_token_ph": "Dán Access Token TikTok Business…",
     "cn2.tiktok_bizid_ph": "Business ID (bắt buộc)",
     "cn2.tiktok_name_ph": "Tên hiển thị (tuỳ chọn)",
+    "cn2.tiktok_oauth_btn": "Đăng nhập với TikTok",
+    "cn2.tiktok_oauth_hint": "Bấm nút, đăng nhập TikTok và cấp quyền — không phải tạo app hay dán token.",
+    "cn2.tiktok_manual": "Hoặc nối thủ công (dán token)",
     "cn2.tiktok_list": "Account đã kết nối",
     "cn2.tiktok_none": "Chưa có account nào.",
 
@@ -155,6 +158,9 @@ export default {
     "cn2.tiktok_token_ph": "Paste your TikTok Business Access Token…",
     "cn2.tiktok_bizid_ph": "Business ID (required)",
     "cn2.tiktok_name_ph": "Display name (optional)",
+    "cn2.tiktok_oauth_btn": "Log in with TikTok",
+    "cn2.tiktok_oauth_hint": "Click, sign in to TikTok and grant access — no app creation or token pasting.",
+    "cn2.tiktok_manual": "Or connect manually (paste a token)",
     "cn2.tiktok_list": "Connected accounts",
     "cn2.tiktok_none": "No accounts yet.",
 

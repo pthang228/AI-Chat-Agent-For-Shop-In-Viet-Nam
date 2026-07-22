@@ -177,7 +177,11 @@ docker compose down                # (giữ nguyên volume dữ liệu)
 
 DB (ví tiền/billing/hội thoại) được service `backup` **tự sao lưu hằng đêm** bằng
 `sqlite3 .backup()` (nhất quán qua WAL — KHÔNG dùng tar/cp file .db đang mở, dễ ra
-bản hỏng) sang volume **riêng** `backups` — xoá nhầm `dbdata` vẫn còn bản sao:
+bản hỏng) sang volume **riêng** `backups` — xoá nhầm `dbdata` vẫn còn bản sao. Mỗi
+bản được **kiểm tra tính toàn vẹn ngay sau khi tạo** (`PRAGMA quick_check` + còn
+schema); bản hỏng/rỗng bị xoá + **báo Telegram ops** (ALERT_TG_*). Service có
+healthcheck theo heartbeat `/backups/.last_success` + **autoheal tự restart** nếu
+vòng backup treo:
 
 ```bash
 docker compose logs backup                  # xem nhật ký sao lưu
@@ -189,12 +193,19 @@ docker compose run --rm backup sh -c 'cp /backups/homestay-<STAMP>.db /app/data/
 docker compose up -d
 ```
 
-**Offsite (KHUYẾN NGHỊ khi có shop trả tiền)** — VPS cháy/mất là backup trên cùng
-máy cũng mất. Cron trên host đẩy `/backups` lên cloud (rclone/S3/Google Drive):
+**Offsite (BẮT BUỘC khi có shop trả tiền)** — VPS cháy/mất là backup trên cùng máy
+cũng mất. Service `backup` đã tích hợp **rclone** (cài sẵn trong ảnh); bật bằng cách
+cấu hình remote 1 lần rồi đặt `BACKUP_RCLONE_REMOTE` — sau mỗi lần sao lưu local nó
+tự đẩy lên cloud (S3/R2/Google Drive), lỗi thì báo Telegram ops:
 
 ```bash
-# crontab -e trên VPS (rclone config trước 1 lần):
-0 4 * * * docker cp $(docker compose -f /root/novachat/deploy/docker-compose.yml ps -q backup):/backups /tmp/nb && rclone sync /tmp/nb remote:novachat-backups
+# 1) Cấu hình rclone remote (ghi vào volume rcloneconfig — hỏi đáp tương tác):
+docker compose run --rm -it backup rclone config     # tạo remote tên vd "r2"
+
+# 2) Bật offsite: thêm vào deploy/.env.production rồi up lại service backup:
+#    BACKUP_RCLONE_REMOTE=r2:novachat-backups
+docker compose up -d backup
+docker compose logs backup     # thấy "Offsite OK → r2:..." mỗi lượt
 ```
 
 Media + phiên Zalo (ít quan trọng hơn DB, mất thì kết nối lại):

@@ -618,11 +618,12 @@ def register_prompt_routes(app):
         try:
             s = knowledge_learn.approve(
                 sid, title=data.get("title"), content=data.get("content"),
-                keywords=data.get("keywords") if isinstance(data.get("keywords"), list) else None)
+                keywords=data.get("keywords") if isinstance(data.get("keywords"), list) else None,
+                shop=_shop(u))   # MULTI-TENANT: chỉ duyệt đề xuất của shop mình
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         log.info(f"[prompt] {u['username']} duyệt đề xuất tri thức #{sid}")
-        return {"ok": True, "suggestion": s, "pending": knowledge_learn.count_pending()}
+        return {"ok": True, "suggestion": s, "pending": knowledge_learn.count_pending(shop=_shop(u))}
 
     @app.route("/prompt/suggestions/<int:sid>/reject", methods=["POST"])
     def prompt_suggestion_reject(sid):
@@ -630,10 +631,10 @@ def register_prompt_routes(app):
         if err:
             return err
         try:
-            knowledge_learn.reject(sid)
+            knowledge_learn.reject(sid, shop=_shop(u))   # MULTI-TENANT: chỉ shop mình
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
-        return {"ok": True, "pending": knowledge_learn.count_pending()}
+        return {"ok": True, "pending": knowledge_learn.count_pending(shop=_shop(u))}
 
     @app.route("/prompt/test", methods=["POST"])
     def prompt_test():

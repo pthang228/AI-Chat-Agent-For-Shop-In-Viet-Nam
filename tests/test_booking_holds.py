@@ -89,6 +89,42 @@ print("\n── G. release ──")
 bh.release(T, "khach9")
 check(bh.conflicting_holds(T, "khachA", "11/09/2026") == [], "G1 release nhả hold")
 
+print("\n── H. try_place_hold ATOMIC: race 2 CONNECTION (mô phỏng 2 tiến trình) ──")
+# H1 tuần tự: đặt được → tranh chấp thì KHÔNG đặt chồng
+r1 = bh.try_place_hold(T, "atk1", "01/12/2026")
+check(r1 == [], "H1 khách đầu đặt hold OK", r1)
+r2 = bh.try_place_hold(T, "atk2", "01/12/2026")
+check(len(r2) == 1 and r2[0]["user_id"] == "atk1", "H2 khách sau bị chặn (không đặt chồng)", r2)
+n = get_db().query("SELECT count(*) c FROM booking_holds WHERE checkin='01/12/2026'")[0]["c"]
+check(n == 1, "H3 chỉ 1 hold tồn tại", n)
+
+# H4 RACE THẬT: 2 Db connection riêng (như 2 tiến trình kênh) cùng chốt 1 ca.
+# BEGIN IMMEDIATE phải serialize → đúng 1 thắng, 1 bị chặn, DB chỉ 1 hold.
+import threading
+from app.core.db import Db
+_PATH = os.environ['HOMESTAY_DB_PATH']
+dbA, dbB = Db(_PATH), Db(_PATH)
+results = {}
+barrier = threading.Barrier(2)
+def _worker(name, dbx):
+    try:
+        barrier.wait()
+        results[name] = bh.try_place_hold(T, f"race_{name}", "15/12/2026", db=dbx)
+    except Exception as e:
+        results[name] = f"ERR:{e}"
+tA = threading.Thread(target=_worker, args=("A", dbA))
+tB = threading.Thread(target=_worker, args=("B", dbB))
+tA.start(); tB.start(); tA.join(); tB.join()
+placed = [k for k, v in results.items() if v == []]
+blocked = [k for k, v in results.items() if isinstance(v, list) and v]
+check(len(placed) == 1 and len(blocked) == 1,
+      "H4 race 2 connection: đúng 1 đặt được, 1 bị chặn", results)
+n = get_db().query("SELECT count(*) c FROM booking_holds WHERE checkin='15/12/2026'")[0]["c"]
+check(n == 1, "H5 sau race DB chỉ còn 1 hold (không double-book)", n)
+for _d in (dbA, dbB):
+    try: _d.conn.close()
+    except Exception: pass
+
 try:
     get_db().conn.close()
 except Exception:

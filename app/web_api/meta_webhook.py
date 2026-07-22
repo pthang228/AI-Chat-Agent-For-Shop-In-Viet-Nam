@@ -226,6 +226,7 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
             "app_id": Config.FB_APP_ID,
             "configured": bool(Config.FB_APP_ID and Config.FB_APP_SECRET),
             "enable_ig": Config.FB_ENABLE_IG,   # frontend xin thêm quyền IG khi bật
+            "enable_comments": Config.FB_ENABLE_COMMENTS,  # xin thêm quyền bình luận khi bật
         }
 
     @app.route("/meta/connect", methods=["POST"])

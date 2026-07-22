@@ -50,6 +50,27 @@ const NODE_API_KEY = process.env.NODE_API_KEY || "";
 // (bridge /incoming từ chối request thiếu secret khi production).
 const BRIDGE_SECRET = process.env.BRIDGE_SECRET || "";
 const BRIDGE_URL = process.env.PY_BRIDGE_URL || "http://127.0.0.1:5005/incoming";
+// Alert vận hành: kênh Zalo cá nhân (zca-js) là kênh DỄ CHẾT nhất (session rớt,
+// Zalo đóng socket) — khi listener chết, báo ngay qua Telegram để ops kết nối lại,
+// đừng để "xanh giả" (bot im mà không ai biết). Dùng chung ALERT_TG_* với Python.
+const ALERT_TG_BOT_TOKEN = process.env.ALERT_TG_BOT_TOKEN || "";
+const ALERT_TG_CHAT_ID = process.env.ALERT_TG_CHAT_ID || "";
+let _lastAlertAt = 0;
+async function alertTelegram(text) {
+  if (!ALERT_TG_BOT_TOKEN || !ALERT_TG_CHAT_ID) return;
+  const now = Date.now();
+  if (now - _lastAlertAt < 5 * 60 * 1000) return;   // throttle 5' (chống spam khi flapping)
+  _lastAlertAt = now;
+  try {
+    await fetch(`https://api.telegram.org/bot${ALERT_TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: ALERT_TG_CHAT_ID, text: `⚠️ [NovaChat Zalo] ${text}` }),
+    });
+  } catch (e) {
+    console.error("[alert] gửi Telegram lỗi:", e.message);
+  }
+}
 // Acc default (chủ nền tảng) giữ NGUYÊN đường dẫn session cũ; acc shop thuê nằm
 // trong SESSIONS_DIR (Docker: cả hai trỏ vào volume /data để giữ phiên qua restart).
 const SESSION_FILE = process.env.ZALO_SESSION_FILE || "./zalo-session.json";
@@ -278,8 +299,33 @@ class ZaloAccount {
       }
     });
 
-    a.listener.on("error", (e) => console.error(`[${this.id}][listener] error:`, e));
-    a.listener.start();
+    // KẾT NỐI LẠI khi socket sống lại (zca-js emit "connected" cả lần đầu lẫn
+    // sau mỗi lần tự reconnect) → health xanh trở lại.
+    a.listener.on("connected", () => {
+      if (this.state.status !== "logged_in") {
+        console.log(`[${this.id}][listener] 🔄 kết nối lại OK → logged_in`);
+      }
+      this.state.status = "logged_in";
+    });
+    // Socket rớt (mạng/Zalo đóng): zca-js LUÔN emit "disconnected", rồi TỰ
+    // reconnect nếu retryOnClose+code cho phép. Hạ status ≠ logged_in → /health
+    // trả 503 (không còn "xanh giả" khi kênh chết) + báo ops qua Telegram.
+    a.listener.on("disconnected", (code, reason) => {
+      console.warn(`[${this.id}][listener] socket rớt (code=${code}) → đang tự kết nối lại`);
+      this.state.status = "reconnecting";
+      alertTelegram(`Kênh Zalo acc "${this.id}" rớt kết nối (code ${code}) — đang tự kết nối lại.`);
+    });
+    // Đóng HẲN (không retry được — vd session hết hạn / đăng nhập nơi khác):
+    // cần quét QR lại. Giữ status disconnected để health đỏ tới khi chủ xử lý.
+    a.listener.on("closed", (code, reason) => {
+      console.error(`[${this.id}][listener] đóng hẳn (code=${code}) — cần đăng nhập lại`);
+      this.state.status = "disconnected";
+      alertTelegram(`Kênh Zalo acc "${this.id}" MẤT kết nối (code ${code}) — cần quét QR đăng nhập lại.`);
+    });
+    a.listener.on("error", (e) => console.error(`[${this.id}][listener] error:`, e?.message || e));
+    // retryOnClose:true → zca-js TỰ kết nối lại khi socket rớt (trước đây mặc định
+    // false → rớt là chết im, status kẹt "logged_in", health xanh giả — bug thật).
+    a.listener.start({ retryOnClose: true });
     console.log(`[${this.id}][zalo] ✅ đăng nhập xong, ownId =`, this.state.ownId);
   }
 

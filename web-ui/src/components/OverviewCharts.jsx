@@ -7,7 +7,6 @@ const CH = {
   zalo:     { label: "Zalo",        color: "#0068ff" },
   meta:     { label: "Mess + IG",   color: "#7b3fb3" },
   telegram: { label: "Telegram",    color: "#229ed9" },
-  tiktok:   { label: "TikTok",      color: "#161823" },
   shopee:   { label: "Shopee",      color: "#EE4D2D" },
   zalooa:   { label: "Zalo OA",     color: "#005AE0" },
   webchat:  { label: "Website",     color: "#4F46E5" },

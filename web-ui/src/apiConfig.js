@@ -16,18 +16,22 @@
 //   trường build-time VITE_API_BASE nếu API nằm ở domain/subdomain khác.
 
 const PROD = import.meta.env.PROD;
+// DEV same-origin: khi chạy `npm run dev:https` (mode https nạp .env.https →
+// VITE_SAME_ORIGIN=1), mọi API đi qua vite proxy cùng origin thay vì gọi thẳng
+// cổng localhost → hết mixed-content/CORS khi trang chạy HTTPS (luồng FB Login).
+const SAME_ORIGIN = ["1", "true"].includes(import.meta.env.VITE_SAME_ORIGIN);
 const ORIGIN = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "") ||
   (typeof window !== "undefined" ? window.location.origin : "");
 
-export const HOST = PROD
+export const HOST = (PROD || SAME_ORIGIN)
   ? {
-      bridge: ORIGIN, meta: ORIGIN, telegram: ORIGIN, tiktok: ORIGIN,
+      bridge: ORIGIN, meta: ORIGIN, telegram: ORIGIN,
       shopee: ORIGIN, zalooa: ORIGIN, webchat: ORIGIN,
       node: ORIGIN + "/zalo-node",
     }
   : {
       bridge: "http://127.0.0.1:5005", meta: "http://127.0.0.1:5006",
-      telegram: "http://127.0.0.1:5007", tiktok: "http://127.0.0.1:5008",
+      telegram: "http://127.0.0.1:5007",
       shopee: "http://127.0.0.1:5009", zalooa: "http://127.0.0.1:5010",
       webchat: "http://127.0.0.1:5011", node: "http://127.0.0.1:4000",
     };
@@ -35,6 +39,6 @@ export const HOST = PROD
 // Map kênh → host (dùng ở chatToolsApi / InboxSection / CustomersSection).
 export const CH_HOST = {
   zalo: HOST.bridge, meta: HOST.meta, telegram: HOST.telegram,
-  tiktok: HOST.tiktok, shopee: HOST.shopee, zalooa: HOST.zalooa,
+  shopee: HOST.shopee, zalooa: HOST.zalooa,
   webchat: HOST.webchat,
 };

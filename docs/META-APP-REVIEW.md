@@ -106,7 +106,96 @@
 > chú mốc thời gian. Quay bằng OBS/Xbox Game Bar, tiếng không bắt buộc, nên
 > thêm chú thích chữ (tiếng Anh) từng bước.
 
+> ⚠️ Reviewer KHÔNG đọc tiếng Việt — trước khi quay hãy chuyển dashboard sang
+> **English** (app đã có 5 ngôn ngữ) và chú thích các bước bằng tiếng Anh.
+
 **Cảnh 1 — Đăng nhập & kết nối (pages_show_list, business_management, pages_manage_metadata):**
 1. Mở `https://novachatvn.duckdns.org` → đăng nhập tài khoản demo
 2. Vào **Chatbot → ＋ Thêm app → Mess + Instagram**
-3. B
+3. Bấm **"Đăng nhập với Facebook"** → popup Facebook Login for Business hiện
+   màn hình cấp quyền → bấm Cho phép. Video PHẢI thấy rõ dialog cấp quyền —
+   đây là thứ reviewer soi đầu tiên.
+4. Danh sách Page hiện ra (chứng minh `pages_show_list` + `business_management`)
+   → chọn "NovaChat Demo Store" → Page hiện trong mục đã nối. Chú thích:
+   *"The selected Page is now subscribed to our webhook"* (`pages_manage_metadata`).
+
+**Cảnh 2 — Messenger (`pages_messaging`):**
+1. Cửa sổ ẩn danh / điện thoại: một tài khoản FB KHÁC (đóng vai khách) mở
+   `m.me/<page>` → gửi *"Do you have a room available this weekend?"*
+2. Bot tự trả lời sau vài giây — quay rõ câu trả lời phía khách.
+3. Quay dashboard tab **Khách hàng**: hội thoại vừa rồi hiện ra → gõ 1 câu trả
+   lời TAY từ dashboard → tin hiện bên Messenger của khách (chứng minh cả
+   chiều nhận lẫn chiều gửi).
+
+**Cảnh 3 — Bình luận (`pages_read_user_content`, `pages_manage_engagement`):**
+1. Tài khoản khách bình luận vào bài viết của Page: *"How much? 0901234567"*
+2. Dashboard hiện bình luận đó (`pages_read_user_content`).
+3. Hệ thống tự ẨN comment chứa SĐT + tự trả lời template
+   (`pages_manage_engagement`) — quay cảnh comment biến mất ở phía một người
+   xem khác + reply xuất hiện. Chú thích: *"comments exposing a phone number
+   are auto-hidden to protect the customer's personal data"*.
+
+**Cảnh 4 — Instagram (`instagram_basic`, `instagram_manage_messages`, `pages_read_engagement`):**
+1. Dashboard hiện tài khoản IG Professional liên kết Page (username) —
+   `instagram_basic`.
+2. Tài khoản IG khách gửi DM tới IG demo → bot trả lời → hội thoại IG hiện
+   trong cùng inbox với Messenger — `instagram_manage_messages`.
+
+Cuối video: mở nhanh trang `https://novachatvn.duckdns.org/privacy-policy`
+để reviewer thấy privacy policy sống.
+
+---
+
+## 4. CÁC BƯỚC NỘP TRONG developers.facebook.com (app Shop Bot)
+
+1. **Settings → Basic** — điền đủ: App icon 1024×1024, Category, Privacy
+   Policy URL `https://novachatvn.duckdns.org/privacy-policy`, Data Deletion
+   Callback URL `https://novachatvn.duckdns.org/meta/data-deletion`, App
+   Domain + Site URL `novachatvn.duckdns.org`. Lưu.
+2. **Liên kết Business đã xác minh** — Settings → Basic → mục Business
+   Portfolio (app đã thuộc business 983581993305160). Business Verification
+   (mục 0.1) phải HOÀN TẤT thì quyền nâng cao mới được kích hoạt — nộp song
+   song được nhưng chưa verify thì duyệt xong vẫn chưa dùng được.
+3. **App Review → Permissions and Features** — tìm từng quyền ở mục 1 → bấm
+   **Request Advanced Access**. (Standard Access chỉ chạy cho admin/tester —
+   "đầy đủ quyền" nghĩa là Advanced Access cho khách lạ.)
+4. Với mỗi quyền, form yêu cầu 3 thứ:
+   - **Mô tả use-case** — dán đoạn tiếng Anh tương ứng ở mục 2.
+   - **Screencast** — upload video mục 3, ghi mốc thời gian từng quyền
+     (vd "pages_messaging: 1:20–2:40").
+   - **Hướng dẫn test + tài khoản demo** — URL
+     `https://novachatvn.duckdns.org`, user `reviewer@...` + mật khẩu, các
+     bước bấm y hệt video. Reviewer sẽ TỰ đăng nhập làm lại — app phải đang
+     chạy 24/7 suốt thời gian chờ duyệt.
+5. Trả lời **Data Handling / Data Use Checkup** nếu được hỏi (dữ liệu chỉ
+   dùng cung cấp dịch vụ cho shop, không bán, xoá theo callback).
+6. **Submit for Review** → chờ vài ngày tới ~2 tuần. Theo dõi mục Alerts +
+   email. Bị từ chối: đọc kỹ lý do (thường là video thiếu cảnh cấp quyền
+   hoặc reviewer không đăng nhập được), sửa đúng chỗ đó rồi nộp lại — chỉ
+   phải giải trình lại quyền bị từ chối.
+
+---
+
+## 5. SAU KHI DUYỆT
+
+1. App gạt sang **Live** (đã Live từ trước thì thôi) — quyền Advanced Access
+   lúc này áp cho MỌI người dùng, không chỉ tester.
+2. `.env` production: đặt `FB_ENABLE_IG=true` → restart meta service → khách
+   đăng nhập lại FB để cấp thêm 3 quyền IG (scope chỉ hợp lệ sau khi duyệt).
+3. Nhắn thử Page + IG bằng một tài khoản KHÔNG có vai trò trong app — đây là
+   phép thử "khách lạ" thật sự.
+4. Kiểm tra token Page dài hạn (`scripts/check_token_exp.py`) — bug đổi
+   long-lived token từng ghi nhận, xác nhận lại trước khi bán.
+
+---
+
+## 6. BẪY HAY BỊ TRẢ HỒ SƠ
+
+| Bẫy | Cách né |
+|---|---|
+| Video không thấy dialog cấp quyền FB Login | Luôn quay từ lúc bấm nút đăng nhập, không cắt cảnh popup |
+| Reviewer không đăng nhập được demo | Test tài khoản demo ở cửa sổ ẩn danh trước khi nộp; server phải sống 24/7 |
+| Dashboard tiếng Việt, reviewer không hiểu | Chuyển UI sang English khi quay + hướng dẫn test viết tiếng Anh |
+| Business Verification chưa xong | Nộp giấy ĐKKD sớm nhất có thể — đây là đường găng (1-5 ngày, có khi lâu hơn) |
+| Domain miễn phí (duckdns) bị đánh giá thấp | Cân nhắc mua domain riêng ~200k/năm trước khi nộp |
+| Xin quyền không dùng tới trong video | Chỉ xin đúng 10 quyền ở mục 1; mỗi quyền phải có cảnh chứng minh |

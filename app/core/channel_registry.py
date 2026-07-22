@@ -36,10 +36,6 @@ def _webchat_store():
     from app.core.webchat_store import WebChatStore
     return WebChatStore()
 
-def _tiktok_store():
-    from app.core.tiktok_store import TikTokStore
-    return TikTokStore()
-
 def _shopee_store():
     from app.core.shopee_store import ShopeeStore
     return ShopeeStore()
@@ -50,7 +46,6 @@ CHANNELS = {
     "zalo":     {"label": "Zalo cá nhân",  "uid_prefix": "",     "port": 5005, "store": _zalo_store},
     "meta":     {"label": "Messenger/IG",  "uid_prefix": "fb:",  "port": 5006, "store": _meta_store},
     "telegram": {"label": "Telegram",      "uid_prefix": "tg:",  "port": 5007, "store": _telegram_store},
-    "tiktok":   {"label": "TikTok",        "uid_prefix": "tt:",  "port": 5008, "store": _tiktok_store},
     "shopee":   {"label": "Shopee",        "uid_prefix": "sp:",  "port": 5009, "store": _shopee_store},
     "zalooa":   {"label": "Zalo OA",       "uid_prefix": "oa:",  "port": 5010, "store": _zalooa_store},
     "webchat":  {"label": "Web widget",    "uid_prefix": "web:", "port": 5011, "store": _webchat_store},

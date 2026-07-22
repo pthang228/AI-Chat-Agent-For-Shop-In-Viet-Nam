@@ -8,6 +8,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# rclone: cho service `backup` đẩy bản sao OFFSITE (BACKUP_RCLONE_REMOTE). Ảnh
+# dùng chung nên chỉ cài 1 lần; các service khác không dùng cũng không sao.
+RUN apt-get update && apt-get install -y --no-install-recommends rclone \
+    && rm -rf /var/lib/apt/lists/*
+
 # Cài phụ thuộc trước (tận dụng cache layer khi chỉ đổi code).
 # Ưu tiên requirements.lock (pin cứng, build tái lập được); fallback requirements.txt.
 # Wildcard requirements.loc[k] để COPY không fail nếu lock chưa tồn tại.

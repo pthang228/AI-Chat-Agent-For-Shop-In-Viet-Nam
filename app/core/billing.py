@@ -388,18 +388,23 @@ def record_token_usage(username: str, model_key: str,
     with db.lock:
         _ensure_usage_log(db)
         b = db.conn.execute("SELECT * FROM billing WHERE username=?", (username,)).fetchone()
-        spent = (b["usage_spent"] or 0) if b["usage_period"] == period else 0
         used = b["ai_used"] if b["ai_period"] == _period(_tier_of(b)) else 0
         over_quota = used >= _quota_of(b)
         billed = bool(over_quota and b["usage_enabled"])
+        # usage_spent CỘNG DỒN Ở TẦNG SQL (CASE reset khi sang tháng usage khác)
+        # — atomic across process, chống lost-update khi 2 tiến trình kênh cùng
+        # tính tiền 1 shop (db.lock chỉ khoá trong 1 tiến trình). Nhánh in-quota
+        # cũng qua CASE nên KHÔNG ghi đè increment của lượt billed song song.
+        reset_case = "CASE WHEN usage_period=? THEN COALESCE(usage_spent,0) ELSE 0 END"
         if billed:
             db.conn.execute(
-                "UPDATE billing SET balance=balance-?, usage_spent=?, usage_period=? "
-                "WHERE username=?", (cost_i, spent + cost_i, period, username))
+                f"UPDATE billing SET balance=balance-?, usage_spent={reset_case} + ?, "
+                "usage_period=? WHERE username=?",
+                (cost_i, period, cost_i, period, username))
         else:
             db.conn.execute(
-                "UPDATE billing SET usage_spent=?, usage_period=? WHERE username=?",
-                (spent, period, username))
+                f"UPDATE billing SET usage_spent={reset_case}, usage_period=? WHERE username=?",
+                (period, period, username))
         db.conn.execute(
             "INSERT INTO ai_usage_log(username, model_key, tokens_in, tokens_out,"
             " cost_vnd, billed, created_at) VALUES (?,?,?,?,?,?,?)",
@@ -544,18 +549,32 @@ def _warn_once(db, username: str, kind: str, stamp: str,
             " VALUES (?,?,?,?)", (username, kind, stamp, _now().isoformat()))
         db.conn.commit()
     if cur.rowcount == 0:
-        return 0                       # mốc này đã nhắc rồi
+        return 0                       # mốc này đã nhắc rồi (dedup đa tiến trình)
     from app.core import mailer
     sent = mailer.send_mail(username, subject, body) if mailer.configured() else False
+    delivered_platform = False
     if notify_fn:
         from app.core import tenant
         if username == tenant.default_owner():
             try:
                 notify_fn(f"{subject}\n{body}")
+                delivered_platform = True
             except Exception as e:
                 log.error(f"[Billing] notify cảnh báo lỗi: {e}")
+    if not (sent or delivered_platform):
+        # KHÔNG đưa được tới chủ (SMTP chưa cấu hình/lỗi) → NHẢ stamp để vòng quét
+        # sau thử lại. Trước đây giữ stamp = mất cảnh báo hết hạn/quota VĨNH VIỄN
+        # chỉ vì 1 lần SMTP trục trặc — chủ shop mất khách không hề biết.
+        with db.lock:
+            db.conn.execute(
+                "DELETE FROM billing_warnings WHERE username=? AND kind=? AND stamp=?",
+                (username, kind, stamp))
+            db.conn.commit()
+        log.error(f"[Billing] CHƯA gửi được cảnh báo {kind} cho {username} "
+                  f"(SMTP chưa cấu hình/lỗi) → sẽ thử lại vòng quét sau")
+        return 0
     log.info(f"[Billing] cảnh báo {kind} ({stamp}) → {username}"
-             f" (email {'đã gửi' if sent else 'chưa cấu hình/lỗi'})")
+             f" (email {'đã gửi' if sent else '-'})")
     return 1
 
 

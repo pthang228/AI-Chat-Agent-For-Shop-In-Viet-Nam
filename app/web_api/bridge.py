@@ -24,7 +24,7 @@ log = logging.getLogger("bridge")
 BOT_STATE_FILE = Config.DATA_DIR / "bot_state.json"
 
 
-ALL_CHANNELS = ("zalo", "meta", "telegram", "tiktok", "shopee", "zalooa", "webchat")
+ALL_CHANNELS = ("zalo", "meta", "telegram", "shopee", "zalooa", "webchat")
 
 
 def _norm_channel(ch: str) -> str:

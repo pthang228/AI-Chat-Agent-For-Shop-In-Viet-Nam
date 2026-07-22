@@ -14,7 +14,7 @@ import { useI18n } from "../i18n.jsx";
 
 const PLATFORMS = [
   ["", ""], ["zalo", "Zalo"], ["zalooa", "Zalo OA"], ["meta", "Mess + IG"],
-  ["telegram", "Telegram"], ["tiktok", "TikTok"], ["shopee", "Shopee"], ["webchat", "Website"],
+  ["telegram", "Telegram"], ["shopee", "Shopee"], ["webchat", "Website"],
 ];
 const SALUTATIONS = ["", "anh", "chị", "em", "bạn", "cô", "chú", "quý khách"];
 // Các field có nhãn dịch được trong tab Lịch sử → key "cust.field.<field>"

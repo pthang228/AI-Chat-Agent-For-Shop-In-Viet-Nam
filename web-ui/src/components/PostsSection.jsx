@@ -45,18 +45,9 @@ export default function PostsSection() {
                 onClick={() => setPlatform("fb")}>
           <ChannelTile ch="meta" size={16} /> Facebook
         </button>
-        <button className={"po-plat" + (platform === "tiktok" ? " active" : "")}
-                onClick={() => setPlatform("tiktok")}>
-          <ChannelTile ch="tiktok" size={16} /> TikTok
-        </button>
       </div>
 
-      {platform === "tiktok" ? (
-        <div className="empty">
-          <p>🎬 <b>{t("posts.tt_title")}</b></p>
-          <p className="hint">{t("posts.tt_hint")}</p>
-        </div>
-      ) : pages === null ? (
+      {pages === null ? (
         <div className="empty"><p>{t("team.loading")}</p></div>
       ) : pages === "offline" ? (
         <div className="empty">

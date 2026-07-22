@@ -1,7 +1,6 @@
 import { brain } from "./brainApi.js";
 import { meta } from "./metaApi.js";
 import { tg } from "./telegramApi.js";
-import { tiktok } from "./tiktokApi.js";
 import { shopee } from "./shopeeApi.js";
 import { zalooa } from "./zaloOaApi.js";
 import { webchat } from "./webchatApi.js";
@@ -62,7 +61,6 @@ async function fetchOne(channel, from, to) {
   if (channel === "zalo")     r = await brain.stats(from, to);
   else if (channel === "meta") r = await meta.stats(from, to);
   else if (channel === "telegram") r = await tg.stats(from, to);
-  else if (channel === "tiktok") r = await tiktok.stats(from, to);
   else if (channel === "shopee") r = await shopee.stats(from, to);
   else if (channel === "zalooa") r = await zalooa.stats(from, to);
   else if (channel === "webchat") r = await webchat.stats(from, to);
@@ -74,21 +72,20 @@ async function fetchOne(channel, from, to) {
 export async function fetchStats(channel, period) {
   const { from, to } = periodDates(period);
   if (channel === "all") {
-    const [z, m, t, tt, sp, oa, wc] = await Promise.all([
+    const [z, m, t, sp, oa, wc] = await Promise.all([
       fetchOne("zalo", from, to),
       fetchOne("meta", from, to),
       fetchOne("telegram", from, to),
-      fetchOne("tiktok", from, to),
       fetchOne("shopee", from, to),
       fetchOne("zalooa", from, to),
       fetchOne("webchat", from, to),
     ]);
-    const merged = mergeStats(mergeStats(mergeStats(mergeStats(mergeStats(mergeStats(z, m), t), tt), sp), oa), wc);
+    const merged = mergeStats(mergeStats(mergeStats(mergeStats(mergeStats(z, m), t), sp), oa), wc);
     return {
       ...merged,
       by_channel: {
         zalo: z.total_conv, meta: m.total_conv,
-        telegram: t.total_conv, tiktok: tt.total_conv, shopee: sp.total_conv,
+        telegram: t.total_conv, shopee: sp.total_conv,
         zalooa: oa.total_conv, webchat: wc.total_conv,
       },
     };

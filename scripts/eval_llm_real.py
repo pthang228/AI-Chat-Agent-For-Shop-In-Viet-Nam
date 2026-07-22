@@ -51,7 +51,14 @@ def expected_date(spec: str) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-intent", type=float, default=0.70,
-                    help="ngưỡng intent accuracy để exit 0 (nightly đỏ khi tụt)")
+                    help="ngưỡng intent accuracy để exit 0 (đỏ khi tụt)")
+    ap.add_argument("--min-booking", type=float, default=0.80,
+                    help="ngưỡng booking_acc — chốt đơn là doanh thu, bar cao hơn")
+    ap.add_argument("--min-date", type=float, default=0.70,
+                    help="ngưỡng date_acc — bóc sai ngày = đặt nhầm lịch")
+    ap.add_argument("--max-error-rate", type=float, default=0.20,
+                    help="tỉ lệ lỗi gọi LLM tối đa; vượt → coi eval là ĐỎ (không kết luận "
+                         "được, tránh 'xanh giả' khi API/model trục trặc)")
     ap.add_argument("--limit", type=int, default=0, help="chỉ chạy N câu đầu (debug)")
     args = ap.parse_args()
 
@@ -68,17 +75,19 @@ def main():
         cases = cases[:args.limit]
 
     n = len(cases)
-    intent_ok = date_ok = date_total = booking_ok = booking_total = leaks = errors = 0
+    intent_ok = intent_total = 0
+    date_ok = date_total = booking_ok = booking_total = leaks = errors = 0
     failures = []
 
     for i, c in enumerate(cases, 1):
         text = c["text"]
+        has_intent = "intent" in c
         try:
             result = claude_ai.analyze_message(text, [])
         except Exception as e:
-            errors += 1
-            failures.append({"text": text, "error": str(e)[:200]})
-            continue
+            errors += 1                 # lỗi gọi → BỎ mọi metric case này (không tính
+            failures.append({"text": text, "error": str(e)[:200]})   # điểm free); tỉ lệ
+            continue                     # lỗi cao sẽ bị chặn ở gate error_rate bên dưới
         # đúng đường production: lớp override chạy sau LLM
         intent, _ = apply_intent_overrides(text, result, {
             "stage": "greeting", "checkin": result.get("checkin"),
@@ -89,13 +98,12 @@ def main():
             leaks += 1
             failures.append({"text": text, "leak": reply[:120]})
 
-        if "intent" in c:
+        if has_intent:                  # CHỈ case có 'intent' mới vào mẫu — booking-only
+            intent_total += 1           # KHÔNG còn cộng điểm intent free (thổi phồng acc)
             if intent == c["intent"]:
                 intent_ok += 1
             else:
                 failures.append({"text": text, "want": c["intent"], "got": intent})
-        else:
-            intent_ok += 1          # case chỉ chấm booking flag
 
         if "checkin" in c:
             date_total += 1
@@ -114,35 +122,56 @@ def main():
 
         print(f"  [{i}/{n}] {intent:20s} {text[:50]!r}")
 
-    intent_acc = intent_ok / max(1, n - errors)
+    intent_acc = intent_ok / max(1, intent_total)       # chỉ trên case CHẠY ĐƯỢC + có intent
+    date_acc = (date_ok / date_total) if date_total else None
+    booking_acc = (booking_ok / booking_total) if booking_total else None
+    error_rate = errors / max(1, n)
     report = {
         "ran_at": datetime.now().isoformat(),
-        "cases": n, "errors": errors,
+        "cases": n, "errors": errors, "error_rate": round(error_rate, 3),
+        "intent_total": intent_total,
         "intent_acc": round(intent_acc, 3),
-        "date_acc": round(date_ok / date_total, 3) if date_total else None,
-        "booking_acc": round(booking_ok / booking_total, 3) if booking_total else None,
+        "date_acc": round(date_acc, 3) if date_acc is not None else None,
+        "booking_acc": round(booking_acc, 3) if booking_acc is not None else None,
         "leaks": leaks,
+        "thresholds": {"intent": args.min_intent, "booking": args.min_booking,
+                       "date": args.min_date, "max_error_rate": args.max_error_rate},
         "failures": failures[:40],
     }
     out = Path(os.getenv("EVAL_REPORT", "eval_report.json"))
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("\n" + "=" * 52)
-    print(f"EVAL LLM THẬT: {n} câu | intent {intent_acc:.0%}"
+    print(f"EVAL LLM THẬT: {n} câu | intent {intent_acc:.0%} ({intent_ok}/{intent_total})"
           + (f" | date {date_ok}/{date_total}" if date_total else "")
           + (f" | booking {booking_ok}/{booking_total}" if booking_total else "")
-          + f" | leak {leaks} | lỗi gọi {errors}")
+          + f" | leak {leaks} | lỗi gọi {errors} ({error_rate:.0%})")
     print(f"Report: {out}")
     print("=" * 52)
 
+    # ── GATE: đỏ nếu BẤT KỲ trục nào tụt (trước đây chỉ leak + intent gate → chốt
+    #    đơn/bóc ngày regress về 0% vẫn báo xanh; run hỏng API cũng xanh giả) ──
+    fail = False
     if leaks:
         print("❌ Reply lộ <analysis>/JSON thô — lỗi nghiêm trọng với khách thật.")
-        return 1
+        fail = True
+    if error_rate > args.max_error_rate:
+        print(f"❌ tỉ lệ lỗi gọi {error_rate:.0%} > {args.max_error_rate:.0%} — eval KHÔNG "
+              "kết luận được (API/model trục trặc), coi là ĐỎ thay vì 'xanh giả'.")
+        fail = True
     if intent_acc < args.min_intent:
-        print(f"❌ intent accuracy {intent_acc:.0%} < ngưỡng {args.min_intent:.0%} — "
-              "prompt/model vừa drift, xem failures trong report.")
+        print(f"❌ intent {intent_acc:.0%} < ngưỡng {args.min_intent:.0%} — prompt/model drift.")
+        fail = True
+    if booking_acc is not None and booking_acc < args.min_booking:
+        print(f"❌ booking {booking_acc:.0%} < ngưỡng {args.min_booking:.0%} — bỏ SÓT chốt đơn "
+              "(mất doanh thu), xem failures.")
+        fail = True
+    if date_acc is not None and date_acc < args.min_date:
+        print(f"❌ date {date_acc:.0%} < ngưỡng {args.min_date:.0%} — bóc ngày sai (đặt nhầm lịch).")
+        fail = True
+    if fail:
         return 1
-    print("✅ Trên ngưỡng an toàn.")
+    print("✅ Trên ngưỡng an toàn mọi trục (intent + booking + date + leak + error-rate).")
     return 0
 
 

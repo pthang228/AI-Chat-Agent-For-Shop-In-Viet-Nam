@@ -6,7 +6,6 @@ import { CH_HOST } from "../apiConfig.js";
 import { brain } from "../brainApi.js";
 import { meta } from "../metaApi.js";
 import { tg } from "../telegramApi.js";
-import { tiktok } from "../tiktokApi.js";
 import { shopee } from "../shopeeApi.js";
 import { zalooa } from "../zaloOaApi.js";
 import { webchat } from "../webchatApi.js";
@@ -26,7 +25,6 @@ const CH = {
   zalo:     { label: "Zalo",      color: "#0068ff" },
   meta:     { label: "Mess + IG", color: "#7b3fb3" },
   telegram: { label: "Telegram",  color: "#229ED9" },
-  tiktok:   { label: "TikTok",    color: "#161823" },
   shopee:   { label: "Shopee",    color: "#EE4D2D" },
   zalooa:   { label: "Zalo OA",   color: "#005AE0" },
   webchat:  { label: "Website",   color: "#4F46E5" },
@@ -37,7 +35,6 @@ const API = {
   zalo:     { list: () => brain.conversations(),  detail: (u) => brain.conversation(u), send: (u, t) => brain.sendMessage(u, t), toggle: (u, on) => brain.toggleBot(u, on),  reset: (u) => brain.reset(u) },
   meta:     { list: () => meta.conversations(),   detail: (u) => meta.conversation(u),  send: (u, t) => meta.sendMessage(u, t),  toggle: (u, on) => meta.toggleBot(u, on),   reset: (u) => meta.resetConv(u) },
   telegram: { list: () => tg.conversations(),     detail: (u) => tg.conversation(u),    send: (u, t) => tg.sendMessage(u, t),    toggle: (u, on) => tg.toggleBot(u, on),     reset: (u) => tg.resetConv(u) },
-  tiktok:   { list: () => tiktok.conversations(), detail: (u) => tiktok.conversation(u),send: (u, t) => tiktok.sendMessage(u, t),toggle: (u, on) => tiktok.toggleBot(u, on), reset: (u) => tiktok.resetConv(u) },
   shopee:   { list: () => shopee.conversations(), detail: (u) => shopee.conversation(u),send: (u, t) => shopee.sendMessage(u, t),toggle: (u, on) => shopee.toggleBot(u, on), reset: (u) => shopee.resetConv(u) },
   zalooa:   { list: () => zalooa.conversations(), detail: (u) => zalooa.conversation(u),send: (u, t) => zalooa.sendMessage(u, t),toggle: (u, on) => zalooa.toggleBot(u, on), reset: (u) => zalooa.resetConv(u) },
   webchat:  { list: () => webchat.conversations(), detail: (u) => webchat.conversation(u),send: (u, t) => webchat.sendMessage(u, t),toggle: (u, on) => webchat.toggleBot(u, on), reset: (u) => webchat.resetConv(u) },
@@ -169,7 +166,7 @@ export default function InboxSection() {
   }
 
   const counts = useMemo(() => {
-    const c = { all: 0, zalo: 0, meta: 0, telegram: 0, tiktok: 0, shopee: 0, zalooa: 0, webchat: 0 };
+    const c = { all: 0, zalo: 0, meta: 0, telegram: 0, shopee: 0, zalooa: 0, webchat: 0 };
     for (const x of convs || []) { c.all++; c[x._ch] = (c[x._ch] || 0) + 1; }
     return c;
   }, [convs]);

@@ -98,17 +98,31 @@ def list_pending(tenant_ws: str = None, limit: int = 100) -> dict:
     return {"due_count": sum(1 for i in items if i["overdue"]), "items": items}
 
 
-def mark_done(fid: int) -> dict | None:
+def mark_done(fid: int, tenant_ws: str = None) -> dict | None:
+    """tenant_ws (route truyền _ws()): chỉ đánh dấu việc CỦA shop mình — chống
+    shop A đóng nhắc việc shop B (IDOR). None (test/nội bộ) → không giới hạn."""
     f = get(fid)
     if not f:
         return None
+    if tenant_ws is not None:
+        from app.core import tenant as _t
+        if not _t.visible(f.get("tenant", "") or "", tenant_ws):
+            return None
     get_db().execute("UPDATE followups SET status='done', done_at=? WHERE id=?",
                      (_now(), fid))
     return get(fid)
 
 
-def remove(fid: int):
+def remove(fid: int, tenant_ws: str = None) -> bool:
+    """tenant_ws (route truyền _ws()): chỉ xoá việc CỦA shop mình. Trả False khi
+    không thấy / không thuộc shop (route trả 404). None (test/nội bộ) → xoá luôn."""
+    if tenant_ws is not None:
+        from app.core import tenant as _t
+        f = get(fid)
+        if not f or not _t.visible(f.get("tenant", "") or "", tenant_ws):
+            return False
     get_db().execute("DELETE FROM followups WHERE id=?", (fid,))
+    return True
 
 
 # ── Job nền nhắc chủ (trước đây KHÔNG có — không mở trang là quên việc) ──

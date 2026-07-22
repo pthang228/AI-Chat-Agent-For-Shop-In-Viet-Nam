@@ -27,7 +27,7 @@ const DICT = {
     "back": "Quay lại",
 
     // Overview
-    "sec.posts_full": "Bài viết & bình luận (Facebook + TikTok)",
+    "sec.posts_full": "Bài viết & bình luận (Facebook)",
     "ov.hello": "Chào mừng trở lại, {name}!",
     "ov.sub": "Tổng quan hoạt động của shop",
     "ov.placeholder": "Khu vực này đang được phát triển. Sidebar và bố cục đã sẵn sàng để gắn tính năng.",
@@ -139,7 +139,7 @@ const DICT = {
     "sb.collapse": "Collapse",
     "back": "Back",
 
-    "sec.posts_full": "Posts & comments (Facebook + TikTok)",
+    "sec.posts_full": "Posts & comments (Facebook)",
     "ov.hello": "Welcome back, {name}!",
     "ov.sub": "Your shop activity at a glance",
     "ov.placeholder": "This area is under development. The sidebar and layout are ready for the feature.",
@@ -246,7 +246,7 @@ const DICT = {
     "sb.collapse": "접기",
     "back": "뒤로",
 
-    "sec.posts_full": "게시물 & 댓글 (Facebook + TikTok)",
+    "sec.posts_full": "게시물 & 댓글 (Facebook)",
     "ov.hello": "다시 오신 것을 환영합니다, {name}님!",
     "ov.sub": "샵 활동 한눈에 보기",
     "ov.placeholder": "이 영역은 개발 중입니다. 사이드바와 레이아웃은 기능 추가 준비가 되어 있습니다.",
@@ -353,7 +353,7 @@ const DICT = {
     "sb.collapse": "收起",
     "back": "返回",
 
-    "sec.posts_full": "帖子与评论（Facebook + TikTok）",
+    "sec.posts_full": "帖子与评论（Facebook）",
     "ov.hello": "欢迎回来，{name}！",
     "ov.sub": "店铺运营总览",
     "ov.placeholder": "该区域正在开发中。侧边栏和布局已就绪，可随时接入功能。",
@@ -460,7 +460,7 @@ const DICT = {
     "sb.collapse": "折りたたむ",
     "back": "戻る",
 
-    "sec.posts_full": "投稿とコメント（Facebook + TikTok）",
+    "sec.posts_full": "投稿とコメント（Facebook）",
     "ov.hello": "おかえりなさい、{name}さん！",
     "ov.sub": "ショップの活動をひと目で確認",
     "ov.placeholder": "このエリアは開発中です。サイドバーとレイアウトは機能追加の準備ができています。",

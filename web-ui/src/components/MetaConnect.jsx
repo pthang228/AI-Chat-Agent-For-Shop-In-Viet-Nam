@@ -32,7 +32,7 @@ export default function MetaConnect() {
     setMsg(""); setBusy(true);
     try {
       const FB = await loadFbSdk(cfg.app_id);
-      const userToken = await fbLogin(FB, buildScope(cfg.enable_ig));
+      const userToken = await fbLogin(FB, buildScope(cfg.enable_ig, cfg.enable_comments));
       const r = await meta.connect(userToken);
       if (r.ok && r.body?.ok) {
         const n = r.body.pages?.length || 0;

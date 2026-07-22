@@ -93,7 +93,6 @@ check(_auth_with("bất kỳ", "", public="https://shop.example") is False, "C7b
 print("\n── D. Channel.get_ctx/set_ctx ──")
 from app.core.channel import Channel
 from app.channels.shopee import ShopeeChannel
-from app.channels.tiktok import TikTokChannel
 from app.channels.zalo_oa import ZaloOAChannel
 
 # base no-op
@@ -107,9 +106,8 @@ b = _Bare()
 b.set_ctx("x")
 check(b.get_ctx() is None, "D1 base_noop")
 
-for Ch, val in [(ShopeeChannel, "SHOP9"), (TikTokChannel, "BIZ9"), (ZaloOAChannel, "OA9")]:
-    ch = Ch(store=None, access_token="", conv_manager=None) if Ch is not TikTokChannel \
-         else Ch(store=None, access_token="", conv_manager=None)
+for Ch, val in [(ShopeeChannel, "SHOP9"), (ZaloOAChannel, "OA9")]:
+    ch = Ch(store=None, access_token="", conv_manager=None)
     ch.set_ctx(val)
     check(ch.get_ctx() == val, f"D2 {Ch.__name__}_roundtrip", f"{ch.get_ctx()}")
 

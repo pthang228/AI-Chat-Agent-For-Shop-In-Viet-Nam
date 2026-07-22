@@ -55,8 +55,8 @@ def check(cond, name, detail=""):
 
 
 print("A. Catalog + giá")
-pin, pout = am.price_vnd_1m("deepseek-chat")   # 0.26 / 0.38 USD × 25000
-check(pin == 6500 and pout == 9500, "A1 giá VNĐ/1M đúng tỷ giá", (pin, pout))
+pin, pout = am.price_vnd_1m("deepseek-chat")   # 0.14 / 0.28 USD × 25000 (V4-Flash)
+check(pin == 3500 and pout == 7000, "A1 giá VNĐ/1M đúng tỷ giá", (pin, pout))
 c = am.cost_vnd("gpt-4o", 1000, 500)           # (1000*2.5 + 500*10)/1e6 × 25000
 check(abs(c - 187.5) < 0.01, "A2 cost_vnd đúng công thức", c)
 ui = am.catalog_for_ui()
@@ -104,15 +104,15 @@ check(b["balance"] == 100000 and (b["usage_spent"] or 0) == 0,
 # Ép hết quota (trial: 500 lượt/ngày) + bật usage
 db.execute("UPDATE billing SET ai_used=?, ai_period=?, usage_enabled=1, usage_limit=50000 "
            "WHERE username=?", (10_000, billing._period("trial"), U))
-billing.record_token_usage(U, "deepseek-chat", 1_000_000, 1_000_000)  # 6500+9500=16000đ
+billing.record_token_usage(U, "deepseek-chat", 1_000_000, 1_000_000)  # 3500+7000=10500đ
 b = brow()
-check(b["balance"] == 100000 - 16000, "C2 vượt quota + bật usage → trừ ví đúng giá", b["balance"])
-check(b["usage_spent"] == 16000, "C3 usage_spent cộng dồn", b["usage_spent"])
+check(b["balance"] == 100000 - 10500, "C2 vượt quota + bật usage → trừ ví đúng giá", b["balance"])
+check(b["usage_spent"] == 10500, "C3 usage_spent cộng dồn", b["usage_spent"])
 # Tắt usage → vượt quota cũng không trừ
 db.execute("UPDATE billing SET usage_enabled=0 WHERE username=?", (U,))
 billing.record_token_usage(U, "deepseek-chat", 1_000_000, 0)
 b = brow()
-check(b["balance"] == 84000 and b["usage_spent"] == 16000,
+check(b["balance"] == 89500 and b["usage_spent"] == 10500,
       "C4 tắt usage: không trừ thêm", dict(balance=b["balance"], spent=b["usage_spent"]))
 
 print("D. can_reply với usage")

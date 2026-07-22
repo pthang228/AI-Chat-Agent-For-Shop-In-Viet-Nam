@@ -71,12 +71,24 @@ def list_posts(page_id: str, token: str, limit: int = 25) -> list:
 
 
 def list_comments(post_id: str, token: str, limit: int = 100) -> list:
-    """Bình luận của 1 bài (mới nhất trước), kèm trạng thái ẩn."""
-    r = requests.get(f"{_graph()}/{post_id}/comments", params={
-        "access_token": token,
-        "fields": "id,from,message,created_time,is_hidden,like_count",
-        "filter": "stream", "order": "reverse_chronological", "limit": limit,
-    }, timeout=20)
+    """Bình luận của 1 bài (mới nhất trước), kèm trạng thái ẩn.
+
+    LƯU Ý field `from` (danh tính người bình luận): đọc `from` của bình luận do
+    NGƯỜI LẠ viết cần feature Meta "Page Public Content Access" (phải App Review,
+    khác quyền thường). Chưa duyệt → Graph trả #100. Nên thử KÈM `from` trước,
+    nếu bị chặn thì tự lùi về danh sách KHÔNG kèm tên (dashboard vẫn xem/ẩn được;
+    tự-ẩn-SĐT không ảnh hưởng vì đi qua webhook đã có sẵn `from`).
+    """
+    def _fetch(fields):
+        return requests.get(f"{_graph()}/{post_id}/comments", params={
+            "access_token": token, "fields": fields,
+            "filter": "stream", "order": "reverse_chronological", "limit": limit,
+        }, timeout=20)
+
+    r = _fetch("id,from,message,created_time,is_hidden,like_count")
+    if r.status_code >= 400 and "pages_read_engagement" in r.text:
+        # Thiếu "Page Public Content Access" → bỏ `from`, list vẫn chạy (khuyết tên).
+        r = _fetch("id,message,created_time,is_hidden,like_count")
     if r.status_code >= 400:
         raise RuntimeError(f"Graph /comments {r.status_code}: {r.text[:200]}")
     out = []
