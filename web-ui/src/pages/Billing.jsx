@@ -300,6 +300,12 @@ export default function Billing() {
             <div className="dep-row"><span>{t("pay.holder")}</span><b>{me.bank.holder || "—"}</b></div>
             <div className="dep-row"><span>{t("pay.amount")}</span><b>{vnd(newDep.amount)}</b></div>
             <div className="dep-row hl"><span>{t("pay.memo")}</span><b>{newDep.code}</b></div>
+            {newDep.qr && (
+              <div className="dep-qr">
+                <img src={newDep.qr} alt="VietQR" loading="lazy" />
+                <span className="hint">{t("pay.qr_hint")}</span>
+              </div>
+            )}
             <p className="hint">{t("pay.transfer_hint", { code: newDep.code })}</p>
           </div>
         )}

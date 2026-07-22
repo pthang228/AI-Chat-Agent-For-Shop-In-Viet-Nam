@@ -85,7 +85,18 @@ def register_billing_routes(app):
             d = billing.create_deposit(u["username"], int(data.get("amount") or 0))
         except (ValueError, TypeError) as e:
             return {"ok": False, "error": str(e)}, 400
-        return {"ok": True, **d}
+        # QR VietQR nhúng sẵn số tiền + nội dung NAPxxxx — BANK_NAME phải là MÃ
+        # ngân hàng (VCB/TCB/MB...); chưa cấu hình bank → qr rỗng, UI ẩn ảnh
+        qr = ""
+        if Config.BANK_ACCOUNT and Config.BANK_NAME:
+            try:
+                from app.core import payments
+                qr = payments.build_vietqr_url(
+                    {"bank_code": Config.BANK_NAME, "bank_account": Config.BANK_ACCOUNT},
+                    amount=d["amount"], memo=d["code"])
+            except Exception as e:
+                log.warning(f"[billing] build QR nạp lỗi: {e}")
+        return {"ok": True, **d, "qr": qr}
 
     @app.route("/billing/deposits")
     def billing_deposits():
