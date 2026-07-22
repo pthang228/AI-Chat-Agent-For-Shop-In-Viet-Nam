@@ -46,6 +46,7 @@ export default {
     "app.name_label": "Tên app",
     "app.name_ph": "VD: Zalo Shop Mình",
     "app.channel_label": "Kênh",
+    "app.ch_taken": "Shop đã có kênh loại này — mỗi shop chỉ 1 bot mỗi loại",
     "app.cancel": "Huỷ",
     "app.add_btn": "Thêm",
 
@@ -116,6 +117,7 @@ export default {
     "app.name_label": "App name",
     "app.name_ph": "e.g. My Zalo Shop",
     "app.channel_label": "Channel",
+    "app.ch_taken": "This shop already has this channel type — 1 bot per type per shop",
     "app.cancel": "Cancel",
     "app.add_btn": "Add",
 
@@ -184,6 +186,7 @@ export default {
     "app.name_label": "앱 이름",
     "app.name_ph": "예: 내 Zalo 샵",
     "app.channel_label": "채널",
+    "app.ch_taken": "이 샵에는 이미 이 유형의 채널이 있습니다 — 샵당 유형별 1개",
     "app.cancel": "취소",
     "app.add_btn": "추가",
 
@@ -252,6 +255,7 @@ export default {
     "app.name_label": "应用名称",
     "app.name_ph": "例如：我的 Zalo 店铺",
     "app.channel_label": "渠道",
+    "app.ch_taken": "该店铺已有此类型渠道 — 每店每类型仅 1 个机器人",
     "app.cancel": "取消",
     "app.add_btn": "添加",
 
@@ -320,6 +324,7 @@ export default {
     "app.name_label": "アプリ名",
     "app.name_ph": "例：私のZaloショップ",
     "app.channel_label": "チャネル",
+    "app.ch_taken": "このショップには既にこのタイプのチャネルがあります — 1タイプ1ボット",
     "app.cancel": "キャンセル",
     "app.add_btn": "追加",
 

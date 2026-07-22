@@ -105,6 +105,18 @@ CREATE TABLE IF NOT EXISTS user_apps (
 );
 CREATE INDEX IF NOT EXISTS idx_apps_user ON user_apps(username);
 
+-- SHOP CON trong 1 tài khoản: mỗi shop = 1 workspace/tenant độc lập (kênh,
+-- hội thoại, khách, đơn, não AI riêng) nhưng DÙNG CHUNG gói cước tài khoản.
+-- Shop MẶC ĐỊNH có ws = chính username (dữ liệu cũ tự thuộc về nó, 0 migrate).
+-- Shop thêm sau: ws = "<username>~s<hex>" — chuỗi tenant mới toanh.
+CREATE TABLE IF NOT EXISTS shops (
+    ws         TEXT PRIMARY KEY,
+    owner      TEXT NOT NULL,
+    name       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shops_owner ON shops(owner);
+
 -- Gói dịch vụ + ví tiền của từng user (billing)
 CREATE TABLE IF NOT EXISTS billing (
     username   TEXT PRIMARY KEY,
@@ -316,6 +328,17 @@ CREATE TABLE IF NOT EXISTS bot_misses (
 );
 CREATE INDEX IF NOT EXISTS idx_misses_shop ON bot_misses(shop, resolved, created_at);
 
+-- THỜI GIAN PHẢN HỒI bot: 1 dòng / 1 câu trả lời (đo ở brain.handle — từ lúc
+-- nhận tin khách tới lúc reply gửi xong, gồm cả AI + gửi kênh). Nuôi biểu đồ
+-- "Thời gian phản hồi" (avg + P95/ngày) trang Thống kê; dọn log > 90 ngày.
+CREATE TABLE IF NOT EXISTS latency_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant     TEXT NOT NULL DEFAULT '',
+    seconds    REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_latency_tenant ON latency_log(tenant, created_at);
+
 -- TIN NHẮN HÀNG LOẠT (broadcast/remarketing) — chủ soạn 1 tin gửi cho nhóm khách
 -- cũ theo kênh + mức độ hoạt động. Tin KHÔNG chèn vào luồng hội thoại (tránh đè
 -- cache RAM của tiến trình kênh) — lịch sử nằm ở broadcast_log.
@@ -494,6 +517,9 @@ class Db:
             # shop nào → shop thuê không MẤT số liệu lịch sử (trước đây archive
             # không mang tenant nên chỉ chủ nền tảng được cộng)
             ("stats_archive", "tenant", "TEXT NOT NULL DEFAULT ''"),
+            # SHOP CON: app thuộc shop nào trong tài khoản ('' = shop mặc định
+            # — app cũ tạo trước khi có shop tự về đây, không cần migrate)
+            ("user_apps", "shop_ws", "TEXT NOT NULL DEFAULT ''"),
         ]
         for table, col, decl in adds:
             try:

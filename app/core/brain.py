@@ -422,9 +422,23 @@ class Brain:
         thoại đã dài — chạy SAU khi khách nhận trả lời nên không thêm độ trễ.
         Toàn bộ chạy trong khoá per-user → tin cùng khách không xử lý chồng nhau."""
         with self._lock_for(user_id):
+            # ĐO THỜI GIAN PHẢN HỒI: từ lúc nhận tin tới lúc bot gửi xong trả
+            # lời (gồm AI + gửi kênh). Chỉ ghi khi có assistant message MỚI —
+            # bot im (owner_active/tắt/gated) thì không tính vào biểu đồ.
+            _conv = self.conv_manager.get(user_id)
+            _bots0 = sum(1 for m in _conv.messages if m.get("role") == "assistant")
+            _t0 = time.monotonic()
             try:
                 self._handle_inner(user_id, text)
             finally:
+                try:
+                    _bots1 = sum(1 for m in _conv.messages if m.get("role") == "assistant")
+                    if _bots1 > _bots0:
+                        from app.core import latency
+                        latency.record(getattr(_conv, "tenant", "") or "",
+                                       time.monotonic() - _t0)
+                except Exception as e:
+                    log.warning(f"[latency] hook lỗi (bỏ qua): {e}")
                 try:
                     self._maybe_summarize(user_id)
                 except Exception as e:
@@ -535,6 +549,17 @@ class Brain:
         for _r in _ov_reasons:
             log.info(_r)
 
+        # ── AI CHỦ ĐỘNG đính bộ ảnh Thư viện (thẻ [GUI_ANH] trong reply) ──
+        # Gửi được bộ nào → ảnh + reply là đủ, DỪNG (không rơi xuống handler
+        # ảnh bên dưới kẻo gửi trùng bộ). Tên sai/kênh không hỗ trợ → luồng thường.
+        if result.get("send_photos"):
+            sent = self._send_ai_photos(user_id, conv, result["send_photos"])
+            if sent:
+                self._say(user_id, conv, reply or
+                          f"Đây là ảnh {', '.join(sent)} bạn nhé! 📸")
+                self.conv_manager.save()
+                return
+
         # ── AI tự trả lời: use_ai_reply=True + intent vẫn là "other" sau override ──
         # Contact_request và photo override (số phòng / homestay) vẫn được phép chạy;
         # chỉ các override availability/price bị bỏ khi AI đã tự tin với câu trả lời.
@@ -627,6 +652,39 @@ class Brain:
             if intent == "other":
                 return True  # Greeting là đủ
         return False
+
+    def _send_ai_photos(self, user_id: str, conv, names) -> list:
+        """AI chủ động đính bộ ảnh (thẻ [GUI_ANH: <tên bộ>] trong reply — xem
+        claude_ai._photo_block). Match tên (bỏ dấu) trong thư viện CỦA SHOP sở
+        hữu hội thoại; trả list tên bộ đã gửi được. AI bịa tên / bộ rỗng /
+        kênh không hỗ trợ → bỏ qua bộ đó (không chết luồng trả lời)."""
+        if not names:
+            return []
+        from app.core import photo_library
+        def _key(x):
+            return " ".join(re.findall(r"[a-z0-9]+", photo_library._norm(str(x))))
+        try:
+            sets = photo_library.list_sets(
+                tenant_ws=getattr(conv, "tenant", "") or None)
+        except Exception as e:
+            log.warning(f"[PhotoLib] AI đính ảnh — đọc thư viện lỗi: {e}")
+            return []
+        by_key = {_key(s["name"]): s for s in sets if s.get("files")}
+        sent = []
+        for raw in list(names)[:3]:
+            s = by_key.get(_key(raw))
+            if not s:
+                log.info(f"[PhotoLib] AI đính bộ '{raw}' — không có trong thư viện shop, bỏ")
+                continue
+            try:
+                if self.channel.send_photo_folder(
+                        user_id, photo_library.set_dir(s["slug"]), f"📸 {s['name']}:"):
+                    sent.append(s["name"])
+            except Exception as e:
+                log.warning(f"[PhotoLib] AI đính bộ '{raw}' gửi lỗi: {e}")
+        if sent:
+            log.info(f"[PhotoLib] AI chủ động gửi bộ ảnh: {', '.join(sent)}")
+        return sent
 
     def _try_photo_library(self, user_id: str, conv, text: str) -> bool:
         """Thư viện ảnh: khách hỏi trúng TÊN/keywords bộ ảnh shop tự đặt

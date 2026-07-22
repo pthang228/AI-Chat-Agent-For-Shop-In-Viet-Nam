@@ -13,6 +13,7 @@ import PostsSection from "../components/PostsSection.jsx";
 import CustomersSection from "../components/CustomersSection.jsx";
 import BroadcastSection from "../components/BroadcastSection.jsx";
 import StatsPanel from "../components/StatsPanel.jsx";
+import ShopSwitcher from "../components/ShopSwitcher.jsx";
 import { useI18n } from "../i18n.jsx";
 
 const PERIODS = ["today", "7d", "30d", "month", "year"];
@@ -103,6 +104,7 @@ export default function Overview() {
         <header className="shell-top">
           <h2 className="shell-title">{t(SECTION_TITLE[section])}</h2>
           <div className="shell-top-right">
+            <ShopSwitcher />
             <Link to="/settings" className="user-pill" title={t("nav.settings")}>
               <span className="avatar">{initials(hostName)}</span>{hostName}
             </Link>
@@ -147,7 +149,9 @@ export default function Overview() {
                 <Kpi icon="✉️" label={t("kpi.msg")}     value={kpi.msg}  accent="#4C6EF5" />
                 <Kpi icon="💬" label={t("kpi.conv")}    value={kpi.conv} accent="#7C3AED" />
                 <Kpi icon="🤖" label={t("kpi.rate")}    value={kpi.rate} accent="#23a065" />
-                <Kpi icon="⏱" label={t("kpi.latency")} value="—" accent="#cf9536" />
+                <Kpi icon="⏱" label={t("kpi.latency")}
+                     value={stats?.latency_n > 0 ? `${stats.latency_avg}s` : "—"}
+                     accent="#cf9536" />
               </div>
 
               {/* 4 biểu đồ */}

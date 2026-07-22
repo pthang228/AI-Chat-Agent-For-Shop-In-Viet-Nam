@@ -13,3 +13,15 @@ export const notifyApi = {
     body: JSON.stringify(config),
   }),
 };
+
+// Gọi khẩn qua Telegram cấp SHOP (mọi kênh) — acc phụ chủ tự đăng nhập QR
+// gọi acc chính khi có sự kiện mức "Gọi". Backend: /caller* (caller_api.py).
+export const callerApi = {
+  status: () => j("/caller"),
+  qrLogin: () => j("/caller/qr-login", { method: "POST" }),
+  loginStatus: () => j("/caller/login-status"),
+  password: (password) => j("/caller/password", { method: "POST", json: { password } }),
+  target: (handle) => j("/caller/target", { method: "POST", json: { handle } }),
+  testCall: () => j("/caller/test-call", { method: "POST" }),
+  logout: () => j("/caller/logout", { method: "POST" }),
+};

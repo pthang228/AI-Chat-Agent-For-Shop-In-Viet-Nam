@@ -35,4 +35,12 @@ export const brain = {
     if (to) p.set("to", to);
     return j(`/stats?${p}`);
   },
+  // Chất lượng bot toàn shop (mọi kênh): thời gian phản hồi avg/P95 theo ngày
+  // + số câu bot bí trong kỳ — nuôi 2 biểu đồ Thống kê
+  quality: (from, to) => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    return j(`/stats/quality?${p}`);
+  },
 };

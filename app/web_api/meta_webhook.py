@@ -485,8 +485,11 @@ def create_meta_webhook(brain, conv_manager, store=None, comment_store=None) -> 
             _uid, _snd, _pg, _pf = user_id, sender, page_id, platform
             submit(_fetch_meta_name, _uid, _snd, _pg, _pf, brain, conv_manager)
 
-        # Bot kênh Meta bị tắt (đọc lại file mỗi tin để đồng bộ khi đổi từ web)
-        if not _channel_enabled(_load_bot_state(), "meta"):
+        # Bot bị tắt (đọc lại file mỗi tin để đồng bộ khi đổi từ web).
+        # PER-PAGE trước: "meta:<page_id>" (nút Trợ lý AI của TỪNG shop) —
+        # _channel_enabled tự fallback lên cờ "meta" toàn cục khi không có key.
+        if not _channel_enabled(_load_bot_state(),
+                                f"meta:{page_id}" if page_id else "meta"):
             log.info(f"[Meta] bot đang TẮT → bỏ qua {user_id}")
             return
 

@@ -50,15 +50,29 @@ def _dir_photos(folder: Path, url_prefix: str, caption: str, limit: int = 4) -> 
             if f.is_file() and f.suffix.lower() in _IMG_EXTS][:limit]
 
 
-def _test_photos(message: str, out: dict) -> list:
+def _test_photos(message: str, out: dict, tenant_ws: str = None) -> list:
     """Ảnh bot SẼ gửi cho tin nhắn này (mô phỏng brain) — để Test Bot hiển thị.
-    Ưu tiên Thư viện ảnh (bộ đặt tên) → fallback rooms_photos/price_photos cũ."""
+    Ưu tiên bộ AI CHỦ ĐỘNG đính (send_photos từ thẻ [GUI_ANH]) → Thư viện ảnh
+    match keyword → fallback rooms_photos/price_photos cũ. tenant_ws: chỉ tìm
+    trong thư viện của shop đang test (khớp hành vi brain thật)."""
+    from app.core import photo_library as pl
+    photos = []
+    ai_names = out.get("send_photos") or []
+    if ai_names:
+        def _k(x):
+            return " ".join(re.findall(r"[a-z0-9]+", pl._norm(str(x))))
+        by_key = {_k(s["name"]): s for s in pl.list_sets(tenant_ws) if s["files"]}
+        for nm in ai_names:
+            s = by_key.get(_k(nm))
+            if s:
+                for f in s["files"][:4]:
+                    photos.append({"url": f"/photos/file/{s['slug']}/{f}", "caption": s["name"]})
+        if photos:
+            return photos[:8]
     intent = out.get("intent")
     if intent not in ("photo_request", "price_list_request"):
         return []
-    from app.core import photo_library as pl
-    photos = []
-    for s in pl.find_sets(message):
+    for s in pl.find_sets(message, tenant_ws=tenant_ws):
         for f in s["files"][:4]:
             photos.append({"url": f"/photos/file/{s['slug']}/{f}", "caption": s["name"]})
     if photos:
@@ -220,7 +234,7 @@ def register_prompt_routes(app):
         """Khoá NÃO BOT của user đăng nhập (multi-tenant): chủ nền tảng giữ não
         'default' cũ; shop khác dùng não riêng theo username chủ workspace."""
         from app.core import tenant
-        from app.web_api.auth_api import workspace_of
+        from app.web_api.auth_api import request_workspace as workspace_of
         return tenant.shop_key(workspace_of(u))
 
     @app.route("/prompt/current")
@@ -261,7 +275,7 @@ def register_prompt_routes(app):
         # nhánh lịch? ô link trống? bản UI cũ?)
         log.info(f"[prompt] generate body: links={[(l if isinstance(l, str) else l.get('url','?')) for l in links]}"
                  f" model={model!r} instr={len(instructions)} ký tự")
-        from app.web_api.auth_api import workspace_of
+        from app.web_api.auth_api import request_workspace as workspace_of
         ws = workspace_of(u)
         # Link Google Sheets → TỰ NHẬN DIỆN theo mô tả shop ghi + nội dung sheet:
         # LỊCH ĐẶT CHỖ → nối cho bot tra realtime (không nhét vào não — lịch đổi
@@ -680,7 +694,7 @@ def register_prompt_routes(app):
             if out.get("intent") == "availability_check":
                 from app.core.sheets import format_availability_for_ai
                 from app.core.brain import _infer_date_from_text
-                from app.web_api.auth_api import workspace_of
+                from app.web_api.auth_api import request_workspace as workspace_of
                 ws = workspace_of(u)
                 ci = out.get("checkin") or _infer_date_from_text(message)
                 co = out.get("checkout") or ci
@@ -708,7 +722,8 @@ def register_prompt_routes(app):
                         out["debug"]["sheet_checked"] = True
         except Exception as e:
             log.error(f"[prompt] test tra lịch lỗi: {e}", exc_info=True)
-        out["photos"] = _test_photos(message, out)   # ảnh bot sẽ gửi (preview)
+        from app.web_api.auth_api import request_workspace as _rw
+        out["photos"] = _test_photos(message, out, tenant_ws=_rw(u))   # ảnh bot sẽ gửi (preview)
         log.info(f"[prompt] {u['username']} test bot: '{message[:60]}' → intent={out.get('intent')}"
                  f" ({len(out['photos'])} ảnh)")
         return {"ok": True, **out}

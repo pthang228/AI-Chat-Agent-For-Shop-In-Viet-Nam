@@ -1,11 +1,11 @@
 /* Các card cấu hình bot của shop — dùng ở trang Dạy AI (PromptBuilder).
    Move nguyên từ Settings.jsx: NotifyCard, BankCard (bóc từ JSX inline),
    SheetsCard, CannedCard. Logic giữ y nguyên. */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getToken } from "../auth.js";
 import { HOST } from "../apiConfig.js";
 import { ordersApi } from "../ordersApi.js";
-import { notifyApi } from "../notifyApi.js";
+import { notifyApi, callerApi } from "../notifyApi.js";
 import { canned as cannedApi } from "../chatToolsApi.js";
 import { useI18n } from "../i18n.jsx";
 
@@ -384,6 +384,165 @@ export function CannedCard() {
                 ))}
               </ul>
             )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* 📞 Gọi khẩn qua Telegram (MỌI kênh) — chủ đăng nhập 1 acc Telegram PHỤ (QR),
+   khai acc CHÍNH của mình; sự kiện mức "Gọi" ở kênh nào cũng đổ chuông Telegram.
+   Cơ chế y hệt "acc gọi" per-bot của kênh Telegram, nhưng cấp SHOP. */
+export function CallerCard() {
+  const { t } = useI18n();
+  const [st, setSt] = useState(null);        // null=tải | object | "offline"
+  const [login, setLogin] = useState(null);  // phiên QR đang chạy
+  const [pw, setPw] = useState("");
+  const [handle, setHandle] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const poll = useRef(null);
+
+  const refresh = () =>
+    callerApi.status().then((r) => setSt(r.ok && r.body?.ok ? r.body : "offline"));
+  useEffect(() => { refresh(); return () => clearInterval(poll.current); }, []);
+
+  function watchLogin() {
+    clearInterval(poll.current);
+    poll.current = setInterval(async () => {
+      const r = await callerApi.loginStatus();
+      if (!r.ok || !r.body) return;
+      setLogin(r.body);
+      if (r.body.state === "done") { clearInterval(poll.current); setLogin(null); refresh(); }
+      if (["expired", "error"].includes(r.body.state)) clearInterval(poll.current);
+    }, 2500);
+  }
+  async function startLogin() {
+    setMsg(""); setLogin({ state: "starting" });
+    const r = await callerApi.qrLogin();
+    if (r.ok && r.body?.state) { setLogin(r.body); watchLogin(); }
+    else { setLogin(null); setMsg("❌ " + (r.body?.error || t("team.offline"))); }
+  }
+  async function sendPw() {
+    if (!pw.trim() || busy) return;
+    setBusy(true);
+    const r = await callerApi.password(pw);
+    setBusy(false); setPw("");
+    if (r.ok && r.body?.ok) { setLogin(null); refresh(); }
+    else setLogin((l) => ({ ...l, error: r.body?.error || "2FA sai" }));
+  }
+  async function saveTarget() {
+    if (!handle.trim() || busy) return;
+    setMsg(""); setBusy(true);
+    const r = await callerApi.target(handle.trim());
+    setBusy(false);
+    if (r.ok && r.body?.ok) { setHandle(""); setMsg(t("scfg.cl_target_ok")); refresh(); }
+    else setMsg("❌ " + (r.body?.error || t("scfg.cl_fail")));
+  }
+  async function testCall() {
+    setMsg(""); setBusy(true);
+    const r = await callerApi.testCall();
+    setBusy(false);
+    setMsg(r.ok && r.body?.ok ? "📳 " + (r.body.message || "OK")
+                              : "❌ " + (r.body?.error || t("scfg.cl_fail")));
+  }
+  async function doLogout() {
+    if (!confirm(t("scfg.cl_logout_confirm"))) return;
+    await callerApi.logout();
+    setMsg(""); refresh();
+  }
+
+  return (
+    <div className="panel set-card" style={{ marginTop: 16 }}>
+      <h3 style={{ fontSize: 17, marginBottom: 4 }}>{t("scfg.cl_title")}</h3>
+      <p className="hint" style={{ marginBottom: 12 }}>{t("scfg.cl_hint")}</p>
+      {st === "offline" ? <p className="hint">{t("team.offline")}</p>
+      : st === null ? <p className="hint">{t("team.loading")}</p>
+      : !st.configured_api ? <p className="status warn">{t("scfg.cl_no_api")}</p>
+      : (
+        <>
+          {/* ① Acc GỌI (phụ) */}
+          <div className="field">
+            <label className="field-label">{t("scfg.cl_step1")}</label>
+            {st.logged_in ? (
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span className="status ok" style={{ margin: 0 }}>
+                  ✅ {st.caller_name || "?"}{st.caller_username ? ` (@${st.caller_username})` : ""}
+                  {st.inherited ? ` — ${t("scfg.cl_inherited")}` : ""}
+                </span>
+                {!st.inherited && (
+                  <button className="btn-mini danger" onClick={doLogout}>{t("scfg.cl_logout")}</button>
+                )}
+                {st.inherited && (
+                  <button className="btn-mini" onClick={startLogin}>{t("scfg.cl_login_own")}</button>
+                )}
+              </div>
+            ) : (
+              <button className="btn-outline sm" style={{ width: "auto" }} onClick={startLogin}>
+                {t("scfg.cl_login")}
+              </button>
+            )}
+          </div>
+
+          {login && (
+            <div style={{ margin: "8px 0" }}>
+              {login.state === "starting" && <p className="hint">{t("cn.qr_creating")}</p>}
+              {login.state === "pending" && (
+                <>
+                  <p className="hint">{t("scfg.cl_qr_hint")}</p>
+                  {login.png && <img src={login.png} alt="QR" style={{ width: 200, height: 200, display: "block" }} />}
+                </>
+              )}
+              {login.state === "need_password" && (
+                <div style={{ maxWidth: 320 }}>
+                  <p className="hint">{t("scfg.cl_2fa")}</p>
+                  <input type="password" value={pw} placeholder="••••••"
+                         onChange={(e) => setPw(e.target.value)}
+                         onKeyDown={(e) => e.key === "Enter" && sendPw()} />
+                  {login.error && <div className="status warn" style={{ marginTop: 6 }}>❌ {login.error}</div>}
+                  <button className="btn-primary sm" style={{ marginTop: 8 }} disabled={busy} onClick={sendPw}>
+                    {t("cn.tg_confirm")}
+                  </button>
+                </div>
+              )}
+              {login.state === "expired" && (
+                <div className="status warn">{t("cn.tg_qr_expired")}{" "}
+                  <button className="btn-mini" onClick={startLogin}>{t("cn.tg_new_qr")}</button>
+                </div>
+              )}
+              {login.state === "error" && <div className="status warn">❌ {login.error}</div>}
+            </div>
+          )}
+
+          {/* ② Acc NHẬN cuộc gọi (chính chủ) */}
+          <div className="field" style={{ marginTop: 10 }}>
+            <label className="field-label">{t("scfg.cl_step2")}</label>
+            {st.target_id ? (
+              <p className="hint" style={{ margin: "0 0 6px" }}>
+                🎯 {st.target_name || st.target_id}
+                {st.target_username ? ` (@${st.target_username})` : ""}
+              </p>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input style={{ width: 240 }} placeholder={t("scfg.cl_target_ph")}
+                     value={handle} onChange={(e) => setHandle(e.target.value)}
+                     onKeyDown={(e) => e.key === "Enter" && saveTarget()} />
+              <button className="btn-primary sm" style={{ width: "auto" }}
+                      disabled={busy || !st.logged_in || st.inherited} onClick={saveTarget}>
+                {t("scfg.cl_target_save")}
+              </button>
+            </div>
+            {!st.logged_in && <p className="hint" style={{ marginTop: 4 }}>{t("scfg.cl_need_login")}</p>}
+          </div>
+
+          {/* ③ Gọi thử */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+            <button className="btn-outline sm" style={{ width: "auto" }}
+                    disabled={busy || !st.logged_in || !st.target_id} onClick={testCall}>
+              {t("scfg.cl_test")}
+            </button>
+            {msg && <span className="savemsg" style={{ margin: 0 }}>{msg}</span>}
+          </div>
         </>
       )}
     </div>

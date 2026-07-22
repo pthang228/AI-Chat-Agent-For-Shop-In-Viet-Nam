@@ -48,7 +48,9 @@ def add_cors(resp):
         resp.headers["Access-Control-Allow-Origin"] = origin
     resp.headers["Vary"] = "Origin"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    # X-Shop: client chọn SHOP CON đang làm việc (auth_api._requested_shop) —
+    # thiếu ở đây là preflight browser chặn, mọi request có header sẽ chết
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Shop"
     return resp
 
 

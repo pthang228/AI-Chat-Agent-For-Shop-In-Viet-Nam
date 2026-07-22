@@ -16,10 +16,11 @@ function proxyFor(prefixes, port) {
 const proxy = {
   ...proxyFor(['/meta', '/fb/webhook', '/payhook', '/posts', '/comments', '/media'], 5006),
   ...proxyFor([
-    '/auth', '/conversations', '/orders', '/notify', '/broadcasts', '/team',
-    '/teammates', '/customers', '/followups', '/copilot', '/canned', '/support',
-    '/bot-status', '/bot-toggle', '/stats', '/health', '/photos', '/vouchers',
-    '/sheets', '/zalo', '/zalo-node', '/admin/shops', '/billing/', '/prompt/',
+    '/auth', '/conversations', '/orders', '/notify', '/caller', '/broadcasts',
+    '/team', '/teammates', '/customers', '/followups', '/copilot', '/canned',
+    '/support', '/bot-status', '/bot-toggle', '/stats', '/health', '/photos',
+    '/vouchers', '/sheets', '/zalo', '/zalo-node', '/admin/shops', '/billing/',
+    '/prompt/',
   ], 5005),
   ...proxyFor(['/tg'], 5007),
   ...proxyFor(['/shopee'], 5009),

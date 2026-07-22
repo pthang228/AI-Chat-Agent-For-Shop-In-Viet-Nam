@@ -98,6 +98,18 @@ def _features_of(row) -> dict:
 
 # ── Khởi tạo / trạng thái ───────────────────────────────────────────
 
+def account_of(workspace: str) -> str:
+    """SHOP CON dùng chung gói tài khoản: workspace là shop con (bảng shops) →
+    quy về tài khoản chính; còn lại giữ nguyên. Mọi entry-point billing nhận
+    owner/workspace từ kênh PHẢI qua đây — nếu không, shop con sẽ bị tạo nhầm
+    một dòng billing trial riêng."""
+    try:
+        from app.core import shops
+        return shops.account_of(workspace)
+    except Exception:
+        return workspace
+
+
 def ensure_billing(username: str, promo: str = None):
     """Tạo dòng billing (trial) cho user nếu chưa có."""
     db = get_db()
@@ -377,6 +389,7 @@ def record_token_usage(username: str, model_key: str,
     kỳ khác) + shop bật 'tính theo usage' → TRỪ VÍ + cộng usage_spent
     (reset theo tháng usage_period) — giống extra usage của Claude.
     MỌI lượt (trong lẫn ngoài quota) đều vào ai_usage_log để soi giá vốn/shop."""
+    username = account_of(username)   # shop con → ví/quota của tài khoản chính
     from app.core import ai_models
     cost = ai_models.cost_vnd(model_key, tokens_in, tokens_out)
     cost_i = max(1, round(cost)) if (tokens_in or tokens_out) else 0
@@ -438,6 +451,7 @@ def ai_costs_by_shop(month: str = None) -> list:
 def tier_of(username: str) -> str:
     """Hạng gói hiện tại của user ('trial' khi chưa có dòng billing) — cho
     ai_models chặn model vượt hạng lúc runtime, không tạo dòng billing mới."""
+    username = account_of(username)   # shop con → hạng gói tài khoản chính
     try:
         rows = get_db().query("SELECT tier FROM billing WHERE username=?", (username,))
         return (rows[0]["tier"] if rows else "") or "trial"
@@ -700,7 +714,9 @@ def admin_revoke(username: str) -> dict:
 
 def channel_gate(owner_username: str) -> bool:
     """Cổng cho 1 tin đến kênh: nếu biết chủ (owner_username) → theo gói+quota của
-    chủ, đồng thời GHI 1 lượt AI khi cho qua. Không biết chủ → gate toàn cục."""
+    chủ, đồng thời GHI 1 lượt AI khi cho qua. Không biết chủ → gate toàn cục.
+    SHOP CON: owner có thể là ws shop con → quy về tài khoản chính (gói chung)."""
+    owner_username = account_of(owner_username)
     if owner_username:
         if not can_reply(owner_username):
             return False

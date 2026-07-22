@@ -7,7 +7,7 @@ import { billing as billingApi } from "../billingApi.js";
 import { IcHome, IcBack } from "../components/icons.jsx";
 import LogoMark from "../components/LogoMark.jsx";
 import BackLink from "../components/BackLink.jsx";
-import { NotifyCard, BankCard, CannedCard } from "../components/ShopConfigCards.jsx";
+import { NotifyCard, CallerCard, BankCard, CannedCard } from "../components/ShopConfigCards.jsx";
 import StyleLibrary from "../components/StyleLibrary.jsx";
 import { InterviewCard, ReportCard, HealthCard } from "../components/TeachCards.jsx";
 import { useI18n } from "../i18n.jsx";
@@ -452,6 +452,7 @@ export default function PromptBuilder() {
           <h3 style={{ fontSize: 18, marginBottom: 4 }}>{t("pb.cfg.title")}</h3>
           <p className="hint">{t("pb.cfg.hint")}</p>
           <NotifyCard />
+          <CallerCard />
           <CannedCard />
         </div>
 

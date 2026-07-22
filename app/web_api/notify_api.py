@@ -10,7 +10,10 @@ import logging
 from flask import request
 
 from app.core import notify
-from app.web_api.auth_api import current_username
+# current_workspace (KHÔNG phải current_username): staff quy về chủ + tôn trọng
+# X-Shop — đứng ở shop con thì Cài đặt đọc/lưu config CỦA SHOP ĐÓ (chưa lưu
+# riêng thì notify.get_config tự fallback config tài khoản chính)
+from app.web_api.auth_api import current_workspace as current_username
 
 log = logging.getLogger("notify_api")
 

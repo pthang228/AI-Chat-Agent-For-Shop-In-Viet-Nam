@@ -132,11 +132,39 @@ def workspace_of(row) -> str:
     return own if (role_of(row) == "staff" and own) else row["username"]
 
 
+def _requested_shop(base: str) -> str:
+    """SHOP CON: workspace thật của request = header X-Shop nếu đó là shop
+    (mặc định hoặc con) CỦA CHÍNH tài khoản base — sai/thiếu/của người khác →
+    base (an toàn, không 403 để client cũ không header chạy y như trước)."""
+    try:
+        ws = (request.headers.get("X-Shop") or "").strip()
+    except Exception:            # ngoài request context (job nền/test gọi thẳng)
+        return base
+    if not ws or ws == base:
+        return base
+    try:
+        from app.core import shops
+        if shops.is_shop_of(ws, base):
+            return ws
+    except Exception:
+        pass
+    return base
+
+
 def current_workspace(db=None):
-    """Username chủ workspace của request hiện tại (staff quy về chủ), hoặc None."""
+    """Workspace của request hiện tại: username chủ (staff quy về chủ), rồi nếu
+    client chọn shop con (header X-Shop hợp lệ) → ws shop đó. None = chưa login."""
     from app.core.db import get_db
     u = _user_for_token(db or get_db(), _bearer())
-    return workspace_of(u) if u else None
+    return _requested_shop(workspace_of(u)) if u else None
+
+
+def request_workspace(u) -> str:
+    """Workspace của request khi ĐÃ có user row (từ _auth_or_401) — như
+    current_workspace nhưng không tra token lần 2. MỌI endpoint lọc dữ liệu
+    theo shop phải dùng hàm này (KHÔNG dùng workspace_of trần — bỏ qua X-Shop
+    là shop con nhìn thấy dữ liệu shop khác)."""
+    return _requested_shop(workspace_of(u))
 
 
 def _public_user(row) -> dict:
@@ -516,6 +544,20 @@ def register_auth_routes(app):
         return jsonify(out)
 
     # ── App (kênh chat) của user — thay localStorage hb_apps ────────
+    # SHOP CON: app gắn vào shop đang chọn (header X-Shop). shop_ws='' = shop
+    # mặc định (app cũ tự thuộc về đây). Mỗi shop chỉ 1 bot MỖI LOẠI kênh.
+
+    # messenger/instagram là biến thể cũ của cùng loại "meta"
+    _CH_GROUP = {"meta": ("meta", "messenger", "instagram"),
+                 "messenger": ("meta", "messenger", "instagram"),
+                 "instagram": ("meta", "messenger", "instagram")}
+
+    def _shop_ctx(u):
+        """(account, shop_ws) của request: account = chủ workspace; shop_ws =
+        '' nếu đang ở shop mặc định, ngược lại ws shop con (đã validate)."""
+        account = workspace_of(u)
+        active = _requested_shop(account)
+        return account, ("" if active == account else active)
 
     @app.route("/auth/apps")
     def auth_apps():
@@ -523,10 +565,11 @@ def register_auth_routes(app):
         if err:
             return err
         # Staff xem app của CHỦ workspace (chỉ đọc — thêm/xoá bị chặn bên dưới)
+        account, shop_ws = _shop_ctx(u)
         rows = db.query(
             "SELECT id, name, channel, created_at, ai_model FROM user_apps "
-            "WHERE username=? ORDER BY created_at",
-            (workspace_of(u),))
+            "WHERE username=? AND shop_ws=? ORDER BY created_at",
+            (account, shop_ws))
         return jsonify([
             {"id": r["id"], "name": r["name"], "channel": r["channel"],
              "createdAt": r["created_at"], "ai_model": r["ai_model"] or ""}
@@ -543,17 +586,26 @@ def register_auth_routes(app):
         data = request.get_json(force=True, silent=True) or {}
         name = (data.get("name") or "").strip() or "App chưa đặt tên"
         channel = (data.get("channel") or "zalo").strip()
-        # Chống trùng khi migrate từ localStorage chạy lại
+        account, shop_ws = _shop_ctx(u)
+        # MỖI SHOP CHỈ 1 BOT MỖI LOẠI: đã có kênh cùng loại trong shop → chặn.
+        # Cùng tên + cùng kênh → coi là migrate localStorage chạy lại (trả app cũ).
+        group = _CH_GROUP.get(channel, (channel,))
+        ph = ",".join("?" * len(group))
         dup = db.query(
-            "SELECT id FROM user_apps WHERE username=? AND name=? AND channel=?",
-            (u["username"], name, channel))
+            f"SELECT id, name FROM user_apps WHERE username=? AND shop_ws=? "
+            f"AND channel IN ({ph})", (account, shop_ws, *group))
         if dup:
-            return {"ok": True, "app": {"id": dup[0]["id"], "name": name, "channel": channel},
-                    "duplicated": True}
+            if dup[0]["name"] == name:
+                return {"ok": True, "app": {"id": dup[0]["id"], "name": name,
+                                            "channel": channel}, "duplicated": True}
+            return {"ok": False, "error":
+                    "Shop này đã có kênh loại này rồi — mỗi shop chỉ thêm được "
+                    "1 bot mỗi loại. Muốn thêm bot nữa, tạo shop mới nhé."}, 409
         app_id = str(uuid.uuid4())
         db.execute(
-            "INSERT INTO user_apps(id, username, name, channel, created_at) VALUES (?,?,?,?,?)",
-            (app_id, u["username"], name, channel, datetime.now().isoformat()))
+            "INSERT INTO user_apps(id, username, name, channel, created_at, shop_ws)"
+            " VALUES (?,?,?,?,?,?)",
+            (app_id, account, name, channel, datetime.now().isoformat(), shop_ws))
         return {"ok": True, "app": {"id": app_id, "name": name, "channel": channel}}
 
     @app.route("/auth/apps/<app_id>/ai-model", methods=["POST"])
@@ -595,6 +647,60 @@ def register_auth_routes(app):
         if role_of(u) != "owner":
             return {"ok": False, "error": "Nhân viên không được xoá kênh"}, 403
         db.execute("DELETE FROM user_apps WHERE username=? AND id=?", (u["username"], app_id))
+        return {"ok": True}
+
+    # ── SHOP CON: nhiều shop trong 1 tài khoản (xem app/core/shops.py) ──
+
+    @app.route("/auth/shops")
+    def auth_shops():
+        u, err = _auth_or_401()
+        if err:
+            return err
+        from app.core import shops
+        return jsonify(shops.list_for(owner=workspace_of(u)))
+
+    @app.route("/auth/shops", methods=["POST"])
+    def auth_shops_add():
+        u, err = _auth_or_401()
+        if err:
+            return err
+        if role_of(u) != "owner":
+            return {"ok": False, "error": "Nhân viên không được tạo shop"}, 403
+        from app.core import shops
+        name = ((request.get_json(force=True, silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return {"ok": False, "error": "Đặt tên cho shop mới"}, 400
+        return {"ok": True, "shop": shops.create(u["username"], name)}
+
+    @app.route("/auth/shops/<path:ws>/rename", methods=["POST"])
+    def auth_shops_rename(ws):
+        u, err = _auth_or_401()
+        if err:
+            return err
+        if role_of(u) != "owner":
+            return {"ok": False, "error": "Nhân viên không được sửa shop"}, 403
+        from app.core import shops
+        name = ((request.get_json(force=True, silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return {"ok": False, "error": "Tên không được rỗng"}, 400
+        # Shop mặc định (ws = username) cũng đổi tên được
+        if ws == u["username"]:
+            shops.ensure_default(u["username"])
+        if not shops.rename(u["username"], ws, name):
+            return {"ok": False, "error": "Không tìm thấy shop"}, 404
+        return {"ok": True}
+
+    @app.route("/auth/shops/<path:ws>", methods=["DELETE"])
+    def auth_shops_remove(ws):
+        u, err = _auth_or_401()
+        if err:
+            return err
+        if role_of(u) != "owner":
+            return {"ok": False, "error": "Nhân viên không được xoá shop"}, 403
+        from app.core import shops
+        ok, msg = shops.remove(u["username"], ws)
+        if not ok:
+            return {"ok": False, "error": msg}, 400
         return {"ok": True}
 
     return app

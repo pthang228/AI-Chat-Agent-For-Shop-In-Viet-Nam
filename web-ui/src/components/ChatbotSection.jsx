@@ -1,30 +1,18 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { currentUser } from "../auth.js";
 import { useI18n } from "../i18n.jsx";
+import { shopApi, getActiveShop, setActiveShop } from "../shopApi.js";
 import AppsGrid from "./AppsGrid.jsx";
 import BotTester from "./BotTester.jsx";
 import PhotoLibrary from "./PhotoLibrary.jsx";
 
 /*
- * Mục "Chatbot" (mô hình AloChat):
- *   Shop  →  nhiều "con AI" (chính là các KÊNH: Zalo, Meta, Telegram, TikTok).
- *   Mỗi shop DÙNG CHUNG 1 bộ não → nút "Dạy AI" đặt ở cấp SHOP.
- * Danh sách shop lưu localStorage (hb_chatbots); kênh lấy từ AppsGrid (backend 5005).
- * LƯU Ý: backend hiện single-tenant nên mọi shop tạm dùng chung tập kênh — khi có
- * API gắn kênh theo shop_id thì truyền shopId xuống AppsGrid là xong.
+ * Mục "Chatbot" — SHOP CON THẬT (server /auth/shops, không còn localStorage):
+ *   Mỗi shop = 1 workspace ĐỘC LẬP: kênh, hội thoại, khách, đơn, não AI riêng;
+ *   gói cước dùng chung tài khoản. Mỗi shop chỉ thêm 1 bot MỖI LOẠI kênh
+ *   (backend chặn 409). Đổi tab shop = đổi shop TOÀN APP (header X-Shop) →
+ *   reload để mọi mục (Hội thoại/Khách/Đơn/Broadcast/Thống kê) nạp đúng shop.
  */
-const KEY = "hb_chatbots";
-const uid = () => Math.random().toString(36).slice(2, 10);
-
-function loadData() {
-  try {
-    const d = JSON.parse(localStorage.getItem(KEY));
-    if (d && Array.isArray(d.shops)) return { shops: d.shops.map((s) => ({ id: s.id, name: s.name })) };
-  } catch { /* ignore */ }
-  return { shops: [] };
-}
-function saveData(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
 
 function QuickAdd({ placeholder, onAdd, onCancel }) {
   const { t } = useI18n();
@@ -48,62 +36,66 @@ function QuickAdd({ placeholder, onAdd, onCancel }) {
 export default function ChatbotSection() {
   const { t } = useI18n();
   const nav = useNavigate();
-  const user = currentUser();
-  const [data, setData] = useState(loadData);
-  const [activeShop, setActiveShop] = useState(null);
+  const [shops, setShops] = useState(null);   // null=đang tải | mảng | "offline"
   const [addingShop, setAddingShop] = useState(false);
   const [chStat, setChStat] = useState({ total: null, on: null });
   const [showTester, setShowTester] = useState(false);
 
-  // Seed 1 shop mặc định lần đầu (tên từ tài khoản); nhớ shop đang chọn qua phiên
   useEffect(() => {
-    if (data.shops.length === 0) {
-      const name = user?.homestay || user?.username || t("cb.my_shop");
-      const seed = { shops: [{ id: uid(), name }] };
-      setData(seed); saveData(seed); setActiveShop(seed.shops[0].id);
-    } else if (!activeShop) {
-      const saved = localStorage.getItem("hb_active_shop");
-      const found = data.shops.find((s) => s.id === saved);
-      setActiveShop(found ? saved : data.shops[0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    shopApi.list().then((r) => {
+      if (r.ok && Array.isArray(r.body)) setShops(r.body);
+      else setShops("offline");
+    });
   }, []);
 
-  function chooseShop(id) { setActiveShop(id); localStorage.setItem("hb_active_shop", id); }
+  if (shops === null) return <div className="empty"><p>{t("app.loading_list")}</p></div>;
+  if (shops === "offline") return <div className="empty"><p>{t("app.offline")}</p></div>;
 
-  function commit(next) { setData(next); saveData(next); }
+  const defaultWs = shops.find((s) => s.is_default)?.ws || "";
+  const saved = getActiveShop();
+  const activeWs = shops.some((s) => s.ws === saved) ? saved : defaultWs;
+  const shop = shops.find((s) => s.ws === activeWs);
+  const shopName = (s) => s?.name || t("cb.my_shop");
 
-  function addShop(name) {
-    const shop = { id: uid(), name };
-    commit({ shops: [...data.shops, shop] });
-    setActiveShop(shop.id); setAddingShop(false);
+  // Đổi shop = đổi workspace TOÀN APP → reload cho mọi mục nạp lại đúng shop
+  function switchShop(ws) {
+    if (ws === activeWs) return;
+    setActiveShop(ws === defaultWs ? "" : ws);
+    window.location.reload();
   }
-  function renameShop(id) {
-    const cur = data.shops.find((s) => s.id === id);
+  async function addShop(name) {
+    const r = await shopApi.create(name);
+    if (r.ok && r.body?.ok) { setActiveShop(r.body.shop.ws); window.location.reload(); }
+    else alert("❌ " + (r.body?.error || "Lỗi tạo shop"));
+  }
+  async function renameShop(ws) {
+    const cur = shops.find((s) => s.ws === ws);
     const name = prompt(t("cb.rename_prompt"), cur?.name || "");
-    if (name && name.trim())
-      commit({ shops: data.shops.map((s) => s.id === id ? { ...s, name: name.trim() } : s) });
+    if (!name || !name.trim()) return;
+    const r = await shopApi.rename(ws, name.trim());
+    if (r.ok && r.body?.ok) window.location.reload();
+    else alert("❌ " + (r.body?.error || "Lỗi đổi tên"));
   }
-  function removeShop(id) {
-    if (data.shops.length <= 1) { alert(t("cb.keep_one")); return; }
+  async function removeShop(ws) {
+    if (shops.length <= 1) { alert(t("cb.keep_one")); return; }
     if (!confirm(t("cb.del_confirm"))) return;
-    const shops = data.shops.filter((s) => s.id !== id);
-    commit({ shops });
-    if (activeShop === id) setActiveShop(shops[0]?.id || null);
+    const r = await shopApi.remove(ws);
+    if (r.ok && r.body?.ok) {
+      if (getActiveShop() === ws) setActiveShop("");
+      window.location.reload();
+    } else alert("❌ " + (r.body?.error || "Lỗi xoá shop"));
   }
-
-  const shop = data.shops.find((s) => s.id === activeShop);
 
   return (
     <div className="cb">
-      {/* ── Thanh chọn shop ── */}
+      {/* ── Thanh chọn shop (server) ── */}
       <div className="cb-shops">
-        {data.shops.map((s) => (
-          <button key={s.id}
-                  className={"cb-shop-tab" + (s.id === activeShop ? " active" : "")}
-                  onClick={() => chooseShop(s.id)}>
+        {shops.map((s) => (
+          <button key={s.ws}
+                  className={"cb-shop-tab" + (s.ws === activeWs ? " active" : "")}
+                  onClick={() => switchShop(s.ws)}>
             <span className="cb-shop-ic">🏬</span>
-            <span className="cb-shop-name">{s.name}</span>
+            <span className="cb-shop-name">{shopName(s)}</span>
           </button>
         ))}
         {addingShop
@@ -118,7 +110,7 @@ export default function ChatbotSection() {
           {/* ── Đầu shop: tên + Dạy AI cấp shop ── */}
           <div className="cb-shop-head">
             <div>
-              <h3>{shop.name}</h3>
+              <h3>{shopName(shop)}</h3>
               <span className="page-sub">
                 {chStat.total != null
                   ? t("cb.ai_count", { n: chStat.total }) + (chStat.on != null ? t("cb.ai_on", { n: chStat.on }) : "")
@@ -136,8 +128,10 @@ export default function ChatbotSection() {
                       title={t("cb.test_title")}>
                 {t("cb.test")}
               </button>
-              <button className="btn-ghost sm" onClick={() => renameShop(shop.id)}>{t("cb.rename")}</button>
-              <button className="btn-mini danger" onClick={() => removeShop(shop.id)}>{t("cb.del_shop")}</button>
+              <button className="btn-ghost sm" onClick={() => renameShop(shop.ws)}>{t("cb.rename")}</button>
+              {!shop.is_default && (
+                <button className="btn-mini danger" onClick={() => removeShop(shop.ws)}>{t("cb.del_shop")}</button>
+              )}
             </div>
           </div>
 
@@ -148,12 +142,10 @@ export default function ChatbotSection() {
 
           {showTester && <BotTester onClose={() => setShowTester(false)} />}
 
-          {/* ── Con AI = các kênh CỦA SHOP NÀY (key theo shop → remount khi đổi shop) ── */}
-          <AppsGrid key={activeShop} shopId={activeShop}
-                    isDefaultShop={data.shops[0]?.id === activeShop}
-                    onStats={setChStat} />
+          {/* ── Con AI = kênh CỦA SHOP NÀY (server lọc theo header X-Shop) ── */}
+          <AppsGrid key={activeWs} onStats={setChStat} />
 
-          {/* ── Thư viện ảnh — bộ ảnh đặt tên để bot gửi khách ── */}
+          {/* ── Thư viện ảnh — bộ ảnh theo shop (tenant = shop đang chọn) ── */}
           <PhotoLibrary />
         </>
       )}

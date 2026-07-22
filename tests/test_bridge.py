@@ -233,6 +233,53 @@ with patch.object(bridge_mod, 'threading') as mth, \
         sent = (mget.call_args.kwargs.get("params") or {}) if mget.call_args else {}
         check(sent.get("acc") == "acc-shopB", "E4 admin_keeps_acc", f"params={sent}")
 
+    # ── F. Nút Trợ lý AI theo SHOP: kênh trần của shop thường → key 'kênh:<id>'
+    # CỦA SHOP (không đụng cờ toàn cục — trước đây shop bấm là 403 "không được")
+    print("\n── F. Bot-toggle theo shop ──")
+    from app.core.zalo_oa_store import ZaloOAStore
+    _oas = ZaloOAStore()
+    _oas.upsert("OA_F1", access_token="t", name="OA F", owner_username="shopA@x")
+    with patch.object(bridge_mod, "_ws", return_value="shopA@x"), \
+         patch("app.core.tenant.is_platform_admin", return_value=False):
+        fc.owner.clear()
+        r = client.post("/bot-toggle", json={"enabled": False, "channel": "zalooa"})
+        check(r.status_code == 200 and r.get_json().get("ok") is True,
+              "F1 shop tắt kênh trần → 200 (hết 403)", r.get_json())
+        st = bridge_mod._load_bot_state()
+        check(st.get("channels", {}).get("zalooa:OA_F1") is False,
+              "F2 ghi key zalooa:<OA> của shop", st.get("channels"))
+        check(st.get("channels", {}).get("zalooa") is True,
+              "F3 cờ zalooa TOÀN CỤC không bị đụng", st.get("channels"))
+        check(not fc.owner, "F4 không spam nhóm chủ nền tảng", fc.owner)
+        r = client.get("/bot-status?channel=zalooa")
+        check(r.get_json().get("enabled") is False,
+              "F5 status kênh trần = trạng thái bot CỦA SHOP", r.get_json())
+        r = client.post("/bot-toggle", json={"enabled": True, "channel": "zalooa"})
+        st = bridge_mod._load_bot_state()
+        check(r.get_json().get("ok") is True and st["channels"].get("zalooa:OA_F1") is True,
+              "F6 bật lại OK", st.get("channels"))
+        r = client.post("/bot-toggle", json={"enabled": False, "channel": "meta"})
+        check(r.status_code == 400, "F7 kênh shop chưa kết nối → 400 lỗi rõ", r.status_code)
+        r = client.post("/bot-toggle", json={"enabled": False, "channel": "all"})
+        check(r.status_code == 403, "F8 'all' vẫn chỉ dành cho quản trị nền tảng", r.status_code)
+    _oas.clear()
+
+    # ── G. Thống kê chất lượng: latency đo E2E qua brain + /stats/quality ──
+    print("\n── G. Latency + /stats/quality ──")
+    from app.core.db import get_db as _gdb
+    # các flow A/C ở trên đã cho brain trả lời thật → latency_log phải có dòng
+    _nlat = _gdb().query("SELECT COUNT(*) n FROM latency_log")[0]["n"]
+    check(_nlat >= 1, "G1 brain.handle tự ghi thời gian phản hồi (E2E)", _nlat)
+    r = client.get("/stats/quality")
+    check(r.status_code == 200 and r.get_json().get("ok") is True, "G2 endpoint sống", r.text)
+    q = r.get_json()
+    check(q["latency"]["n"] >= 1 and q["latency"]["avg"] >= 0, "G3 latency có số liệu", q["latency"])
+    check("misses" in q, "G4 có đếm câu bot bí", q)
+    r = client.get("/stats")
+    tl = (r.get_json() or {}).get("timeline") or []
+    check(tl and "user" in tl[0] and "bot" in tl[0],
+          "G5 /stats timeline có user/bot theo ngày", tl[:1])
+
 print("\n── B. ZaloNodeChannel gọi Node đúng ──")
 with patch.object(httputil.requests, 'post') as mreq:
     calls=[]

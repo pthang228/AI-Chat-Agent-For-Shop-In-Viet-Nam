@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchStats, periodDates } from "../statsApi.js";
+import { fetchStats, fetchQuality, periodDates } from "../statsApi.js";
 import { useI18n } from "../i18n.jsx";
 
 /* ── Bảng màu kênh (khớp Dashboard/StatsPanel) ── */
@@ -206,14 +206,20 @@ function ChartCard({ title, extra, children }) {
 export default function OverviewCharts({ period = "30d", onData }) {
   const { t } = useI18n();
   const [data, setData] = useState(null);
+  const [quality, setQuality] = useState(null);   // {latency:{avg,p95,timeline}, misses}
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let dead = false;
     setLoading(true);
-    fetchStats("all", period)
-      .then((d) => { if (!dead) { setData(d); setLoading(false); if (onData) onData(d); } })
-      .catch(() => { if (!dead) { setData(null); setLoading(false); if (onData) onData(null); } });
+    Promise.all([fetchStats("all", period), fetchQuality(period)])
+      .then(([d, q]) => {
+        if (dead) return;
+        setData(d); setQuality(q); setLoading(false);
+        // đính avg latency vào payload cho KPI "Thời gian phản hồi TB" ở Overview
+        if (onData) onData(d ? { ...d, latency_avg: q?.latency?.avg ?? 0, latency_n: q?.latency?.n ?? 0 } : null);
+      })
+      .catch(() => { if (!dead) { setData(null); setQuality(null); setLoading(false); if (onData) onData(null); } });
     return () => { dead = true; };
   }, [period]);
 
@@ -224,10 +230,21 @@ export default function OverviewCharts({ period = "30d", onData }) {
     for (const t of data.timeline || []) tmap[t.date] = t;
     const conv = days.map((d) => (tmap[d]?.conv) || 0);
     const msg  = days.map((d) => (tmap[d]?.msg) || 0);
-    // Tỷ lệ AI trả lời/ngày — proxy: có tin bot trong ngày = 100%, không thì 0
-    const aiRate = days.map((d) => ((tmap[d]?.msg) > 0 ? 100 : 0));
-    return { days, conv, msg, aiRate };
-  }, [data, period]);
+    // Tỷ lệ AI trả lời/ngày — THẬT: tin bot / tin khách của hội thoại chốt ngày
+    // đó (server trả user/bot theo ngày; server cũ chưa có → fallback proxy cũ)
+    const aiRate = days.map((d) => {
+      const e = tmap[d];
+      if (!e) return 0;
+      if (e.user != null && e.user > 0) return Math.min(100, Math.round((e.bot / e.user) * 100));
+      return e.msg > 0 ? 100 : 0;
+    });
+    // Thời gian phản hồi theo ngày (avg + P95) từ latency_log
+    const lmap = {};
+    for (const l of quality?.latency?.timeline || []) lmap[l.date] = l;
+    const latAvg = days.map((d) => lmap[d]?.avg || 0);
+    const latP95 = days.map((d) => lmap[d]?.p95 || 0);
+    return { days, conv, msg, aiRate, latAvg, latP95 };
+  }, [data, quality, period]);
 
   if (loading) {
     return <div className="ov-loading"><div className="stats-spinner" /> {t("chart.loading")}</div>;
@@ -239,7 +256,11 @@ export default function OverviewCharts({ period = "30d", onData }) {
   }
 
   const botMsg = data.bot_msg || 0;
-  const byChannel = data.by_channel || {};
+  // Donut "TIN NHẮN theo nền tảng" dùng SỐ TIN (by_channel_msg); bản cũ dùng
+  // nhầm by_channel (số hội thoại) — giữ fallback cho server cũ
+  const byChannel = data.by_channel_msg || data.by_channel || {};
+  const hasLatency = (quality?.latency?.n || 0) > 0;
+  const misses = quality?.misses || 0;
 
   return (
     <div className="charts-grid">
@@ -259,25 +280,32 @@ export default function OverviewCharts({ period = "30d", onData }) {
         <Donut data={byChannel} />
       </ChartCard>
 
-      {/* 3 — Thời gian phản hồi (giây) */}
-      <ChartCard title={t("chart.latency")}>
+      {/* 3 — Thời gian phản hồi (giây) — số THẬT từ latency_log (đo ở não bot) */}
+      <ChartCard
+        title={t("chart.latency")}
+        extra={hasLatency ? (
+          <span className="chart-sub">
+            TB <b style={{ color: "#23a065" }}>{quality.latency.avg}s</b> · P95{" "}
+            <b style={{ color: "#cf9536" }}>{quality.latency.p95}s</b>
+          </span>
+        ) : null}
+      >
         <LineChart
           labels={built.days}
           ySuffix="s"
-          yMax={28}
           series={[
-            { name: t("chart.avg"), color: "#23a065", values: built.days.map(() => 0) },
-            { name: "P95",        color: "#cf9536", values: built.days.map(() => 0), dash: true },
+            { name: t("chart.avg"), color: "#23a065", values: built.latAvg, fill: true },
+            { name: "P95",        color: "#cf9536", values: built.latP95, dash: true },
           ]}
         />
-        <div className="chart-note">{t("chart.latency_note")}</div>
+        {!hasLatency && <div className="chart-note">{t("chart.latency_note")}</div>}
       </ChartCard>
 
-      {/* 4 — Tỷ lệ AI trả lời theo ngày */}
+      {/* 4 — Tỷ lệ AI trả lời theo ngày (bot/khách) + số câu bot BÍ trong kỳ */}
       <ChartCard
         title={t("chart.ai_rate")}
         extra={<span className="chart-sub">
-          <b style={{ color: "var(--ok)" }}>{botMsg} {t("chart.ok")}</b> / <b>0 {t("chart.fail")}</b>
+          <b style={{ color: "var(--ok)" }}>{botMsg} {t("chart.ok")}</b> / <b>{misses} {t("chart.fail")}</b>
         </span>}
       >
         <LineChart

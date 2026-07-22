@@ -22,46 +22,27 @@ const ADD_CHANNELS = ["zalo", "zalooa", "meta", "telegram", "shopee", "webchat"]
 
 export function botKey(ch) { return (ch === "messenger" || ch === "instagram") ? "meta" : ch; }
 
-// Kênh (app) thuộc shop nào — backend single-tenant chưa có shop_id nên map tạm
-// ở localStorage. Khi có API theo shop_id thì bỏ lớp này, lọc thẳng từ server.
-const APP_SHOP_KEY = "hb_app_shop";
-function loadAppShop() {
-  try { return JSON.parse(localStorage.getItem(APP_SHOP_KEY)) || {}; }
-  catch { return {}; }
-}
-function saveAppShop(m) { localStorage.setItem(APP_SHOP_KEY, JSON.stringify(m)); }
-
 /*
- * Lưới quản lý kênh (apps) của MỘT shop. Lọc theo shopId; app chưa gắn shop →
- * gán vào shop mặc định (shop đầu tiên). onStats báo tổng/đang-bật ra ngoài.
+ * Lưới quản lý kênh (apps) của MỘT shop. Server đã lọc theo shop đang chọn
+ * (header X-Shop từ http.js) — không còn lớp map localStorage hb_app_shop.
+ * Mỗi shop chỉ 1 bot MỖI LOẠI kênh: modal disable kênh đã có (backend chặn 409).
  */
-export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false }) {
+export default function AppsGrid({ onStats }) {
   const { t } = useI18n();
   const nav = useNavigate();
-  const [apps, setApps] = useState(null);      // null=đang tải | mảng | "offline"  (TẤT CẢ app của user)
+  const [apps, setApps] = useState(null);      // null=đang tải | mảng | "offline"
   const [showAdd, setShowAdd] = useState(false);
   const [botMap, setBotMap] = useState({});
 
-  const allApps = Array.isArray(apps) ? apps : [];
-  // Chỉ hiện app của shop này. Không truyền shopId (tương thích cũ) → hiện tất cả.
-  const appList = shopId
-    ? allApps.filter((a) => loadAppShop()[a.id] === shopId)
-    : allApps;
+  const appList = Array.isArray(apps) ? apps : [];
   const channels = [...new Set(appList.map((a) => botKey(a.channel)))];
 
   async function refresh() {
     const r = await getApps();
     if (r === "unauth") { logout(); nav("/login"); return; }
-    // Shop mặc định "nhận" mọi app chưa gắn shop nào (app cũ tạo trước khi có shop)
-    if (Array.isArray(r) && shopId && isDefaultShop) {
-      const m = loadAppShop();
-      let changed = false;
-      for (const a of r) if (!m[a.id]) { m[a.id] = shopId; changed = true; }
-      if (changed) saveAppShop(m);
-    }
     setApps(r);
   }
-  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [shopId]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   useEffect(() => {
     channels.forEach((c) => {
@@ -82,15 +63,13 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
 
   async function handleAdd({ name, channel }) {
     try {
-      const app = await addApp({ name, channel });
-      if (app?.id && shopId) { const m = loadAppShop(); m[app.id] = shopId; saveAppShop(m); }
+      await addApp({ name, channel });
     } catch (e) { alert("❌ " + e.message); }
     setShowAdd(false); refresh();
   }
   async function handleRemove(id) {
     if (!confirm(t("app.del_confirm"))) return;
     try { await removeApp(id); } catch (e) { alert("❌ " + e.message); }
-    const m = loadAppShop(); if (m[id]) { delete m[id]; saveAppShop(m); }
     refresh();
   }
   async function toggleBot(channel) {
@@ -99,7 +78,9 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
     const next = !cur;
     setBotMap((m) => ({ ...m, [channel]: next }));
     const r = await brain.botToggle(next, channel);
-    setBotMap((m) => ({ ...m, [channel]: (r.ok && r.body) ? !!r.body.enabled : "offline" }));
+    // lỗi có message (chưa kết nối kênh / không đủ quyền) → nói rõ thay vì im lặng
+    if (!r.ok && r.body?.error) alert("❌ " + r.body.error);
+    setBotMap((m) => ({ ...m, [channel]: (r.ok && r.body) ? !!r.body.enabled : (r.body?.error ? cur : "offline") }));
   }
 
   if (apps === null) return <div className="empty"><p>{t("app.loading_list")}</p></div>;
@@ -116,7 +97,7 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
       <button className="btn-primary sm" onClick={() => setShowAdd(true)} style={{ margin: "0 auto" }}>
         <IcPlus width={16} height={16} /> {t("app.add")}
       </button>
-      {showAdd && <AddAppModal onClose={() => setShowAdd(false)} onAdd={handleAdd} />}
+      {showAdd && <AddAppModal onClose={() => setShowAdd(false)} onAdd={handleAdd} taken={channels} />}
     </div>
   );
 
@@ -172,16 +153,21 @@ export default function AppsGrid({ onStats, shopId = null, isDefaultShop = false
           <span className="hint">{t("app.add_hint")}</span>
         </div>
       </div>
-      {showAdd && <AddAppModal onClose={() => setShowAdd(false)} onAdd={handleAdd} />}
+      {showAdd && <AddAppModal onClose={() => setShowAdd(false)} onAdd={handleAdd} taken={channels} />}
     </>
   );
 }
 
-function AddAppModal({ onClose, onAdd }) {
+function AddAppModal({ onClose, onAdd, taken = [] }) {
   const { t } = useI18n();
+  const takenSet = new Set(taken);   // loại kênh shop ĐÃ có → mỗi shop chỉ 1 bot/loại
   const [name, setName] = useState("");
-  const [channel, setChannel] = useState("zalo");
-  function submit(e) { e.preventDefault(); onAdd({ name, channel }); }
+  const [channel, setChannel] = useState(ADD_CHANNELS.find((k) => !takenSet.has(k)) || "zalo");
+  function submit(e) {
+    e.preventDefault();
+    if (takenSet.has(channel)) { alert("❌ " + t("app.ch_taken")); return; }
+    onAdd({ name, channel });
+  }
   return (
     <div className="modal-bg" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
@@ -192,10 +178,12 @@ function AddAppModal({ onClose, onAdd }) {
         <div className="ch-pick">
           {ADD_CHANNELS.map((key) => {
             const c = CHANNELS[key];
+            const off = takenSet.has(key);
             return (
-              <button type="button" key={key}
-                      className={"ch-opt" + (channel === key ? " active" : "")}
-                      onClick={() => setChannel(key)}>
+              <button type="button" key={key} disabled={off}
+                      className={"ch-opt" + (channel === key ? " active" : "") + (off ? " taken" : "")}
+                      title={off ? t("app.ch_taken") : undefined}
+                      onClick={() => !off && setChannel(key)}>
                 <ChannelTile ch={c.icon} size={30} color={c.color} /> {c.label}
               </button>
             );

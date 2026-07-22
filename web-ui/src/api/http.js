@@ -11,10 +11,21 @@
 
 const TOKEN_KEY = "hb_token";
 const USER_KEY = "hb_user";
+const SHOP_KEY = "hb_shop";   // SHOP CON đang chọn ('' = shop mặc định)
 
 // Token lưu ở localStorage (ghi nhớ đăng nhập) hoặc sessionStorage (mất khi đóng tab)
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
+}
+
+// SHOP CON: ws shop đang làm việc — đính header X-Shop vào MỌI request để
+// backend trả đúng dữ liệu shop đó (kênh/hội thoại/khách/đơn/não AI riêng).
+export function getActiveShop() {
+  return localStorage.getItem(SHOP_KEY) || "";
+}
+export function setActiveShop(ws) {
+  if (ws) localStorage.setItem(SHOP_KEY, ws);
+  else localStorage.removeItem(SHOP_KEY);
 }
 
 // Xoá sạch phiên ở CẢ 2 storage (đăng xuất / token hết hạn)
@@ -22,6 +33,7 @@ export function clearSession() {
   for (const s of [localStorage, sessionStorage]) {
     s.removeItem(TOKEN_KEY);
     s.removeItem(USER_KEY);
+    s.removeItem(SHOP_KEY);
     s.removeItem("hb_session"); // phiên kiểu cũ
   }
 }
@@ -69,6 +81,11 @@ export async function request(base, path, opts = {}) {
   }
   const token = auth ? getToken() : "";
   if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
+  // X-Shop đi kèm MỌI request có đăng nhập — kể cả client kiểu cũ truyền token
+  // tường minh với auth:false (authApi…); điều kiện là CÓ Authorization, không
+  // phải cờ auth (bẫy đã dính: addApp rơi vào shop mặc định vì thiếu header)
+  const shop = getActiveShop();
+  if (shop && headers.Authorization && !headers["X-Shop"]) headers["X-Shop"] = shop;
 
   try {
     const r = await fetch(base + path, { ...rest, headers, body });

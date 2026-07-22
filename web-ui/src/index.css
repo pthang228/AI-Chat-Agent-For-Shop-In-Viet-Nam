@@ -494,6 +494,11 @@ a.user-pill:hover { border-color: #d4cbea; background: var(--cream); text-decora
 .ch-opt { flex: 1; min-width: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 14px 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); font-size: 13px; cursor: pointer; transition: .15s; }
 .ch-opt:hover { background: var(--cream); }
 .ch-opt.active { border-color: var(--green); background: rgba(124,58,237,.05); color: var(--green); font-weight: 600; }
+/* Mỗi shop chỉ 1 bot mỗi loại — kênh shop đã có thì mờ đi, không bấm được */
+.ch-opt.taken, .ch-opt:disabled { opacity: .4; cursor: not-allowed; }
+.ch-opt.taken:hover { background: var(--card); }
+/* Chọn shop con ở topbar (bẫy rule global input/select width:100% → width auto) */
+.shop-switch { width: auto; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--card); font-size: 13.5px; font-weight: 600; cursor: pointer; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 
 /* ── GuideBox ── */
@@ -1195,7 +1200,9 @@ a.stats-icon-btn { text-decoration: none; }
 .sb.collapsed { width: 68px; }
 .sb-head {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; padding: 16px 14px; border-bottom: 1px solid var(--line);
+  gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--line);
+  /* CAO CỐ ĐỊNH = .shell-top → viền đáy 2 bên THẲNG HÀNG (trước lệch 4px) */
+  height: 68px; flex-shrink: 0;
 }
 .sb-logo { display: flex; align-items: center; gap: 9px; text-decoration: none; white-space: nowrap; }
 .sb-logo-mark {
@@ -1210,8 +1217,9 @@ a.stats-icon-btn { text-decoration: none; }
   padding: 5px; border-radius: 8px; display: grid; place-items: center;
 }
 .sb-collapse:hover { background: var(--field); color: var(--ink); }
-/* Thu gọn: xếp dọc logo + nút → nút MỞ RA vẫn hiện (trước đây bị ẩn) */
-.sb.collapsed .sb-head { flex-direction: column; gap: 10px; padding: 14px 8px; }
+/* Thu gọn: logo + nút mở nằm NGANG ép sát (giữ cao 68px cho thẳng hàng topbar;
+   trước xếp dọc làm đầu sidebar cao hơn topbar) */
+.sb.collapsed .sb-head { gap: 4px; padding: 0 4px; justify-content: center; }
 .sb.collapsed .sb-collapse { transform: rotate(180deg); }
 
 .sb-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
@@ -1234,8 +1242,9 @@ a.stats-icon-btn { text-decoration: none; }
 .shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .shell-top {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 26px; background: var(--card); border-bottom: 1px solid var(--line);
+  padding: 0 26px; background: var(--card); border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 5;
+  height: 68px;   /* = .sb-head — viền đáy thẳng hàng với sidebar */
 }
 .shell-title { font-family: var(--font-head); font-size: 20px; font-weight: 700; color: var(--ink); margin: 0; }
 .shell-body { padding: 22px 26px 40px; }

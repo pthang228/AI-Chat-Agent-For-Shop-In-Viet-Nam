@@ -89,7 +89,10 @@ def deliver_to_owner(tenant: str, subject: str, text: str, notify_fn=None) -> bo
 
 def get_config(username: str = None) -> dict:
     """Cấu hình của chủ (mặc định chủ chính). LUÔN trả dict đầy đủ (kể cả chưa
-    lưu bao giờ) để code gọi khỏi phải kiểm None."""
+    lưu bao giờ) để code gọi khỏi phải kiểm None.
+    SHOP CON: username có thể là ws shop con — shop chưa lưu config RIÊNG thì
+    fallback config của TÀI KHOẢN CHÍNH (khách shop 2 vẫn được đưa SĐT chủ);
+    shop con lưu riêng (Cài đặt khi đang đứng shop đó) thì bản riêng thắng."""
     username = username or _owner_username()
     cfg = {
         "username": username or "",
@@ -99,6 +102,15 @@ def get_config(username: str = None) -> dict:
     if not username:
         return cfg
     rows = get_db().query("SELECT * FROM notify_config WHERE username=?", (username,))
+    if not rows and "~" in str(username):
+        try:
+            from app.core import shops as _shops
+            acct = _shops.account_of(username)
+            if acct != username:
+                rows = get_db().query(
+                    "SELECT * FROM notify_config WHERE username=?", (acct,))
+        except Exception:
+            pass
     if rows:
         r = rows[0]
         cfg.update({
@@ -205,7 +217,17 @@ def alert(channel, event: str, msg: str, cfg: dict = None):
     except Exception as e:
         log.error(f"[notify] notify_owner lỗi: {e}")
     if mode == "call":
+        # GỌI THEO SHOP trước (acc Telegram phụ chủ shop tự cài — shop_caller,
+        # chạy được trên MỌI kênh); shop chưa cấu hình → fallback cơ chế cũ
+        # của kênh (Telegram per-bot / Telethon chủ nền tảng).
+        called = False
         try:
-            channel.call_owner()
+            from app.core import shop_caller
+            called = shop_caller.call((cfg or get_config()).get("username") or "")
         except Exception as e:
-            log.error(f"[notify] call_owner lỗi: {e}")
+            log.error(f"[notify] shop_caller lỗi: {e}")
+        if not called:
+            try:
+                channel.call_owner()
+            except Exception as e:
+                log.error(f"[notify] call_owner lỗi: {e}")

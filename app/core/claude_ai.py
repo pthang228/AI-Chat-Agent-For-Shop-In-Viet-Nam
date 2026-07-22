@@ -147,6 +147,33 @@ def _memory_block(user_id: str, account: str) -> str:
         return ""
 
 
+def _photo_block(shop: str) -> str:
+    """THƯ VIỆN ẢNH của shop — cho não AI BIẾT shop có bộ ảnh nào và cách chủ
+    động đính vào câu trả lời (thẻ [GUI_ANH: <tên bộ>], brain bắt thẻ và gửi).
+    Trước đây ảnh chỉ gửi khi khách gõ TRÚNG keyword — AI mù hoàn toàn.
+    Lỗi/không có bộ nào → rỗng (đường nóng của bot không được chết vì ảnh)."""
+    try:
+        from app.core import photo_library
+        owner = _owner_of_shop(shop)
+        if not owner:
+            return ""
+        sets = [s for s in photo_library.list_sets(tenant_ws=owner) if s.get("files")]
+        if not sets:
+            return ""
+        lines = []
+        for s in sets[:20]:
+            kw = ", ".join(s.get("keywords") or [])
+            lines.append(f"- {s['name']}" + (f" (khách hay hỏi: {kw})" if kw else ""))
+        return ("THƯ VIỆN ẢNH CỦA SHOP (các bộ ảnh gửi thẳng cho khách được):\n"
+                + "\n".join(lines) + "\n"
+                "Khi khách muốn xem ảnh, hoặc gửi ảnh giúp tư vấn/chốt khách tốt hơn, "
+                "thêm thẻ [GUI_ANH: <tên bộ>] vào CUỐI câu trả lời (mỗi thẻ 1 bộ, tối đa "
+                "2 thẻ). CHỈ dùng đúng tên bộ trong danh sách trên, không tự bịa tên. "
+                "KHÔNG nhắc tới thẻ này với khách — hệ thống tự gửi ảnh kèm tin nhắn.")
+    except Exception:
+        return ""
+
+
 def _owner_of_shop(shop: str) -> str | None:
     """Username CHỦ SHOP từ khoá não ('default' → chủ nền tảng) — dùng cho billing
     model AI + usage. Lỗi → None (không ghi usage)."""
@@ -216,12 +243,13 @@ def _compose_system(user_message: str, history: list,
     Trả (system_str, debug) — debug = {mode, chunks[], system_chars}."""
     shop = _resolve_shop(user_id, account, shop)
     memory = _memory_block(user_id, account)
+    photos = _photo_block(shop)   # ổn định theo SHOP (như kb) — không theo khách
     state = _state_block(conv_state)
     summary = _summary_block(conv_state)
     base = _load_system_prompt(shop)
     if not base.startswith(HYBRID_MARKER):
         parts = [base]
-        for b in (memory, state, summary):
+        for b in (photos, memory, state, summary):
             if b:
                 parts.append(b)
         parts.append(_today_context())
@@ -258,6 +286,8 @@ def _compose_system(user_message: str, history: list,
         parts.append(kb_block)           # ổn định khi kb_mode='full'
     if style:
         parts.append(style)
+    if photos:
+        parts.append(photos)             # thư viện ảnh — ổn định theo shop
     tech = _load_tech_rules()
     if tech:
         parts.append(tech)               # ổn định theo code
@@ -373,6 +403,20 @@ def _parse_ai_output(full_text: str) -> dict:
     if "[BOOKING_CONFIRMED]" in reply:
         analysis["booking_confirmed"] = True
         reply = reply.replace("[BOOKING_CONFIRMED]", "").strip()
+
+    # Thẻ [GUI_ANH: <tên bộ>] — AI chủ động đính bộ ảnh Thư viện (xem
+    # _photo_block). Nhận cả biến thể có dấu [GỬI_ẢNH: ...]; bóc khỏi reply,
+    # brain._send_ai_photos sẽ gửi (match tên trong ĐÚNG shop của hội thoại).
+    _photos: list = []
+    def _grab_photo(m):
+        name = m.group(1).strip()
+        if name:
+            _photos.append(name)
+        return ""
+    reply = re.sub(r"\[\s*G[ỬUửu][IÍií][_ ]?[ẢAảa]NH\s*:?\s*([^\]]+)\]",
+                   _grab_photo, reply, flags=re.IGNORECASE).strip()
+    if _photos:
+        analysis["send_photos"] = _photos
 
     return {"reply": reply, **analysis}
 

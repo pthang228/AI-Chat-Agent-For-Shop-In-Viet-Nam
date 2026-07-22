@@ -154,12 +154,15 @@ def kb_char_budget(model_key: str | None) -> int:
 
 
 def model_for_owner(owner: str | None) -> str:
-    """Model shop đã chọn (billing.ai_model) — không hợp lệ/thiếu key → mặc định."""
+    """Model shop đã chọn (billing.ai_model) — không hợp lệ/thiếu key → mặc định.
+    SHOP CON: billing nằm ở tài khoản chính → quy owner (có thể là ws shop con)."""
     if not owner:
         return DEFAULT_MODEL
     try:
+        from app.core import shops as _shops
         from app.core.db import get_db
-        rows = get_db().query("SELECT ai_model FROM billing WHERE username=?", (owner,))
+        rows = get_db().query("SELECT ai_model FROM billing WHERE username=?",
+                              (_shops.account_of(owner),))
         key = (rows[0]["ai_model"] if rows else "") or ""
         if key in CATALOG and _api_key(CATALOG[key]["provider"]):
             return key
@@ -184,10 +187,15 @@ def model_for(owner: str | None, account: str | None = None) -> str:
         try:
             ch = ACCOUNT_CHANNEL.get(str(account).strip().lower())
             if ch:
+                from app.core import shops as _shops
                 from app.core.db import get_db
+                # SHOP CON: app nằm ở (username=tài khoản chính, shop_ws=shop) —
+                # owner là ws shop con → lọc đúng app CỦA SHOP ĐÓ
+                acct = _shops.account_of(owner)
                 rows = get_db().query(
-                    "SELECT ai_model FROM user_apps WHERE username=? AND channel=? "
-                    "AND ai_model!='' ORDER BY created_at LIMIT 1", (owner, ch))
+                    "SELECT ai_model FROM user_apps WHERE username=? AND shop_ws=?"
+                    " AND channel=? AND ai_model!='' ORDER BY created_at LIMIT 1",
+                    (acct, "" if acct == owner else owner, ch))
                 key = (rows[0]["ai_model"] if rows else "") or ""
                 if key in CATALOG and _api_key(CATALOG[key]["provider"]):
                     return key

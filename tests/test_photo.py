@@ -182,6 +182,48 @@ for s in matched:
     ch.send_photo_folder("u", pl.set_dir(s["slug"]), f"📸 {s['name']}:")
 check(calls["folder"] == ["combo-cuoi"] and calls["price"] == 0, "G2 sends_set_not_price")
 
+print("\n── H. Não AI kết hợp Thư viện ảnh (thẻ [GUI_ANH]) ──")
+from app.core import claude_ai
+
+# H1-H3: _parse_ai_output bóc thẻ (biến thể có dấu/không dấu, nhiều thẻ)
+out = claude_ai._parse_ai_output("Dạ đây là bảng giá ạ! [GUI_ANH: Combo cưới]")
+check(out.get("send_photos") == ["Combo cưới"] and "[GUI_ANH" not in out["reply"],
+      "H1 parse thẻ không dấu + reply sạch", out)
+out = claude_ai._parse_ai_output("Mình gửi bạn nhé [Gửi_Ảnh: bảng giá]")
+check(out.get("send_photos") == ["bảng giá"], "H2 parse thẻ CÓ DẤU", out)
+out = claude_ai._parse_ai_output("Đây ạ [GUI_ANH: Bảng giá][GUI ANH: Combo cưới]")
+check(out.get("send_photos") == ["Bảng giá", "Combo cưới"] and out["reply"] == "Đây ạ",
+      "H3 nhiều thẻ + cả biến thể space", out)
+out = claude_ai._parse_ai_output("Không có thẻ gì cả")
+check("send_photos" not in out, "H4 không thẻ → không có key send_photos")
+
+# H5-H6: _photo_block theo shop (tenant) — có bộ thì liệt kê + hướng dẫn thẻ
+pl.create_set("Menu Tết", ["menu tết", "món tết"], tenant_ws="shopX@x.vn")
+pl.add_photo("menu-tet", "m.png", PNG)
+blk = claude_ai._photo_block("shopX@x.vn")
+check("Menu Tết" in blk and "GUI_ANH" in blk, "H5 _photo_block liệt kê bộ + hướng dẫn thẻ", blk[:80])
+check(claude_ai._photo_block("shop-trong@x.vn") == "", "H6 shop không có bộ → block rỗng")
+
+# H7-H9: brain._send_ai_photos — đúng tên → gửi + trả tên; sai tên/khác shop → bỏ
+from types import SimpleNamespace
+calls2 = {"folder": []}
+_b = SimpleNamespace(channel=SimpleNamespace(
+    send_photo_folder=lambda u, folder, cap: (calls2["folder"].append(Path(folder).name) or True)))
+conv_x = SimpleNamespace(tenant="shopX@x.vn")
+sent = brain_mod.Brain._send_ai_photos(_b, "u1", conv_x, ["menu tết"])
+check(sent == ["Menu Tết"] and calls2["folder"] == ["menu-tet"],
+      "H7 gửi đúng bộ theo tên (bỏ dấu, đúng shop)", (sent, calls2))
+sent = brain_mod.Brain._send_ai_photos(_b, "u1", conv_x, ["bộ không tồn tại"])
+check(sent == [], "H8 AI bịa tên → bỏ qua, không nổ")
+conv_y = SimpleNamespace(tenant="shopY@x.vn")
+sent = brain_mod.Brain._send_ai_photos(_b, "u1", conv_y, ["menu tết"])
+check(sent == [], "H9 khác shop → KHÔNG gửi bộ của shopX (multi-tenant)")
+
+# H10: kênh không hỗ trợ gửi folder (trả False) → sent rỗng, luồng thường tiếp
+_b2 = SimpleNamespace(channel=SimpleNamespace(send_photo_folder=lambda u, f, c: False))
+sent = brain_mod.Brain._send_ai_photos(_b2, "u1", conv_x, ["menu tết"])
+check(sent == [], "H10 kênh không hỗ trợ → sent rỗng")
+
 # Dọn
 import shutil
 shutil.rmtree(_TMP, ignore_errors=True)

@@ -14,7 +14,7 @@ import logging
 from flask import request
 
 from app.core import orders
-from app.web_api.auth_api import _user_for_token, _bearer, workspace_of
+from app.web_api.auth_api import _user_for_token, _bearer, request_workspace
 from app.core.db import get_db
 
 log = logging.getLogger("orders_api")
@@ -35,7 +35,7 @@ def register_orders_routes(app):
         if u is None:
             return True
         from app.core import tenant as _t
-        return _t.visible(o.get("tenant", "") or "", workspace_of(u))
+        return _t.visible(o.get("tenant", "") or "", request_workspace(u))
 
     @app.route("/orders")
     def orders_list():
@@ -52,7 +52,7 @@ def register_orders_routes(app):
             channel=request.args.get("channel", ""),
             q=request.args.get("q", ""),
             limit=limit, offset=offset,
-            tenant_ws=workspace_of(u))       # multi-tenant: chỉ đơn shop mình
+            tenant_ws=request_workspace(u))       # multi-tenant: chỉ đơn shop mình
         return {"ok": True, **r}
 
     @app.route("/orders/summary")
@@ -60,7 +60,7 @@ def register_orders_routes(app):
         u, err = _auth_or_401()
         if err:
             return err
-        return {"ok": True, **orders.summary(tenant_ws=workspace_of(u))}
+        return {"ok": True, **orders.summary(tenant_ws=request_workspace(u))}
 
     @app.route("/orders/<int:order_id>")
     def orders_get(order_id):
@@ -89,7 +89,7 @@ def register_orders_routes(app):
             status=d.get("status") or "draft",
             due_at=d.get("due_at") or None,
             note=d.get("note") or "",
-            tenant=workspace_of(u))          # multi-tenant: đơn tay thuộc shop tạo
+            tenant=request_workspace(u))          # multi-tenant: đơn tay thuộc shop tạo
         log.info(f"[orders] {u['username']} tạo tay {o['code']}")
         return {"ok": True, "order": o}
 

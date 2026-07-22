@@ -42,9 +42,14 @@ def compute_stats(conv_manager, from_s=None, to_s=None, uid_filter=None,
         by_stage[st] = by_stage.get(st, 0) + 1
         if st == "confirmed":
             confirmed += 1
-        e = timeline.setdefault(day, {"date": day, "conv": 0, "msg": 0})
+        e = timeline.setdefault(day, {"date": day, "conv": 0, "msg": 0,
+                                      "user": 0, "bot": 0})
         e["conv"] += 1
         e["msg"]  += n_total
+        # user/bot theo ngày → biểu đồ "Tỷ lệ AI trả lời" tính THẬT (bot/user)
+        # thay vì proxy "có tin = 100%" như trước
+        e["user"] += n_user
+        e["bot"]  += n_bot
 
     if tenant_ws:
         from app.core import tenant as _tenant

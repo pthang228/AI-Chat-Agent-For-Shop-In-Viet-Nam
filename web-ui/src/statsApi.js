@@ -40,9 +40,11 @@ function mergeStats(a, b) {
 
   const tmap = {};
   for (const t of [...(a.timeline || []), ...(b.timeline || [])]) {
-    if (!tmap[t.date]) tmap[t.date] = { date: t.date, conv: 0, msg: 0 };
+    if (!tmap[t.date]) tmap[t.date] = { date: t.date, conv: 0, msg: 0, user: 0, bot: 0 };
     tmap[t.date].conv += t.conv;
     tmap[t.date].msg  += t.msg;
+    tmap[t.date].user += t.user || 0;
+    tmap[t.date].bot  += t.bot  || 0;
   }
   return {
     total_conv: a.total_conv + b.total_conv,
@@ -88,8 +90,22 @@ export async function fetchStats(channel, period) {
         telegram: t.total_conv, shopee: sp.total_conv,
         zalooa: oa.total_conv, webchat: wc.total_conv,
       },
+      // Donut "Tin nhắn theo nền tảng" cần SỐ TIN — by_channel ở trên là số
+      // HỘI THOẠI (trước đây donut dùng nhầm nó, chart tin mà số là conv)
+      by_channel_msg: {
+        zalo: z.total_msg, meta: m.total_msg,
+        telegram: t.total_msg, shopee: sp.total_msg,
+        zalooa: oa.total_msg, webchat: wc.total_msg,
+      },
     };
   }
   const data = await fetchOne(channel, from, to);
   return data;
+}
+
+// Chất lượng bot toàn shop (latency + câu bot bí) — 1 endpoint bridge, không per-kênh
+export async function fetchQuality(period) {
+  const { from, to } = periodDates(period);
+  const r = await brain.quality(from, to);
+  return (r.ok && r.body?.ok) ? r.body : { latency: { avg: 0, p95: 0, n: 0, timeline: [] }, misses: 0 };
 }

@@ -22,7 +22,7 @@ from flask import request, jsonify
 from app.core.config import Config
 from app.core.db import get_db
 from app.core.sheets import extract_sheet_id
-from app.web_api.auth_api import _user_for_token, _bearer, workspace_of
+from app.web_api.auth_api import _user_for_token, _bearer, request_workspace
 
 log = logging.getLogger("sheets_api")
 
@@ -51,7 +51,7 @@ def register_sheets_routes(app):
         u, err = _auth()
         if err:
             return err
-        ws = workspace_of(u)
+        ws = request_workspace(u)
         rows = db.query(
             "SELECT id, name, sheet_id, created_at FROM shop_sheets "
             "WHERE tenant=? ORDER BY id", (ws,))
@@ -63,7 +63,7 @@ def register_sheets_routes(app):
         u, err = _auth()
         if err:
             return err
-        ws = workspace_of(u)
+        ws = request_workspace(u)
         data = request.get_json(force=True, silent=True) or {}
         sid = extract_sheet_id(data.get("link") or "")
         if not sid:
@@ -90,7 +90,7 @@ def register_sheets_routes(app):
         u, err = _auth()
         if err:
             return err
-        ws = workspace_of(u)
+        ws = request_workspace(u)
         if not db.query("SELECT 1 FROM shop_sheets WHERE id=? AND tenant=?", (sid, ws)):
             return {"ok": False, "error": "Không tìm thấy sheet"}, 404
         db.execute("DELETE FROM shop_sheets WHERE id=? AND tenant=?", (sid, ws))

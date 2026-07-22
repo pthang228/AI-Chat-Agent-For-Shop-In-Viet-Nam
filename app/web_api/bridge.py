@@ -136,8 +136,10 @@ def _ws():
         return ws
     u = getattr(g, "auth_user", None)
     if u is not None:
-        from app.web_api.auth_api import workspace_of
-        ws = workspace_of(u)
+        # request_workspace (không phải workspace_of trần): tôn trọng header
+        # X-Shop — SHOP CON là workspace riêng, dùng trần là lẫn dữ liệu shop
+        from app.web_api.auth_api import request_workspace
+        ws = request_workspace(u)
     else:
         from app.core import tenant
         ws = tenant.current_workspace_or_none()
@@ -195,6 +197,19 @@ def create_bridge(brain, conv_manager) -> Flask:
             return zalo_store.get_owner_username(channel_key.split(":", 1)[1])
         return resolve_perbot_owner(channel_key)
 
+    def _my_subkeys(ws: str, channel: str) -> list:
+        """Key bot CỦA SHOP ws trên 1 kênh trần: 'kênh:<id>' cho từng tài khoản
+        con shop sở hữu (page/bot/OA/site...); Zalo cá nhân → acc riêng của shop.
+        [] = shop chưa kết nối kênh này. Nút Trợ lý AI của shop bật/tắt các key
+        NÀY (kênh trần toàn cục là công tắc của quản trị nền tảng)."""
+        if channel == "zalo":
+            acc = zalo_store.acc_for_owner(ws)
+            return [f"zalo:{acc}"] if acc else []
+        from app.core import channel_registry
+        return [f"{channel}:{rid}"
+                for rid, data in channel_registry.accounts_of(channel)
+                if ((data or {}).get("owner_username") or "") == ws]
+
     # (bot_state đọc TƯƠI trong từng route qua _load_bot_state() — không giữ
     # snapshot lúc boot để tránh trạng thái lỗi thời khi copilot/kênh khác ghi file.)
 
@@ -210,6 +225,10 @@ def create_bridge(brain, conv_manager) -> Flask:
     # Gói dịch vụ & nạp tiền
     from app.web_api.billing_api import register_billing_routes
     register_billing_routes(app)
+
+    # Gọi khẩn qua Telegram cấp SHOP (mọi kênh) — acc phụ gọi acc chính của chủ
+    from app.web_api.caller_api import register_caller_routes
+    register_caller_routes(app)
 
     # Prompt Builder — shop gửi link dữ liệu + hướng dẫn → AI viết prompt
     from app.web_api.prompt_api import register_prompt_routes
@@ -253,11 +272,22 @@ def create_bridge(brain, conv_manager) -> Flask:
 
     @app.route("/bot-status")
     def bot_status():
-        """Trạng thái bot. ?channel=zalo|meta|telegram → của riêng kênh đó (mặc định: cờ chung)."""
+        """Trạng thái bot. ?channel=zalo|meta|telegram → của riêng kênh đó (mặc định: cờ chung).
+        SHOP THƯỜNG (không phải quản trị nền tảng): kênh trần trả trạng thái bot
+        CỦA SHOP (key 'kênh:<id>' các tài khoản con) — khớp nút toggle bên dưới."""
         channel = _norm_channel(request.args.get("channel", ""))
         # Đọc file TƯƠI: copilot/kênh khác có thể vừa ghi bot_state (đừng dùng
         # closure cũ nạp lúc boot → trả trạng thái lỗi thời).
-        return {"enabled": _channel_enabled(_load_bot_state(), channel), "channel": channel or "all"}
+        state = _load_bot_state()
+        from app.core import tenant as _t
+        ws = _ws()
+        if channel and ":" not in channel and ws and not _t.is_platform_admin(ws):
+            keys = _my_subkeys(ws, channel)
+            if keys:
+                return {"enabled": any(_channel_enabled(state, k) for k in keys),
+                        "channel": channel}
+            return {"enabled": False, "channel": channel, "connected": False}
+        return {"enabled": _channel_enabled(state, channel), "channel": channel or "all"}
 
     @app.route("/bot-toggle", methods=["POST"])
     def bot_toggle():
@@ -269,16 +299,24 @@ def create_bridge(brain, conv_manager) -> Flask:
         app_name = _norm_text(data.get("app_name") or "")
 
         # MULTI-TENANT: công tắc GLOBAL / kênh cha trần (zalo, meta…) ảnh hưởng
-        # MỌI shop → chỉ CHỦ NỀN TẢNG được bấm. Key per-bot "kênh:<id>" thì phải
-        # ĐÚNG CHỦ của bot/page/site đó (chống shop A tắt bot shop B qua file
-        # bot_state.json dùng chung — bỏ qua guard của server kênh).
+        # MỌI shop → chỉ CHỦ NỀN TẢNG được bấm trần; SHOP THƯỜNG bấm kênh trần
+        # = bật/tắt các key 'kênh:<id>' CỦA CHÍNH SHOP (nút Trợ lý AI AppsGrid).
+        # Key per-bot "kênh:<id>" tường minh thì phải ĐÚNG CHỦ của bot/page/site
+        # đó (chống shop A tắt bot shop B qua file bot_state.json dùng chung).
         from app.core import tenant as _t
         ws = _ws()
+        shop_keys = None
         if ":" not in channel:
             if ws and not _t.is_platform_admin(ws):
-                return {"ok": False,
-                        "error": "Chỉ quản trị nền tảng mới bật/tắt bot toàn cục — "
-                                 "hãy bật/tắt từng kênh của shop bạn"}, 403
+                if not channel or channel == "all":
+                    return {"ok": False,
+                            "error": "Chỉ quản trị nền tảng mới bật/tắt bot toàn cục — "
+                                     "hãy bật/tắt từng kênh của shop bạn"}, 403
+                shop_keys = _my_subkeys(ws, channel)
+                if not shop_keys:
+                    return {"ok": False,
+                            "error": "Shop chưa kết nối kênh này — vào app kênh "
+                                     "để kết nối trước"}, 400
         elif ws and not _t.is_platform_admin(ws):
             owner = _perbot_owner(channel)
             if owner is None or owner != ws:
@@ -286,7 +324,11 @@ def create_bridge(brain, conv_manager) -> Flask:
 
         state = _load_bot_state()   # đọc TƯƠI rồi sửa → không đua với ghi từ copilot
         chans = state.setdefault("channels", {})
-        if not channel or channel == "all":
+        if shop_keys is not None:
+            for k in shop_keys:
+                chans[k] = enabled
+            scope = f"{channel} của shop"
+        elif not channel or channel == "all":
             for c in ALL_CHANNELS:
                 chans[c] = enabled
             state["enabled"] = enabled
@@ -301,10 +343,13 @@ def create_bridge(brain, conv_manager) -> Flask:
             msg = f"🟢 Bot{label} đã được BẬT — AI sẽ tự động tư vấn khách."
         else:
             msg = f"🔴 Bot{label} đã được TẮT — admin tự trả lời khách, AI tạm dừng."
-        try:
-            brain.channel.notify_owner(msg)
-        except Exception as e:
-            log.error(f"[bot-toggle] báo nhóm lỗi: {e}")
+        # notify_owner đi vào nhóm CHỦ NỀN TẢNG — chỉ báo khi bấm công tắc
+        # nền tảng; shop thường tự bật/tắt bot của mình thì không spam nhóm đó
+        if shop_keys is None:
+            try:
+                brain.channel.notify_owner(msg)
+            except Exception as e:
+                log.error(f"[bot-toggle] báo nhóm lỗi: {e}")
         log.info(f"[bot-toggle] channel={channel or 'all'} enabled={enabled}")
         return {"ok": True, "enabled": enabled, "channel": channel or "all"}
 
@@ -437,6 +482,34 @@ def create_bridge(brain, conv_manager) -> Flask:
         return jsonify(compute_stats(
             conv_manager, request.args.get("from"), request.args.get("to"),
             tenant_ws=_ws()))
+
+    @app.route("/stats/quality")
+    def conv_stats_quality():
+        """Chất lượng bot TOÀN SHOP (mọi kênh — đo ở não chung): thời gian phản
+        hồi avg+P95 theo ngày (latency_log) + số câu bot BÍ (bot_misses) trong
+        kỳ. Nuôi biểu đồ 'Thời gian phản hồi' + đếm fail 'Tỷ lệ AI trả lời'."""
+        from app.core import latency as _lat
+        from app.core import tenant as _tenant
+        from app.core.db import get_db
+        ws = _ws()
+        f, t = request.args.get("from"), request.args.get("to")
+        misses = 0
+        try:
+            args, cond = [], []
+            if ws:
+                cond.append("shop=?"); args.append(_tenant.shop_key(ws))
+            if f:
+                cond.append("created_at >= ?"); args.append(f)
+            if t:
+                cond.append("created_at <= ?"); args.append(t + "T23:59:59")
+            sql = "SELECT COUNT(*) AS n FROM bot_misses"
+            if cond:
+                sql += " WHERE " + " AND ".join(cond)
+            misses = get_db().query(sql, tuple(args))[0]["n"]
+        except Exception as e:
+            log.warning(f"[stats] đếm bot_misses lỗi: {e}")
+        return {"ok": True, "latency": _lat.stats(f, t, tenant_ws=ws),
+                "misses": misses}
 
     # ── MULTI-ACCOUNT Zalo: acc riêng của shop đang đăng nhập ───────────
     @app.route("/zalo/my-account")

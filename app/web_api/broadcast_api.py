@@ -53,7 +53,6 @@ def register_broadcast_routes(app):
 
     @app.route("/broadcasts", methods=["POST"])
     def bc_create():
-        from app.web_api.auth_api import current_username
         d = request.get_json(force=True, silent=True) or {}
         message = (d.get("message") or "").strip()
         if len(message) < 5:
@@ -61,8 +60,10 @@ def register_broadcast_routes(app):
         channels = [c for c in (d.get("channels") or []) if c in broadcast.CHANNELS]
         if not channels:
             return {"ok": False, "error": "Chọn ít nhất 1 kênh"}, 400
+        # created_by = WORKSPACE (shop đang chọn) — audience/worker lọc khách
+        # theo tenant=shop; dùng username thô thì shop con sẽ gửi 0 khách
         b = broadcast.create(d.get("name") or "", message, channels,
-                             d.get("segment") or {}, current_username() or "")
+                             d.get("segment") or {}, _ws() or "")
         if d.get("send_now"):
             broadcast.start(b["id"], auth_token=_bearer())
             b = broadcast.get(b["id"])

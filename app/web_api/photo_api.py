@@ -43,9 +43,9 @@ def register_photo_routes(app):
         return u, None
 
     def _pws(u):
-        """Workspace (shop) của user — multi-tenant bộ ảnh."""
-        from app.web_api.auth_api import workspace_of
-        return workspace_of(u)
+        """Workspace (shop đang chọn, tôn trọng X-Shop) — multi-tenant bộ ảnh."""
+        from app.web_api.auth_api import request_workspace
+        return request_workspace(u)
 
     def _owned(slug, u):
         """Bộ ảnh thuộc shop của user? (không tồn tại/của shop khác → False)"""

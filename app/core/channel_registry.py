@@ -66,6 +66,22 @@ def store_for(channel: str):
         return None
 
 
+def accounts_of(channel: str) -> list:
+    """[(account_id, data)] MỌI tài khoản con của 1 kênh (page/bot/OA/site...) —
+    cho tính năng cần duyệt cả kho (vd nút Trợ lý AI resolve bot CỦA SHOP).
+    Mọi store đều bọc SQLiteChannelStore ở thuộc tính `_store` (cùng bảng
+    channel_accounts); kênh lạ/lỗi → [] (không ném)."""
+    st = store_for(channel)
+    inner = getattr(st, "_store", None)
+    if inner is None:
+        return []
+    try:
+        return list(inner.list())
+    except Exception as e:
+        log.warning(f"[registry] accounts_of '{channel}' lỗi: {e}")
+        return []
+
+
 def owner_of(channel_key: str):
     """Chủ (owner_username) của account sau key 'kênh:<id>' — None nếu không rõ.
     Mọi store đều có get_owner_username (hợp đồng chung của registry)."""

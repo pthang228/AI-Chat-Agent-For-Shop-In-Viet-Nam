@@ -39,7 +39,10 @@ LIST_TOKENS = ("filter_owned", "owner=None if _is_admin else", "owner=",
 
 # Route được MIỄN có chủ đích (public/nghiệp vụ khác) — thêm vào đây phải có lý do.
 EXEMPT = {
-    # (file, route_path, methods) — hiện không có miễn trừ nào
+    # SHOP CON (bảng shops, KHÔNG phải account kênh channel_accounts): guard sở
+    # hữu nằm trong core/shops.remove — SQL "WHERE ws=? AND owner=?" với owner =
+    # u["username"] từ token; test_shops.py A5/A10/B8/D* khoá hành vi này.
+    ("auth_api.py", "/auth/shops/<path:ws>", ("DELETE",)),
 }
 
 
